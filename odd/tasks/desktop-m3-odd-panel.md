@@ -29,7 +29,7 @@ S7. Data contract: `TodoState { tasks: TodoTask[]; nextId: number; updatedTurn: 
 | ID | Specs | Route | Commit |
 | --- | --- | --- | --- |
 | T1 | S3, S4, S7 | inline — codec keeps `gentle-todo-state` messages, reducer derives panel state | |
-| T2 | S1, S7 | inline — bridge contract and IPC push for the panel state | |
+| T2 | S1, S7 | inline — no production change needed: `ChatState` is already pushed whole to the renderer, so `todo` crosses with it | n/a (contract only) |
 | T3 | S5 | inline — collapsible task card, rail vs bottom by window width | |
 | T4 | S5 | inline — styles matching the existing theme tokens | |
 | T5 | S1, S6 | inline — README "What it shows", manual verification | |

@@ -1,0 +1,119 @@
+/*
+ * TodoCard (M3 ODD task panel) — provisional presentation mirroring the
+ * TUI card (surface: "panel", todoWorkSummary). Every color comes from the
+ * Gentleman-Cute tokens (src/renderer/shared/theme/tokens.css); the
+ * token↔term mapping follows gentle-pi's shell-todo roles: accent =
+ * in-progress, warning = blocked, success = done, dim = done/dropped.
+ */
+.gc-todo-card {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  gap: 0.35rem;
+  padding: 0.6rem 0.7rem;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 0.85rem;
+}
+
+.gc-todo-card__toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 0.1rem 0.15rem;
+}
+
+.gc-todo-card__toggle:hover {
+  color: var(--text);
+}
+
+.gc-todo-card__marker {
+  flex: none;
+  color: var(--muted);
+  line-height: 1;
+}
+
+.gc-todo-card__summary-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gc-todo-card__summary-count {
+  flex: none;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.gc-todo-card__summary-label {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+/* Expanded rows */
+
+.gc-todo-card__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0.15rem 0 0;
+  padding: 0.35rem 0 0;
+  border-top: 1px solid var(--line);
+  list-style: none;
+}
+
+.gc-todo-card__row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  color: var(--text-2);
+}
+
+.gc-todo-card__title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.gc-todo-card__row--current .gc-todo-card__marker,
+.gc-todo-card__row--current .gc-todo-card__title {
+  color: var(--accent);
+}
+
+.gc-todo-card__row--blocked .gc-todo-card__marker {
+  color: var(--amber);
+}
+
+.gc-todo-card__note {
+  color: var(--muted);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+/* Terminal statuses sit outside the active work: dimmed, exactly like the
+ * TUI's strikethrough rendering for done tasks. */
+.gc-todo-card__row--dimmed .gc-todo-card__marker {
+  color: var(--green);
+}
+
+.gc-todo-card__row--dimmed .gc-todo-card__title {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.gc-todo-card__row--unknown .gc-todo-card__marker {
+  color: var(--muted);
+}
+
+.gc-todo-card__row--unknown .gc-todo-card__title {
+  color: var(--text-2);
+}

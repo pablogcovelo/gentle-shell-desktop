@@ -7,6 +7,7 @@ import { CONVERSATION_PANE, ConversationHeader, type ConversationPane } from "./
 import { HelpersStrip } from "./components/HelpersStrip";
 import { MessageThread } from "./components/MessageThread";
 import { StatusLine } from "./components/StatusLine";
+import { TodoCard } from "./components/TodoCard";
 import "./ConversationContainer.css";
 
 /**
@@ -135,11 +136,17 @@ export function ConversationContainer({ activeChat }: ConversationContainerProps
           openedAt={helpersOpenedAt}
         />
       ) : (
-        <>
-          <HelpersStrip helpers={chatState.helpers} onOpen={() => setPane(CONVERSATION_PANE.HELPERS)} />
-          <MessageThread messages={chatState.messages} dialogs={chatState.pendingDialogs} onAnswerDialog={handleAnswerDialog} />
-          <Composer value={draft} working={chatState.working} onChange={setDraft} onSend={handleSend} onAbort={handleAbort} />
-        </>
+        <div className="gc-conversation__body">
+          <div className="gc-conversation__stack">
+            <HelpersStrip helpers={chatState.helpers} onOpen={() => setPane(CONVERSATION_PANE.HELPERS)} />
+            <MessageThread messages={chatState.messages} dialogs={chatState.pendingDialogs} onAnswerDialog={handleAnswerDialog} />
+            <Composer value={draft} working={chatState.working} onChange={setDraft} onSend={handleSend} onAbort={handleAbort} />
+          </div>
+          {/* The chat's own ODD task card (M3: S5). Fed strictly from the
+          pushed ChatState.todo of the open chat — never a global list
+          (S1) — and absent from the Helpers pane. */}
+          {chatState.todo ? <TodoCard todo={chatState.todo} /> : null}
+        </div>
       )}
     </section>
   );

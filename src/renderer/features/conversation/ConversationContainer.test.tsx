@@ -308,6 +308,63 @@ describe("ConversationContainer", () => {
     expect(screen.getByPlaceholderText("Tell Gentle what you need…")).toBeInTheDocument();
   });
 
+  it("renders the chat's own todo card from the pushed ChatState.todo, and nothing without tasks", async () => {
+    let pushState: (state: ChatState) => void = () => {};
+    const bridge = makeBridge({
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+
+    expect(screen.queryByTestId("gc-todo-card")).not.toBeInTheDocument();
+
+    pushState({
+      messages: [],
+      working: false,
+      pendingDialogs: [],
+      activity: 0,
+      helpers: EMPTY_HELPERS,
+      todo: { tasks: [{ id: 1, title: "Panel task only", status: "in_progress" }], nextId: 2, updatedTurn: 1 },
+    });
+
+    expect(await screen.findByTestId("gc-todo-card")).toBeInTheDocument();
+    expect(screen.getByText("Panel task only")).toBeInTheDocument();
+  });
+
+  it("keeps the todo card out of the Helpers pane", async () => {
+    let pushState: (state: ChatState) => void = () => {};
+    const bridge = makeBridge({
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+    pushState({
+      messages: [],
+      working: false,
+      pendingDialogs: [],
+      activity: 0,
+      helpers: EMPTY_HELPERS,
+      todo: { tasks: [{ id: 1, title: "Panel task only", status: "pending" }], nextId: 2, updatedTurn: 1 },
+    });
+    expect(await screen.findByTestId("gc-todo-card")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Helpers" }));
+
+    expect(screen.queryByTestId("gc-todo-card")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back to chat" }));
+    expect(screen.getByTestId("gc-todo-card")).toBeInTheDocument();
+  });
+
   it("resets to the chat pane when activeChat changes", async () => {
     let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({
