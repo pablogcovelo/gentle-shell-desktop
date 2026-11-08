@@ -140,12 +140,15 @@ export function ConversationContainer({ activeChat }: ConversationContainerProps
           <div className="gc-conversation__stack">
             <HelpersStrip helpers={chatState.helpers} onOpen={() => setPane(CONVERSATION_PANE.HELPERS)} />
             <MessageThread messages={chatState.messages} dialogs={chatState.pendingDialogs} onAnswerDialog={handleAnswerDialog} />
+            {/* The chat's own ODD task card (M3: S5). It lives INSIDE the
+            stack and above the composer so the narrow layout keeps the TUI's
+            order — its bottom widget renders above the prompt, never below
+            it — while the wide layout lifts the same node into a right rail
+            with CSS grid. Fed strictly from the pushed ChatState.todo of the
+            open chat (S1), never a global list, and absent from Helpers. */}
+            {chatState.todo ? <TodoCard todo={chatState.todo} /> : null}
             <Composer value={draft} working={chatState.working} onChange={setDraft} onSend={handleSend} onAbort={handleAbort} />
           </div>
-          {/* The chat's own ODD task card (M3: S5). Fed strictly from the
-          pushed ChatState.todo of the open chat — never a global list
-          (S1) — and absent from the Helpers pane. */}
-          {chatState.todo ? <TodoCard todo={chatState.todo} /> : null}
         </div>
       )}
     </section>

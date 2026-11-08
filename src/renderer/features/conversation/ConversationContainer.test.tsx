@@ -387,4 +387,34 @@ describe("ConversationContainer", () => {
 
     expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
   });
+
+  it("keeps the todo card above the composer, mirroring the TUI bottom widget", async () => {
+    let pushState: (state: ChatState) => void = () => {};
+    const bridge = makeBridge({
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+    pushState({
+      messages: [],
+      working: false,
+      pendingDialogs: [],
+      activity: 0,
+      helpers: { summary: { running: 0, queued: 0, waiting: 0, finished: 0 }, tasks: [] },
+      todo: { tasks: [{ id: 1, title: "Order task", status: "pending" }], nextId: 2, updatedTurn: null },
+    });
+
+    const card = await screen.findByTestId("gc-todo-card");
+    const composer = document.querySelector("form.gc-composer");
+    if (!composer) throw new Error("composer not rendered");
+
+    // The card must come BEFORE the composer in document order: gentle-pi's
+    // bottom widget renders above the prompt, never below it (S5).
+    expect(card.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
 });

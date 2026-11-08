@@ -43,7 +43,8 @@ Slice 1 (closed): a7bda25 the feature document, 941ed3a T1, 136f640 T3 and T4. S
 - `pnpm vitest run`: 41 files, 371 tests, all passing, after every task.
 - `pnpm typecheck`: clean (`tsc --build --force`, no diagnostics).
 - Proven behavior: a `gentle-todo-state` message folds into panel state and never into the transcript; a reopened chat recovers its task list from `get_messages` with no live event; the card renders nothing without tasks, summarises `done/planned` with dropped tasks off the list, expands to rows with note and status, de-emphasises done rows and renders an unknown status neutrally; the card is mounted only in the chat pane and never in Helpers.
-- Pending: the wide/narrow placement (right rail at 1100px vs stacked at the bottom) is CSS-only and jsdom cannot exercise real width. Verifying it needs a browser (`pnpm exec playwright install chromium`) or a manual `pnpm dev:web` look. Not claimed as verified.
+- Placement verified in a real browser (Playwright, `pnpm dev:web` with the mock's demo tasks), measured instead of eyeballed: at 1400px the card sits in a 280px right rail beside the thread (card x = thread right edge, composer in the same column as the thread); at 820px it stacks between the thread and the composer with the composer last (card y = thread bottom, composer below it).
+- That second measurement found and fixed a real defect: the card originally rendered BELOW the composer, while the TUI renders its bottom widget above the prompt. The card now lives inside the stack, above the composer, and is lifted into the right rail by a CSS grid at 1100px. A DOM-order test pins the rule, because jsdom cannot exercise real width.
 
 ## Log
 
@@ -72,4 +73,6 @@ L9. Deferred to the workspaces milestone, not M3: opening the same session twice
 
 L10. T2 turned out to need no production change: `ChatState` is pushed to the renderer whole (`registerHandlers.ts` forwards `host.onState` verbatim), so `todo` crosses the IPC boundary with it and there is no second channel to add. Recorded instead of inventing a redundant hop.
 
-L11. The mock bridge's initial state now carries a demo task list so `pnpm dev:web` can render the card without a real child behind it. The wide/narrow placement stays visually unverified: it is CSS-only, jsdom cannot exercise real width, and downloading Playwright's browsers was not done because it was not authorized.
+L11. The mock bridge's initial state now carries a demo task list so `pnpm dev:web` can render the card without a real child behind it.
+
+L12. User decisions after the second review, verbatim: "1. Dejalo pero no lo reportes" (the stuck lineage stays as it is and is not reported), "2. Adelante con Playwright", "3. Creamos una nueva rama desde main con nombre develop en el fork que es a donde llevaremos los merge porque quiero que nos quedemos trabajando estrictamente en el fork sin llevar nada al repo original ni tocar tampoco la rama main. Ahora mismo llevamos estos cambios con merge a la rama develop que te he comentado". Work continues on `develop`, created from `main` and fast-forwarded to the M3 tip; `main` stays at 5ab4a00 and nothing is produced for the original repository.
