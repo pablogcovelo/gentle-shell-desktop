@@ -646,4 +646,67 @@ describe("PiSession: Electron host follow-ups", () => {
     expect(session.getState().messages).toHaveLength(1);
     expect(session.getState().messages[0]).toMatchObject({ text: "hi there" });
   });
+
+  it("a live gentle-todo-state event beats the older snapshot in the get_messages history response", () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {}, sessionPath: "/a/sess-1.jsonl" });
+
+    session.start();
+    const sent = JSON.parse(handles[0]?.writes[0] ?? "{}");
+
+    // A live gentle-todo-state event lands while the history request is
+    // still in flight: it is always the newer snapshot.
+    handles[0]?.emitStdout(
+      JSON.stringify({
+        type: "message_end",
+        message: {
+          role: "custom",
+          customType: "gentle-todo-state",
+          content: {
+            tasks: [{ id: 7, title: "Live task", status: "in_progress" }],
+            nextId: 8,
+            updatedTurn: 10,
+          },
+          display: false,
+        },
+      }),
+    );
+    expect(session.getState().todo).toEqual({
+      tasks: [{ id: 7, title: "Live task", status: "in_progress" }],
+      nextId: 8,
+      updatedTurn: 10,
+    });
+
+    // The get_messages response carries a snapshot written BEFORE the live
+    // event; it must never clobber the live one.
+    handles[0]?.emitStdout(
+      JSON.stringify({
+        type: "response",
+        id: sent.id,
+        command: "get_messages",
+        success: true,
+        data: {
+          messages: [
+            {
+              role: "custom",
+              customType: "gentle-todo-state",
+              content: {
+                tasks: [{ id: 1, title: "Stale task", status: "done" }],
+                nextId: 2,
+                updatedTurn: 9,
+              },
+              display: false,
+              timestamp: 0,
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(session.getState().todo).toEqual({
+      tasks: [{ id: 7, title: "Live task", status: "in_progress" }],
+      nextId: 8,
+      updatedTurn: 10,
+    });
+  });
 });

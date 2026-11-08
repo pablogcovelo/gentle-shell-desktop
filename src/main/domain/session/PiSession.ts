@@ -280,9 +280,12 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
     const history = extractHistoryMessages(response.data);
     // The ODD task panel state is recovered from the same history (S4):
     // gentle-todo persisted its snapshot in the session file, so a reopened
-    // chat gets it without any live event. Applied even when live messages
-    // already appended (below): the history still carries the newest write.
-    const todo = extractTodoPanel(history) ?? state.todo;
+    // chat gets it without any live event. A live `gentle-todo-state` event
+    // that already landed while the history request was in flight is always
+    // the newer snapshot, so it wins and the older snapshot in the response
+    // only fills the panel when nothing live has arrived yet — mirroring the
+    // live-messages rule below, which history must never clobber either.
+    const todo = state.todo ?? extractTodoPanel(history);
     // Never clobber messages a live prompt already appended while the
     // history request was still in flight.
     if (state.messages.length > 0) return { ...state, todo };
