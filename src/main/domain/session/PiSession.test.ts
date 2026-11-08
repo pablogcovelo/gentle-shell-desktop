@@ -86,6 +86,22 @@ function handleLine(line) {
         messages: [
           { role: "user", content: "What is 2+2?", timestamp: 0 },
           { role: "assistant", content: [{ type: "text", text: "4" }], timestamp: 0 },
+          // What gentle-todo persists: a hidden custom snapshot in the
+          // session history (S4). It is NOT a transcript bubble.
+          {
+            role: "custom",
+            customType: "gentle-todo-state",
+            content: {
+              tasks: [
+                { id: 1, title: "Write the spec", status: "done" },
+                { id: 2, title: "Wire the panel", status: "in_progress", note: "T1" },
+              ],
+              nextId: 3,
+              updatedTurn: 9,
+            },
+            display: false,
+            timestamp: 0,
+          },
         ],
       },
     });
@@ -179,6 +195,28 @@ describe("PiSession", () => {
 
     expect(withHistory.messages[0]).toMatchObject({ id: "msg-0", role: "user", text: "What is 2+2?" });
     expect(withHistory.messages[1]).toMatchObject({ id: "msg-1", role: "assistant", text: "4", streaming: false });
+
+    await session.stop();
+  });
+
+  it("a reopened chat recovers its task list from get_messages history alone (no live event)", async () => {
+    const scriptPath = writeFakeScript();
+    const session = createSession({ GENTLE_SHELL_BIN: scriptPath }, { sessionPath: "/fake/session.jsonl" });
+
+    // Only start() — no prompt, no live event: the panel state comes purely
+    // from the get_messages response, like everything else on reload.
+    session.start();
+
+    const reloaded = await waitFor(session, (state) => state.todo !== undefined);
+    expect(reloaded.messages).toHaveLength(2); // the custom message is not transcript (S3)
+    expect(reloaded.todo).toEqual({
+      tasks: [
+        { id: 1, title: "Write the spec", status: "done" },
+        { id: 2, title: "Wire the panel", status: "in_progress", note: "T1" },
+      ],
+      nextId: 3,
+      updatedTurn: 9,
+    });
 
     await session.stop();
   });

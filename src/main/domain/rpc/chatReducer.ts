@@ -8,6 +8,7 @@ import {
   type HelpersActivity,
 } from "@shared/bridge-types";
 import { emptyHelpersActivity, parseHelpersActivity } from "./helpersActivity";
+import { TODO_STATE_CUSTOM_TYPE, parseTodoPanel } from "./todoPanel";
 import type { AssistantMessageEvent, FireAndForgetMethod, RpcEvent, RpcExtensionUIRequest, RpcMessage } from "./types";
 
 /** The fire-and-forget branch of RpcExtensionUIRequest (notify, setStatus, setWidget, setTitle, set_editor_text). */
@@ -79,6 +80,8 @@ export function reduceChat(state: ChatState, event: RpcEvent, now?: string): Cha
 }
 
 function openAssistantMessage(state: ChatState, message: RpcMessage): ChatState {
+  const todo = applyCustomMessage(state, message);
+  if (todo) return todo;
   if (message.role !== "assistant") return state;
 
   const chatMessage: ChatMessage = {
@@ -113,6 +116,8 @@ function appendToLastAssistantMessage(state: ChatState, delta: string): ChatStat
 }
 
 function closeAssistantMessage(state: ChatState, message: RpcMessage): ChatState {
+  const todo = applyCustomMessage(state, message);
+  if (todo) return todo;
   if (message.role !== "assistant") return state;
 
   const lastIndex = state.messages.length - 1;
@@ -140,6 +145,24 @@ function closeAssistantMessage(state: ChatState, message: RpcMessage): ChatState
 
   const updated: ChatMessage = { ...last, text: authoritativeText, streaming: false };
   return { ...state, messages: replaceAt(state.messages, lastIndex, updated) };
+}
+
+/**
+ * A `role: "custom"` message stamped with `gentle-todo-state` carries the
+ * chat's own ODD task list as machine state (see todoPanel.ts): it folds
+ * into `state.todo` — on BOTH message_start and message_end (codec.ts hands
+ * these messages through as either) — and never becomes a transcript
+ * bubble (S3): there is no transcript append for a non-assistant message
+ * here to begin with. Malformed content keeps the previous panel state
+ * rather than clobbering it, mirroring helpersActivity's malformed-frame
+ * rule; re-applying the same snapshot is idempotent (equal state).
+ */
+function applyCustomMessage(state: ChatState, message: RpcMessage): ChatState | undefined {
+  if (message.role !== "custom" || message.customType !== TODO_STATE_CUSTOM_TYPE) return undefined;
+
+  const todo = parseTodoPanel(message.content);
+  if (!todo) return undefined; // keep the previous panel state untouched
+  return { ...state, todo };
 }
 
 function extractAssistantText(message: RpcMessage): string | undefined {

@@ -2,6 +2,7 @@ import { MESSAGE_ROLE, type ChatMessage, type ChatState, type DialogAnswer, type
 import { INITIAL_CHAT_STATE, reduceChat } from "../rpc/chatReducer";
 import { decodeLine, encodeCommand } from "../rpc/codec";
 import { extractHistoryMessages, historyToMessages } from "../rpc/history";
+import { extractTodoPanel } from "../rpc/todoPanel";
 import type { RpcCommand, RpcEvent, RpcResponse } from "../rpc/types";
 import type { LauncherLocator, ProcessSpawner, SpawnedProcess } from "../../ports";
 
@@ -276,11 +277,17 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
     if (!response.success) {
       return { ...state, lastError: "Could not load this chat's history" };
     }
+    const history = extractHistoryMessages(response.data);
+    // The ODD task panel state is recovered from the same history (S4):
+    // gentle-todo persisted its snapshot in the session file, so a reopened
+    // chat gets it without any live event. Applied even when live messages
+    // already appended (below): the history still carries the newest write.
+    const todo = extractTodoPanel(history) ?? state.todo;
     // Never clobber messages a live prompt already appended while the
     // history request was still in flight.
-    if (state.messages.length > 0) return state;
+    if (state.messages.length > 0) return { ...state, todo };
 
-    return { ...state, messages: historyToMessages(extractHistoryMessages(response.data)) };
+    return { ...state, messages: historyToMessages(history), todo };
   }
 
   /**

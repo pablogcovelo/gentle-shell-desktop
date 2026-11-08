@@ -126,6 +126,40 @@ export interface ChatState {
   readonly lastError?: string;
   readonly activity: number;
   readonly helpers: HelpersActivity;
+  /** The chat's own ODD task-panel state (S7), decoded from the hidden
+   * `gentle-todo-state` custom messages — never from transcript text, which
+   * those messages never become (S3). Optional: absent until the chat's
+   * session actually carries a todo state. Lives here for the same Scope
+   * Rule reason as the rest of ChatState: the renderer renders it. */
+  readonly todo?: TodoPanelState;
+}
+
+/**
+ * One task in the chat's own ODD task list, as gentle-shell's todo tool
+ * writes it (`TodoTask` in gentle-pi's shell-todo). `status` stays a plain
+ * string, not a closed union: gentle-shell may add statuses before this
+ * app is updated (e.g. "deferred"), and an unknown one must still render
+ * rather than drop the task.
+ */
+export interface TodoTaskView {
+  readonly id: number;
+  readonly title: string;
+  readonly status: string;
+  readonly note?: string;
+}
+
+/**
+ * The chat's todo state carried by gentle-shell's hidden
+ * `gentle-todo-state` custom messages (the structured snapshot gentle-pi
+ * writes to the session file after every todo write). Mirrors `TodoState`
+ * in shell-todo. Lives here because the renderer renders it (the M3 task
+ * card) and main decodes it — the Scope Rule: a type used by 2+ processes
+ * stays under src/shared. `updatedTurn` is `null` when no turn is open.
+ */
+export interface TodoPanelState {
+  readonly tasks: readonly TodoTaskView[];
+  readonly nextId: number;
+  readonly updatedTurn: number | null;
 }
 
 export const HELPER_STATUS = {
