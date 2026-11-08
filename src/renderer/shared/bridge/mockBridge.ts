@@ -103,7 +103,26 @@ function emptyState(): ChatState {
   // D4 (a "working" chat with three helpers, browser-verified) fills this
   // in later; for now the mock bridge just needs a compiling, empty
   // HelpersActivity so it keeps matching the real ChatState shape.
-  return { messages: [], working: false, pendingDialogs: [], activity: 0, helpers: { summary: { running: 0, queued: 0, waiting: 0, finished: 0 }, tasks: [] } };
+  return {
+    messages: [],
+    working: false,
+    pendingDialogs: [],
+    activity: 0,
+    helpers: { summary: { running: 0, queued: 0, waiting: 0, finished: 0 }, tasks: [] },
+    // M3: a demo task list so `pnpm dev:web` can render (and browser-verify)
+    // the ODD task card without a real gentle-shell child behind it.
+    todo: {
+      tasks: [
+        { id: 1, title: "Write the feature document", status: "done" },
+        { id: 2, title: "Fold the custom message into panel state", status: "done" },
+        { id: 3, title: "Render the collapsible card", status: "in_progress", note: "T3" },
+        { id: 4, title: "Match the styles to the theme tokens", status: "pending" },
+        { id: 5, title: "Ship a dedicated panel design", status: "dropped" },
+      ],
+      nextId: 6,
+      updatedTurn: 3,
+    },
+  };
 }
 
 let currentState: ChatState = emptyState();

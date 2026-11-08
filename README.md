@@ -60,7 +60,7 @@ or set `GENTLE_SHELL_BIN` to the launcher's full path (`which gentle-shell`). ma
 ### Known limitations
 
 - Stop in the Helpers tab is disabled until gentle-agents exposes a stop command over RPC.
-- No ODD progress panel yet (M3), and no providers or extensions screens (M4): sign in and manage packages through `gentle-shell` in the terminal.
+- No ODD phase indicator yet (M3b): the M3 task card shows tasks only, not the phase. Sign in and manage providers or extensions through `gentle-shell` in the terminal (M4).
 - No signing, notarization or auto-update yet (M5).
 
 Found a bug? Open an issue with the bug report form.
@@ -69,10 +69,26 @@ Found a bug? Open an issue with the bug report form.
 
 - M1, chat core: [`odd/tasks/desktop-m1-chat-core.md`](odd/tasks/desktop-m1-chat-core.md)
 - M2, per-chat helpers: [`odd/tasks/desktop-m2-helpers.md`](odd/tasks/desktop-m2-helpers.md)
+- M3, ODD task card: [`odd/tasks/desktop-m3-odd-panel.md`](odd/tasks/desktop-m3-odd-panel.md)
 
 Each feature document records the scope, decisions, tasks, checks and review evidence for its milestone.
 
 ## What it shows
+
+### ODD task card
+
+The card in the chat pane shows the open chat's own task list, the same list
+gentle-shell's todo tool keeps for that session. It starts collapsed as one
+line (the task in progress plus a `done/planned` count, with dropped tasks off
+the list) and expands to one row per task, with a status glyph, the title and
+the task's note when it has one. It renders nothing when the chat has no tasks.
+
+Placement is provisional: stacked at the bottom of the work area, or as a
+right rail once the window is 1100px wide. That mirrors where the terminal UI
+puts the same card, and will change when the desktop design exists.
+
+The panel reads the state gentle-shell already persists inside the session, so
+it survives reopening the chat and needs no change in gentle-pi.
 
 ### Helpers tab
 

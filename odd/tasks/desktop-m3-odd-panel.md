@@ -28,11 +28,22 @@ S7. Data contract: `TodoState { tasks: TodoTask[]; nextId: number; updatedTurn: 
 
 | ID | Specs | Route | Commit |
 | --- | --- | --- | --- |
-| T1 | S3, S4, S7 | inline — codec keeps `gentle-todo-state` messages, reducer derives panel state | |
+| T1 | S3, S4, S7 | inline — codec keeps `gentle-todo-state` messages, reducer derives panel state | 941ed3a |
 | T2 | S1, S7 | inline — no production change needed: `ChatState` is already pushed whole to the renderer, so `todo` crosses with it | n/a (contract only) |
-| T3 | S5 | inline — collapsible task card, rail vs bottom by window width | |
-| T4 | S5 | inline — styles matching the existing theme tokens | |
-| T5 | S1, S6 | inline — README "What it shows", manual verification | |
+| T3 | S5 | inline — collapsible task card, rail vs bottom by window width | 136f640 |
+| T4 | S5 | inline — styles matching the existing theme tokens | 136f640 |
+| T5 | S1, S6 | inline — README "What it shows", demo task list in the mock bridge, manual verification | this commit |
+
+## Slices
+
+Slice 1 (closed): a7bda25 the feature document, 941ed3a T1, 136f640 T3 and T4. Slice 2 (this commit) closes the feature with T5: the README, the mock-bridge demo state that makes the card visible in `pnpm dev:web`, and the recorded verification below.
+
+## Verification
+
+- `pnpm vitest run`: 41 files, 371 tests, all passing, after every task.
+- `pnpm typecheck`: clean (`tsc --build --force`, no diagnostics).
+- Proven behavior: a `gentle-todo-state` message folds into panel state and never into the transcript; a reopened chat recovers its task list from `get_messages` with no live event; the card renders nothing without tasks, summarises `done/planned` with dropped tasks off the list, expands to rows with note and status, de-emphasises done rows and renders an unknown status neutrally; the card is mounted only in the chat pane and never in Helpers.
+- Pending: the wide/narrow placement (right rail at 1100px vs stacked at the bottom) is CSS-only and jsdom cannot exercise real width. Verifying it needs a browser (`pnpm exec playwright install chromium`) or a manual `pnpm dev:web` look. Not claimed as verified.
 
 ## Log
 
@@ -58,3 +69,7 @@ L7. Phase channel decision for the later milestone: "Status key en gentle-pi", i
 L8. Evidence gathered before writing this document (see Engram topic `architecture/workspace-process-model`): `gentle-todo` does not cross RPC as a widget because RPC mode forwards only string arrays and ignores Component factories (`rpc-mode.js`); `setStatus` carries `statusText` strings only, so `gentle-jobs` is one line, not a panel; the structured todo state crosses as hidden custom messages.
 
 L9. Deferred to the workspaces milestone, not M3: opening the same session twice in two children (unguarded upstream, verbatim "Si se puede evitar gratis lo contemplamos"); restoring open workspaces in waves ("Si, se restaura por oleadas, pensaba que ya lo habíamos acordado así"); rendering only the focused workspace at full delta rate (L2). The current app hosts one session at a time (`ChatHost`), so none of the three can be exercised yet.
+
+L10. T2 turned out to need no production change: `ChatState` is pushed to the renderer whole (`registerHandlers.ts` forwards `host.onState` verbatim), so `todo` crosses the IPC boundary with it and there is no second channel to add. Recorded instead of inventing a redundant hop.
+
+L11. The mock bridge's initial state now carries a demo task list so `pnpm dev:web` can render the card without a real child behind it. The wide/narrow placement stays visually unverified: it is CSS-only, jsdom cannot exercise real width, and downloading Playwright's browsers was not done because it was not authorized.
