@@ -43,7 +43,7 @@ export function Composer({ value, working, onChange, onSend, onAbort }: Composer
   };
 
   return (
-    <form className="gc-composer" onSubmit={handleSubmit}>
+    <form className="gc-composer" aria-label="Composer" onSubmit={handleSubmit}>
       <div className="gc-composer__row">
         <TextField
           multiline

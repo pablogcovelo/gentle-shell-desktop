@@ -410,8 +410,7 @@ describe("ConversationContainer", () => {
     });
 
     const card = await screen.findByTestId("gc-todo-card");
-    const composer = document.querySelector("form.gc-composer");
-    if (!composer) throw new Error("composer not rendered");
+    const composer = screen.getByRole("form", { name: "Composer" });
 
     // The card must come BEFORE the composer in document order: gentle-pi's
     // bottom widget renders above the prompt, never below it (S5).

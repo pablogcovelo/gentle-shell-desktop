@@ -4,6 +4,12 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { Composer } from "./Composer";
 
 describe("Composer", () => {
+  it("exposes the form with the accessible name 'Composer'", () => {
+    render(<Composer value="" working={false} onChange={vi.fn()} onSend={vi.fn()} onAbort={vi.fn()} />);
+
+    expect(screen.getByRole("form", { name: "Composer" })).toBeInTheDocument();
+  });
+
   it("shows the placeholder and the key hints", () => {
     render(<Composer value="" working={false} onChange={vi.fn()} onSend={vi.fn()} onAbort={vi.fn()} />);
 
