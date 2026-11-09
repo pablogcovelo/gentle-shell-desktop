@@ -36,7 +36,7 @@ S7. Data contract: `TodoState { tasks: TodoTask[]; nextId: number; updatedTurn: 
 
 ## Slices
 
-Slice 1 (closed): a7bda25 the feature document, 941ed3a T1, 136f640 T3 and T4. Slice 2 (this commit) closes the feature with T5: the README, the mock-bridge demo state that makes the card visible in `pnpm dev:web`, and the recorded verification below.
+Slice 1 (closed): a7bda25 the feature document, 941ed3a T1, 136f640 T3 and T4. Slice 2 (closed): 30d64e8 T5, 463a623 the review correction for `R3-history-overwrites-live-todo`, 593d601 the browser-verified layout correction, 398a7bf the four layout advisories. Delivery strategy: the whole feature ships as one review slice on `develop` (created from `main` in the fork; `main` untouched), because each commit alone is documentation, test or a bounded correction that cannot stand on its own.
 
 ## Verification
 
@@ -45,6 +45,7 @@ Slice 1 (closed): a7bda25 the feature document, 941ed3a T1, 136f640 T3 and T4. S
 - Proven behavior: a `gentle-todo-state` message folds into panel state and never into the transcript; a reopened chat recovers its task list from `get_messages` with no live event; the card renders nothing without tasks, summarises `done/planned` with dropped tasks off the list, expands to rows with note and status, de-emphasises done rows and renders an unknown status neutrally; the card is mounted only in the chat pane and never in Helpers.
 - Placement verified in a real browser (Playwright, `pnpm dev:web` with the mock's demo tasks), measured instead of eyeballed: at 1400px the card sits in a 280px right rail beside the thread (card x = thread right edge, composer in the same column as the thread); at 820px it stacks between the thread and the composer with the composer last (card y = thread bottom, composer below it).
 - That second measurement found and fixed a real defect: the card originally rendered BELOW the composer, while the TUI renders its bottom widget above the prompt. The card now lives inside the stack, above the composer, and is lifted into the right rail by a CSS grid at 1100px. A DOM-order test pins the rule, because jsdom cannot exercise real width.
+- Re-measured after the layout advisories were closed: at 1400px thread 250+870 → card starts at 1120 (280 wide, `--gc-todo-card-width` resolves to `280px`); at 820px thread ends at 743 and the card sits at 743 with the composer at 799, so the card stays above the prompt. 41 files / 374 tests passing, typecheck clean.
 
 ## Log
 
