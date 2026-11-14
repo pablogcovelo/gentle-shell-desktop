@@ -1,6 +1,6 @@
 # Desktop — desktop-rpc client: real session data, subagent Stop, action detail and independent workspaces
 
-Makes the Workspace artboard (`design/slack-gentle/01-workspace.html`) implementable by consuming gentle-pi's `gentle-shell.desktop-rpc/v1` channel and pi's own `get_session_stats`/`get_state`, and by routing every control action by process/session identity instead of by window focus. Contract work that must land in gentle-pi first is specified in that repo's `odd/tasks/desktop-rpc-client-gaps.md`; this document is the app side only.
+Makes the Workspace artboard (`design/slack-gentle/01-workspace.html`) implementable by consuming gentle-pi's `gentle-shell.desktop-rpc/v1` channel and pi's own `get_session_stats`/`get_state`, and by routing every control action by process/session identity instead of by window focus. Contract work that must land in gentle-pi first is specified in that repo's `odd/tasks/desktop-rpc-client-gaps.md`; this document is the app side only. Capability authority for the covered features is `odd/plans/desktop-ade-app-units.md` (units U1–U6b); this document delivers a subset of that plan and adds units the plan does not contain (RPC client base, action detail, footer composition, welcome hero).
 
 Documentation only: no application change is authorized by this file yet.
 
@@ -38,11 +38,15 @@ S11. Control traffic is separated from user prompts, and its replies are interce
 
 S12. Telemetry truthfulness: model, thinking level, context usage and cost have no push event today. The client refreshes them on demand and after `agent_settled`, marks them as last-known rather than live, and distinguishes unavailable from zero. Once gentle-pi publishes a state event, the client subscribes instead of polling.
 
-S13. Dialogs are keyed by chat. A pending `select`/`confirm`/`input`/`editor` request belongs to the child that asked it, is answered on that child's stdin, and survives focus changes. No dialog may be destroyed by opening another chat, and no answer may reach an unrelated child.
+S13. Dialogs are keyed by chat. A pending `select`/`confirm`/`input`/`editor` request belongs to the child that asked it, is answered on that child's stdin, and survives focus changes. No dialog may be destroyed by opening another chat, and no answer may reach an unrelated child. The process model, workspace lifecycle and concurrency risks behind this routing belong to U6a (`odd/plans/desktop-ade-app-units.md`); S13 only names the chat-id keyed dialog route this program implements on top of it.
 
 S14. Action detail is modeled, not dropped. `tool_execution_start` args, `tool_execution_end` result and `isError` are decoded, folded into chat state and recovered from history; the artboard's collapsed rows and their detail come from that data.
 
 S15. High-risk items are declared per task below and each affected unit gets its own commit, so native review can take it alone.
+
+S16. Boundary: gentle-shell owns worktree, branch and ODD directives; the app presents and communicates with it and never competes with that policy. Terminal chrome, raw terminal-input handlers and component factories are not features to port; map the capability instead. The app adds no prompt queue and no app-owned workflow engine.
+
+S17. Capability adoption: U1 is delivered entirely by T2. T3 and T4 are governed by U3's acceptance boundaries (display only data the child supplies; unavailable is never rendered as zero; context occupancy is never derived from accumulated session tokens and no context-window fallback is guessed; usage and async responses stay bound to their source session; refresh happens at meaningful lifecycle boundaries; provider quota is never presented as inferred from session cost — `odd/plans/desktop-ade-app-units.md`, "U3 — Session usage and context"). The subscription-usage meters come from a real subscription usage source, which is not the inference U3 forbids, so both rules coexist. T4 covers the READ half of U2 only — displaying the effective model and thinking level reported by the child, never the last requested choice; selecting model or thinking level remains U2 and is outside this program. The process model behind T5 belongs to U6a, which is the authority; this document only depends on it and specifies nothing of its own. Existing `select`, `confirm`, `input` and `editor` dialogs already cross RPC and must not be described as missing review integration. U4, U5 and U6b remain unscheduled plan units and are not part of this program.
 
 ## Tasks
 
@@ -50,10 +54,10 @@ S15. High-risk items are declared per task below and each affected unit gets its
 | --- | --- | --- | --- | --- |
 | T0 | S10 | done — answered from both resolved builds' dispatch code plus a live child probe (L6); no client code written | item 6 (an unverified transport assumption would have invalidated T1-T7) | evidence only, no code |
 | T1 | S10, S11 | delegated writer — `src/main/domain/rpc/desktopRpc.ts`: envelope build/parse, `requestId`, correlation map with timeout, `capabilities` gate, `unsupported_method`/`invalid_request` handling, JSONL fixtures beside the existing ones | none (no data, no contracts beyond the new module) | pending |
-| T2 | S11 | inline — intercept `setWidget` for `gentle-desktop-rpc` before the reducer; pass `setStatus` through to state | item 3 (changes what existing chat rendering sees) | pending |
-| T3 | S12 | delegated writer — `get_subscription_usage` + `rate_limit` event into the Usage section meters; header-only providers stay `pending` and say so | item 6 (meters are the feature's only proof) | pending |
-| T4 | S12 | delegated writer — `get_session_stats` (pi command, correlated by `id`) for cost, tokens and `contextUsage.percent`, plus `get_state` for model and thinking; refresh on `agent_settled`; never render unavailable as zero | item 3 (new `RpcCommand` member must not disturb existing prompt/abort framing) | pending |
-| T5 | S13 | delegated writer, after U6a lands — `Map<chatId, PiSession>`, per-chat `ChatState`, `answerDialog(chatId, dialogId, answer)`, IPC channel carrying the chat id, and no kill of a sibling child on focus change | item 4 (concurrent children, dialog/answer races), item 1 (workspace records written without validation) | pending |
+| T2 | S11, S17 | inline — absorbs U1 completely (`odd/plans/desktop-ade-app-units.md`, "U1"): intercept `setWidget` for `gentle-desktop-rpc` before the reducer; consume `setStatus` AND `notify`; keyed status entries replaced and cleared per the wire contract; notification severity rendered without adding conversation messages; all feedback including async responses scoped to its source session so errors and notifications are not duplicated; U1's test list (replacement, clearing, malformed payloads, unchanged dialog/helpers/todo behaviour) applies. No ODD-phase or OS-notification behaviour is invented | item 3 (changes what existing chat rendering sees) | pending |
+| T3 | S12, S17 | delegated writer — `get_subscription_usage` + `rate_limit` event into the Usage section meters; header-only providers stay `pending` and say so; governed by U3's acceptance boundaries (S17) | item 6 (meters are the feature's only proof) | pending |
+| T4 | S12, S17 | delegated writer — covers the READ half of U2 only: `get_session_stats` (pi command, correlated by `id`) for cost, tokens and `contextUsage.percent`, plus `get_state` for the effective model and thinking level reported by the child, never the last requested choice; selecting model or thinking level remains U2 and is outside this program; refresh on `agent_settled`; governed by U3's acceptance boundaries (S17); never render unavailable as zero | item 3 (new `RpcCommand` member must not disturb existing prompt/abort framing) | pending |
+| T5 | S13 | delegated writer, after U6a lands — the process model, routing by process/session identity, background accumulation, focus-only full-rate rendering, close/quit handling, child-failure locality, the no-workspace-count-cap rule and the concurrency risk all belong to U6a (`odd/plans/desktop-ade-app-units.md`, "U6a"), which is the authority; this document only depends on it and specifies nothing of its own, implementing the chat-id keyed dialog route U6a already demands | item 4 (concurrent children, dialog/answer races), item 1 (workspace records written without validation) | pending |
 | T6 | S12 | inline — `list_subagents`/`cancel_subagent` + `agents_update`; enables the Stop control and closes the README limitation | item 3 (README claim changes) | pending |
 | T7 | S14 | delegated writer — decode `tool_execution_*` args/result/`isError`, fold into state, recover from history, render disclosure rows with the category from S7 | item 6 | pending |
 | T8 | S4-S7 | inline — footer composition once the gentle-pi methods exist: path, changes, capabilities, active profile, model/thinking, context, version | none (presentation of verified data) | pending |
@@ -80,7 +84,7 @@ Per task, the checks the implementation session must run — these are the contr
 
 - T0: one real child, `capabilities` answered while idle; then the same request sent while a turn streams, with the outcome recorded either way. A refusal is a finding that reshapes T1, not a failure to work around.
 - T1: focused tests for envelope validation (schema mismatch, missing `requestId`, oversized payload, unknown method), correlation of a reply to its `requestId`, timeout when the extension is silent, and rejection of a reply for a different or expired `requestId`. Fixtures recorded as JSONL under `src/main/domain/rpc/__fixtures__/`.
-- T2: the reducer never sees `gentle-desktop-rpc` frames; `setStatus` reaches state with its `statusKey`/`statusText`; existing chat fixtures stay byte-identical.
+- T2: the reducer never sees `gentle-desktop-rpc` frames; `setStatus` reaches state with its `statusKey`/`statusText`; `notify` renders with its severity and adds no conversation message; feedback stays scoped to its source session; U1's test list (replacement, clearing, malformed payloads, unchanged dialog/helpers/todo behaviour) is binding; existing chat fixtures stay byte-identical.
 - T3: a provider with data renders its windows; a header-less provider stays `pending` and never renders zero; a `rate_limit` event updates an already-rendered meter.
 - T4: unavailable is rendered as unavailable, never as zero or as a guessed window; only `agent_settled` or an explicit user action triggers a refresh; a late response for a previous chat cannot overwrite the current one.
 - T5: two children alive at once; a dialog in A answerable while B is focused; closing A does not touch B; an answer for A never reaches B; two sessions in one cwd are distinguished.
@@ -89,6 +93,8 @@ Per task, the checks the implementation session must run — these are the contr
 - T8: no field renders without a source; the MCP count never claims a connection state.
 - T9: reduced-motion starts static, the intro plays once per opened chat and settles on restore.
 - T10: both corrected references resolve on disk.
+
+U1's and U3's test lists are binding wherever T2–T4 cover them. T5 sits on the concurrency-sensitive workspace unit U6a and requires independent verification when implemented.
 
 Repository-wide, after each slice: `pnpm vitest run` and `pnpm typecheck` clean.
 
