@@ -1,0 +1,27 @@
+{
+  "title": "Gentle Shell · Your development, in good company",
+  "brief": "GUI concepts for this repository, inspired by the supplied Slack interface and the personality and color codes of gentlemanprogramming.com. Preserve per-chat helpers and tasks. Standalone visual proposals only; no application implementation.",
+  "artboards": [
+    {
+      "file": "01-workspace.html",
+      "title": "Workspace",
+      "tradeoff": "Closest to Slack: familiar chat navigation with a fixed three-section panel (tasks, usage, agents) beside the conversation; uses more horizontal space.",
+      "width": 1440,
+      "height": 960
+    },
+    {
+      "file": "02-focus.html",
+      "title": "Focus",
+      "tradeoff": "A quieter, centered conversation with compact navigation; task and helper details require opening their panels.",
+      "width": 1440,
+      "height": 960
+    },
+    {
+      "file": "03-crew.html",
+      "title": "Crew",
+      "tradeoff": "A helper-first split view for following delegated work; the main conversation is one tab away.",
+      "width": 1440,
+      "height": 960
+    }
+  ]
+}
