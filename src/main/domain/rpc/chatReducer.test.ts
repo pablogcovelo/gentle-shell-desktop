@@ -3,7 +3,13 @@ import path from "node:path";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { decodeLine } from "./codec";
-import { INITIAL_CHAT_STATE, MAX_NOTIFICATIONS, reduceChat, type ChatState } from "./chatReducer";
+import {
+  INITIAL_CHAT_STATE,
+  MAX_NOTIFICATIONS,
+  MAX_TOOL_PAYLOAD_CHARS,
+  reduceChat,
+  type ChatState,
+} from "./chatReducer";
 import type { RpcEvent } from "./types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -862,5 +868,39 @@ describe("tool execution detail (desktop-rpc T7)", () => {
     const started = reduceChat(INITIAL_CHAT_STATE, start("c1", "read", { path: "a" }));
     expect(started.toolCalls?.[0]?.isError).toBeUndefined();
     expect(started.toolCalls?.[0]?.result).toBeUndefined();
+  });
+});
+
+describe("bounded tool payloads (T7 advisory R4-PAYLOAD)", () => {
+  const big = "x".repeat(MAX_TOOL_PAYLOAD_CHARS + 100);
+
+  it("keeps a payload that fits, verbatim", () => {
+    const args = { path: "README.md" };
+    const started = reduceChat(INITIAL_CHAT_STATE, {
+      type: "tool_execution_start",
+      toolCallId: "c1",
+      toolName: "read",
+      args,
+    });
+
+    expect(started.toolCalls?.[0]?.args).toEqual(args);
+  });
+
+  it("replaces an oversized payload with a marker that names its real size", () => {
+    const ended = reduceChat(INITIAL_CHAT_STATE, {
+      type: "tool_execution_end",
+      toolCallId: "c1",
+      toolName: "read",
+      result: big,
+      isError: false,
+    });
+
+    const result = ended.toolCalls?.[0]?.result;
+    expect(typeof result).toBe("string");
+    expect(result).toMatch(/^\[truncated: \d+ chars\]$/);
+    // The marker states the real size instead of pretending to be complete.
+    const marker = Number(/\[truncated: (\d+) chars\]/.exec(String(result))?.[1]);
+    expect(marker).toBeGreaterThan(MAX_TOOL_PAYLOAD_CHARS);
+    expect(String(result).length).toBeLessThan(MAX_TOOL_PAYLOAD_CHARS);
   });
 });

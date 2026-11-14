@@ -47,6 +47,41 @@ export const MAX_NOTIFICATIONS = 10;
  * that the state stays cheap to clone to the renderer on every event. */
 export const MAX_TOOL_CALLS = 20;
 
+/** How much of a single tool payload is kept (desktop-rpc T7, advisory
+ * R4-PAYLOAD). Args and results are now carried into state, and the manager
+ * re-clones the whole ChatState on every event, so one large tool output
+ * would inflate every subsequent broadcast — and block the renderer when the
+ * row expands. The cap bounds that; a longer payload is replaced by a marker
+ * that states its real size, so nothing pretends to be complete. */
+export const MAX_TOOL_PAYLOAD_CHARS = 4096;
+
+/** The JSON subset a tool payload can be once it has crossed the wire. It is
+ * the *return* shape of `boundedPayload`, so that helper never hands back an
+ * unexamined `unknown`; the values themselves come from `JSON.parse`, which
+ * is why the in-cap branch can carry the original value through. */
+export type ToolPayloadValue =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly ToolPayloadValue[]
+  | { readonly [key: string]: ToolPayloadValue };
+
+/** Keeps a payload only while its serialized form stays under
+ * MAX_TOOL_PAYLOAD_CHARS; a larger one becomes a marker naming its real size,
+ * so the UI can say what it dropped instead of pretending to show all of it. */
+function boundedPayload(value: unknown): ToolPayloadValue | undefined {
+  if (value === undefined) return undefined;
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(value) ?? String(value);
+  } catch {
+    return "[unserializable payload]";
+  }
+  if (serialized.length <= MAX_TOOL_PAYLOAD_CHARS) return value as ToolPayloadValue;
+  return `[truncated: ${serialized.length} chars]`;
+}
+
 // ChatState itself now lives in @shared/bridge-types (T3: the renderer
 // receives it directly through GentleBridge.onState/openChat/newChat).
 // Re-exported here so existing call sites in this main-process domain
@@ -111,7 +146,7 @@ export function reduceChat(state: ChatState, event: RpcEvent, now?: string): Cha
         const started: ToolCallView = {
           id: event.toolCallId,
           toolName: event.toolName,
-          args: event.args,
+          args: boundedPayload(event.args),
           status: "running",
         };
         return { ...next, toolCalls: [...calls, started].slice(-MAX_TOOL_CALLS) };
@@ -120,7 +155,7 @@ export function reduceChat(state: ChatState, event: RpcEvent, now?: string): Cha
         id: event.toolCallId,
         toolName: event.toolName,
         args: existing?.args,
-        result: event.result,
+        result: boundedPayload(event.result),
         isError: event.isError,
         status: "done",
       };

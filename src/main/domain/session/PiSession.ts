@@ -390,14 +390,21 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
     const rpc = this.rpcClient;
     if (!rpc || this.probeState !== "ok") return;
     if (!this.advertisedMethods?.has("tool_vocabulary")) return;
-    void rpc.request("tool_vocabulary").then((reply) => {
-      // A reply for a session nobody is using must not fold state.
-      if (this.rpcClient !== rpc || !reply.ok) return;
-      const vocabulary = parseToolVocabulary(reply.data);
-      if (!vocabulary) return;
-      this.state = { ...this.state, toolVocabulary: vocabulary };
-      this.emit("state", this.state);
-    });
+    void rpc.request("tool_vocabulary").then(
+      (reply) => {
+        // A reply for a session nobody is using must not fold state.
+        if (this.rpcClient !== rpc || !reply.ok) return;
+        const vocabulary = parseToolVocabulary(reply.data);
+        if (!vocabulary) return;
+        this.state = { ...this.state, toolVocabulary: vocabulary };
+        this.emit("state", this.state);
+      },
+      // A transport-level rejection (the child exiting between probe and reply
+      // is the realistic case) must degrade to "vocabulary absent" — raw tool
+      // names — and never surface as an unhandled rejection in the main
+      // process (advisory R3-002).
+      () => undefined,
+    );
   }
 
   /**
