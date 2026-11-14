@@ -12,17 +12,26 @@ export interface TodoCardProps {
  * `planned` mirrors the TUI: dropped tasks are off the list on purpose and
  * no longer count as open.
  */
-function summarize(todo: TodoPanelState): { marker: string; text: string; done: number; planned: number } {
+function summarize(todo: TodoPanelState): {
+  marker: string;
+  text: string;
+  done: number;
+  planned: number;
+  /** Derived here, never stored, and null when nothing is planned — an empty
+   * plan must show no percentage rather than a fabricated 0 %. */
+  percent: number | null;
+} {
   const tasks = todo.tasks;
   // Terminal statuses (dropped) are excluded from the planned denominator,
   // exactly like todoWorkSummary's planned = total - dropped.
   const done = tasks.filter((task) => task.status === DONE).length;
   const planned = tasks.length - tasks.filter((task) => task.status === DROPPED).length;
+  const percent = planned > 0 ? Math.round((done / planned) * 100) : null;
   const current = tasks.find((task) => task.status === IN_PROGRESS) ?? tasks.find((task) => task.status === PENDING) ?? tasks.find((task) => task.status === BLOCKED);
   if (current) {
-    return { marker: glyphFor(current.status), text: `${current.title}${current.note ? ` · ${current.note}` : ""}`, done, planned };
+    return { marker: glyphFor(current.status), text: `${current.title}${current.note ? ` · ${current.note}` : ""}`, done, planned, percent };
   }
-  return { marker: glyphFor(DONE), text: `${done} done`, done, planned };
+  return { marker: glyphFor(DONE), text: `${done} done`, done, planned, percent };
 }
 
 // The five statuses gentle-shell's todo tool writes. Anything else (a
@@ -89,7 +98,9 @@ export function TodoCard({ todo }: TodoCardProps) {
         </span>
         <span className="gc-todo-card__summary-text">{summary.text}</span>
         <span className="gc-todo-card__summary-count">
-          {summary.done}/{summary.planned} <span className="gc-todo-card__summary-label">todos</span>
+          {summary.done}/{summary.planned}
+          {summary.percent != null ? ` · ${summary.percent}%` : ""}{" "}
+          <span className="gc-todo-card__summary-label">todos</span>
         </span>
       </button>
       {expanded ? (

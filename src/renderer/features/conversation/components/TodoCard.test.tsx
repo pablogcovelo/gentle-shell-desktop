@@ -94,3 +94,30 @@ describe("TodoCard", () => {
     expect(toggle).toHaveTextContent("0/2");
   });
 });
+
+describe("TodoCard derived percentage (T9)", () => {
+  it("shows the percentage derived from the task counts, not a stored value", () => {
+    render(
+      <TodoCard
+        todo={state([
+          task({ id: 1, status: "done" }),
+          task({ id: 2, status: "done" }),
+          task({ id: 3, status: "pending" }),
+          task({ id: 4, status: "in_progress" }),
+        ])}
+      />,
+    );
+
+    expect(screen.getByTestId("gc-todo-card")).toHaveTextContent("2/4 · 50%");
+  });
+
+  it("shows no percentage when nothing is planned, instead of a fabricated 0%", () => {
+    render(
+      <TodoCard
+        todo={state([task({ id: 1, status: "dropped" }), task({ id: 2, status: "dropped" })])}
+      />,
+    );
+
+    expect(screen.getByTestId("gc-todo-card")).not.toHaveTextContent("%");
+  });
+});
