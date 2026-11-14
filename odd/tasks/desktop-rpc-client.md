@@ -60,7 +60,7 @@ S17. Capability adoption: U1 is delivered entirely by T2. T3 and T4 are governed
 | T5 | S13 | delegated writer, after U6a lands — the process model, routing by process/session identity, background accumulation, focus-only full-rate rendering, close/quit handling, child-failure locality, the no-workspace-count-cap rule and the concurrency risk all belong to U6a (`odd/plans/desktop-ade-app-units.md`, "U6a"), which is the authority; this document only depends on it and specifies nothing of its own, implementing the chat-id keyed dialog route U6a already demands | item 4 (concurrent children, dialog/answer races), item 1 (workspace records written without validation) | pending |
 | T6 | S12 | inline — `list_subagents`/`cancel_subagent` + `agents_update`; enables the Stop control and closes the README limitation | item 3 (README claim changes) | pending |
 | T7 | S14 | delegated writer — decode `tool_execution_*` args/result/`isError`, fold into state, recover from history, render disclosure rows with the category from S7 | item 6 | pending |
-| T8 | S4-S7 | inline — footer composition once the gentle-pi methods exist: path, changes, capabilities, active profile, model/thinking, context, version | none (presentation of verified data) | pending |
+| T8 | S4-S7 | inline — footer composition once the gentle-pi methods exist: path, worktree changes, capabilities, session-effective profile, model/thinking, context, version. Two honesty rules bind it: worktree counts render only when the child supplies them, so `countsUnavailable` or a failed/unborn root is displayed as such instead of an invented number; and the profile field shows the label the session actually resolved, which differs from the global `active` when a profile is bound | none (presentation of verified data) | pending |
 | T9 | S8, S9 | inline — welcome hero animation and derived task percentage | none (app-local presentation) | pending |
 | T10 | S1 | inline — README limitation and `types.ts` protocol routes corrected in this slice | none (documentation) | pending |
 
@@ -90,7 +90,7 @@ Per task, the checks the implementation session must run — these are the contr
 - T5: two children alive at once; a dialog in A answerable while B is focused; closing A does not touch B; an answer for A never reaches B; two sessions in one cwd are distinguished.
 - T6: Stop on a running subagent leaves it non-terminal until `agents_update` confirms, and never reports success from the response alone.
 - T7: args, result and error survive a reload via history; an unknown tool renders neutrally with its raw name.
-- T8: no field renders without a source; the MCP count never claims a connection state.
+- T8: no field renders without a source; the MCP count never claims a connection state; a worktree root whose counts are unavailable or failed is labelled, never rendered as zero files or zero lines; a bound profile label is distinguishable from the global active profile.
 - T9: reduced-motion starts static, the intro plays once per opened chat and settles on restore.
 - T10: both corrected references resolve on disk.
 
