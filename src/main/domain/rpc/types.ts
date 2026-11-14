@@ -4,14 +4,20 @@
  * testable without spawning a real gentle-shell process (hexagonal main
  * process, see src/README.md).
  *
- * Mirrors the authoritative shapes in the local pi checkout:
- * - packages/coding-agent/docs/rpc.md (wire examples, extension UI protocol)
- * - packages/coding-agent/src/modes/rpc/rpc-types.ts (RpcCommand,
+ * Mirrors the authoritative shapes in the installed pi package
+ * (`@earendil-works/pi-coding-agent`, resolved from node_modules):
+ * - dist/modes/rpc/rpc-types.d.ts (RpcCommand,
  *   RpcExtensionUIRequest/Response)
- * - packages/agent/src/types.ts (AgentEvent) and
- *   packages/coding-agent/src/modes/json-event.ts (the RPC-mode-specific
- *   `message_update` shape, which strips the cumulative `message` field and
- *   the `partial` snapshot that the core AgentEvent still carries)
+ * - docs/rpc.md (wire examples, extension UI protocol) and
+ *   dist/modes/json-event.js (the RPC-mode-specific `message_update` shape,
+ *   which strips the cumulative `message` field and the `partial` snapshot
+ *   that the core AgentEvent in @earendil-works/pi-agent-core still carries)
+ *
+ * Desktop control traffic is a different contract riding the same channel:
+ * desktop-rpc wraps a JSON envelope in a `/gentle:desktop` prompt and answers
+ * on the `gentle-desktop-rpc` setWidget channel, never as that prompt's
+ * `response` (gentle-pi `docs/desktop-rpc.md`; see odd/tasks/
+ * desktop-rpc-client.md). Do not model it as a `--mode rpc` response.
  *
  * Only the commands/events the desktop chat window needs are modeled here.
  * Everything else (bash_execution_update, queue_update, compaction_*,

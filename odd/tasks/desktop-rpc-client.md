@@ -1,0 +1,104 @@
+# Desktop — desktop-rpc client: real session data, subagent Stop, action detail and independent workspaces
+
+Makes the Workspace artboard (`design/slack-gentle/01-workspace.html`) implementable by consuming gentle-pi's `gentle-shell.desktop-rpc/v1` channel and pi's own `get_session_stats`/`get_state`, and by routing every control action by process/session identity instead of by window focus. Contract work that must land in gentle-pi first is specified in that repo's `odd/tasks/desktop-rpc-client-gaps.md`; this document is the app side only.
+
+Documentation only: no application change is authorized by this file yet.
+
+## Specs
+
+S1. Authorization (verbatim): "Si tenemos todo bien definido y acotado generamos la documentación pertienente para la posterior implementacion porque entiendo que los cuatro bloqueos del unto 4 tienen su solución propuesta. Corrige también las dos rutas de README.md y types.ts." Deliverable is documentation plus the two documentation corrections, not the client.
+
+S2. Document ownership (verbatim): "la documentació odd que afecte a gentle-shell debe vivir en ../gentle-pi y se trabajará con una sesión en su propio repo y la documentación odd que afecte a gentle-shell-desktop vivira es este mismo repo y se trabajará con sesiones en este mismo repo". Consequence: gentle-pi-side methods are specified in that repo, and each side is implemented by a session in its own repository. Neither document authorizes editing the other repository's source.
+
+S3. Process model: one independent `gentle-shell --mode rpc` child per open workspace, never in-process `switch_session` recycling (recorded decision, `odd/plans/desktop-ade-app-units.md:79`, unit U6a). Routing is by process/session identity, never by cwd alone, because two sessions may share a project (`:81`). User's model (verbatim): "El planteamiento es que cada workspace sean sesiones independientes de gentle-shell" and "¿Siendo sesiones independientes como te planteo en 4.2 no sería como tener dos terminales independientes de gentle-shell y que uno reciba uno de estos diálogos? Cada uno viviría en su propia sesión". Independent children are the intended end state; this document does not re-specify U6a beyond what the dialog, state and error routing requires.
+
+S4. Footer profile is the agent-model routing profile (verbatim): "profile-name es el nombre del perfil que el usuario tiene activo desde /gentle:profiles, no la identidad del usuario". It renders the session-effective label the TUI footer shows — `name (session)`, `(local)`, `(repo)` or the bare global name (`gentle-pi/extensions/gentle-shell.ts:248-266`) — not an account identity, and never an invented one.
+
+S5. Footer MCP is honest inventory, not health (user asked, verbatim): "Para el footer de MCP igual podemos investigar este repo https://github.com/oniricosistemas/mcp-sidebar#readme si todavía no es posible recuperar información de los MCP por RPC ¿Podemos crear e RPC en gentle-shell?" Outcome: `pi.getMcpStatus()` does not exist in the pi builds this app or gentle-pi resolve, and `pi.getMcpServers()` covers extension-registered servers only. So the footer may show configured count and tool namespaces, and must never claim "connected". A green state is out of scope until pi ships that API.
+
+S6. Git changes belong to gentle-pi. `lib/shell-changes.ts` already holds the gathering and aggregation behind an injected `GitRunner`; the app renders numbers and never spawns git for policy. A workspace is a GUI host/session context, not a new owner of branch or worktree policy (`odd/plans/desktop-ade-app-units.md:79`).
+
+S7. Action categories come from gentle-pi as data, glyphs stay in the app. The native vocabularies are three separate constant tables plus Engram's memory chrome, all embedded in pi-tui rendering modules, so they are copied into a published vocabulary rather than imported. The GUI keeps its own glyphs (robot for delegation) as already designed in the artboard.
+
+S8. The welcome hero is app-local animation (verbatim): "Si, el hero de bienvenida anmado es animación en app-local". It is not driven by pi: the native choreography paints through `ctx.ui.setHeader`, which RPC does not expose.
+
+S9. The task-card percentage is derived (verbatim): "Si, derivamos el porcentaje por el conteo de tasks". No new field is requested from gentle-pi for it.
+
+S10. Channel facts that bind the client (all verified against gentle-pi `docs/desktop-rpc.md` and `lib/`):
+ - The gate is already satisfied: requests answer only when `mode === "rpc"` and `GENTLE_SHELL_INTERACTIVE_HOST === "1"` (`lib/rpc-host.ts:15-17`), which the app has set since M2 (`PiSession.ts:70-78`).
+ - A request is a `/gentle:desktop <json>` prompt; the domain answer never comes back as that prompt's `response` (`docs/desktop-rpc.md:32-43`).
+ - `requestId` is required, 1..128 characters, and correlates the `setWidget` reply; it is not the prompt `id` (`lib/desktop-rpc.ts:46-48`).
+ - The reply is an `extension_ui_request` with `method: "setWidget"`, `widgetKey: "gentle-desktop-rpc"`, JSON in `widgetLines[0]` (`lib/desktop-rpc.ts:3,116-133`, `extensions/gentle-desktop-rpc.ts:38-42`).
+ - When the channel is disabled the extension is silent while the prompt still reports `disposition: "handled"`, so success must never be inferred from the prompt response; correlate by `requestId` and time out (`tests/desktop-rpc.test.ts:240-252`).
+ - Schema is `gentle-shell.desktop-rpc/v1`; unknown schema is `invalid_request`, unknown method is `unsupported_method`, `capabilities` is the only support probe (`lib/desktop-rpc.ts:1,69,151-155`).
+ - Requests are not queued; outcomes settle independently; one response per request (`docs/desktop-rpc.md:1071`).
+
+S11. Control traffic is separated from user prompts, and its replies are intercepted before the chat reducer. `ChatState` must not receive `gentle-desktop-rpc` widget frames or the generic `setStatus` frames it currently drops (`chatReducer.ts:206-207`); `setStatus` is instead passed through so an installed MCP or future health publisher can surface real state without a second RPC method.
+
+S12. Telemetry truthfulness: model, thinking level, context usage and cost have no push event today. The client refreshes them on demand and after `agent_settled`, marks them as last-known rather than live, and distinguishes unavailable from zero. Once gentle-pi publishes a state event, the client subscribes instead of polling.
+
+S13. Dialogs are keyed by chat. A pending `select`/`confirm`/`input`/`editor` request belongs to the child that asked it, is answered on that child's stdin, and survives focus changes. No dialog may be destroyed by opening another chat, and no answer may reach an unrelated child.
+
+S14. Action detail is modeled, not dropped. `tool_execution_start` args, `tool_execution_end` result and `isError` are decoded, folded into chat state and recovered from history; the artboard's collapsed rows and their detail come from that data.
+
+S15. High-risk items are declared per task below and each affected unit gets its own commit, so native review can take it alone.
+
+## Tasks
+
+| ID | Specs | Route | Risk | Commit |
+| --- | --- | --- | --- | --- |
+| T0 | S10 | inline probe — does pi accept a `/gentle:desktop` prompt while the assistant is mid-stream? Bounded, against a real child, before any client code | item 6 (an unverified transport assumption would invalidate T1-T7) | pending |
+| T1 | S10, S11 | delegated writer — `src/main/domain/rpc/desktopRpc.ts`: envelope build/parse, `requestId`, correlation map with timeout, `capabilities` gate, `unsupported_method`/`invalid_request` handling, JSONL fixtures beside the existing ones | none (no data, no contracts beyond the new module) | pending |
+| T2 | S11 | inline — intercept `setWidget` for `gentle-desktop-rpc` before the reducer; pass `setStatus` through to state | item 3 (changes what existing chat rendering sees) | pending |
+| T3 | S12 | delegated writer — `get_subscription_usage` + `rate_limit` event into the Usage section meters; header-only providers stay `pending` and say so | item 6 (meters are the feature's only proof) | pending |
+| T4 | S12 | delegated writer — `get_session_stats` (pi command, correlated by `id`) for cost, tokens and `contextUsage.percent`, plus `get_state` for model and thinking; refresh on `agent_settled`; never render unavailable as zero | item 3 (new `RpcCommand` member must not disturb existing prompt/abort framing) | pending |
+| T5 | S13 | delegated writer, after U6a lands — `Map<chatId, PiSession>`, per-chat `ChatState`, `answerDialog(chatId, dialogId, answer)`, IPC channel carrying the chat id, and no kill of a sibling child on focus change | item 4 (concurrent children, dialog/answer races), item 1 (workspace records written without validation) | pending |
+| T6 | S12 | inline — `list_subagents`/`cancel_subagent` + `agents_update`; enables the Stop control and closes the README limitation | item 3 (README claim changes) | pending |
+| T7 | S14 | delegated writer — decode `tool_execution_*` args/result/`isError`, fold into state, recover from history, render disclosure rows with the category from S7 | item 6 | pending |
+| T8 | S4-S7 | inline — footer composition once the gentle-pi methods exist: path, changes, capabilities, active profile, model/thinking, context, version | none (presentation of verified data) | pending |
+| T9 | S8, S9 | inline — welcome hero animation and derived task percentage | none (app-local presentation) | pending |
+| T10 | S1 | inline — README limitation and `types.ts` protocol routes corrected in this slice | none (documentation) | pending |
+
+## Slices
+
+Slice 1 (documentation, this commit): the feature document, the gentle-pi companion document, `README.md` Stop limitation, `types.ts` protocol routes. No application source, no tests.
+
+Slice 2 (T0, T1, T2) is the base: a client that can prove the channel works before any feature depends on it.
+
+Slice 3 (T3, T4, T6) delivers the artboard's data: Usage meters, session identity, context, subagent Stop. Depends on slice 2 only.
+
+Slice 4 (T5, T7) delivers the interaction model: independent children with dialog routing, and action detail. T5 depends on U6a; T7 depends on slice 2. Both are the largest review burden and ship as separate commits.
+
+Slice 5 (T8, T9) completes the artboard's presentation on top of verified data.
+
+Delivery: local work-unit commits on a feature branch; push, PR and merge remain the owner's decisions.
+
+## Verification
+
+Per task, the checks the implementation session must run — these are the contracts, not yet evidence:
+
+- T0: one real child, `capabilities` answered while idle; then the same request sent while a turn streams, with the outcome recorded either way. A refusal is a finding that reshapes T1, not a failure to work around.
+- T1: focused tests for envelope validation (schema mismatch, missing `requestId`, oversized payload, unknown method), correlation of a reply to its `requestId`, timeout when the extension is silent, and rejection of a reply for a different or expired `requestId`. Fixtures recorded as JSONL under `src/main/domain/rpc/__fixtures__/`.
+- T2: the reducer never sees `gentle-desktop-rpc` frames; `setStatus` reaches state with its `statusKey`/`statusText`; existing chat fixtures stay byte-identical.
+- T3: a provider with data renders its windows; a header-less provider stays `pending` and never renders zero; a `rate_limit` event updates an already-rendered meter.
+- T4: unavailable is rendered as unavailable, never as zero or as a guessed window; only `agent_settled` or an explicit user action triggers a refresh; a late response for a previous chat cannot overwrite the current one.
+- T5: two children alive at once; a dialog in A answerable while B is focused; closing A does not touch B; an answer for A never reaches B; two sessions in one cwd are distinguished.
+- T6: Stop on a running subagent leaves it non-terminal until `agents_update` confirms, and never reports success from the response alone.
+- T7: args, result and error survive a reload via history; an unknown tool renders neutrally with its raw name.
+- T8: no field renders without a source; the MCP count never claims a connection state.
+- T9: reduced-motion starts static, the intro plays once per opened chat and settles on restore.
+- T10: both corrected references resolve on disk.
+
+Repository-wide, after each slice: `pnpm vitest run` and `pnpm typecheck` clean.
+
+## Log
+
+L1. Original user request (verbatim): "Revisa el tablero Workspace presente en design dime qué cosas no son actualmente implementables, si necesitas revisar gentle-shell puedes hacerlo en el directorio ../gentle-pi".
+
+L2. Follow-up decisions (verbatim, decisive lines): "¿Lo que no es implementable como está dibujado porque no tiene fuente posible tampoco podemos crear al fuente? Recuerda que podemos trabajar en gentle-shell para realizar agregaciones, adaptaciones, correcciones, …"; "profile-name es el nombre del perfil que el usuario tiene activo desde /gentle:profiles, no la identidad del usuario"; "¿Podemos crear e RPC en gentle-shell?"; "¿Cómo solventamos el footer de changes? ¿Lo trabajamos en gentle-shell o trabajo propio en gentle-shell-desktop?"; "¿Cómo solventmos los glifos semánticos read/edit/memory/delegation/rdd que están implementados en gentle-shell?"; "Si, el hero de bienvenida anmado es animación en app-local"; "Si, derivamos el porcentaje por el conteo de tasks"; "no sé porque necesitas apuntar a esas rutas".
+
+L3. Authorization (verbatim): "Si tenemos todo bien definido y acotado generamos la documentación pertienente para la posterior implementacion porque entiendo que los cuatro bloqueos del unto 4 tienen su solución propuesta. Corrige también las dos rutas de README.md y types.ts." Document ownership clarified in the same message, quoted in S2.
+
+L4. Evidence gathered before this document (read-only): the desktop channel exists in gentle-pi and no app source references it; the app's gate variable is already set; `types.ts` points at monorepo paths that do not exist in this checkout; the README Stop claim contradicts `lib/desktop-rpc-agents.ts:280-284`; `pi.getMcpStatus()` is absent from both resolvable pi builds; `lib/shell-changes.ts` separates gathering from rendering.
+
+L5. Open risk carried into T0: whether pi accepts a `/gentle:desktop` prompt while the assistant is streaming is unverified. Usage and Stop matter precisely during a run, so this decides whether the control plane needs a queue, a second child, or a gentle-pi-side change.

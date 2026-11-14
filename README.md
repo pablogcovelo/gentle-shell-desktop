@@ -59,7 +59,7 @@ or set `GENTLE_SHELL_BIN` to the launcher's full path (`which gentle-shell`). ma
 
 ### Known limitations
 
-- Stop in the Helpers tab is disabled until gentle-agents exposes a stop command over RPC.
+- Stop in the Helpers tab is disabled until the app consumes gentle-pi's desktop RPC channel, where `cancel_subagent` already waits (see [`odd/tasks/desktop-rpc-client.md`](odd/tasks/desktop-rpc-client.md)).
 - No ODD phase indicator yet (M3b): the M3 task card shows tasks only, not the phase. Sign in and manage providers or extensions through `gentle-shell` in the terminal (M4).
 - No signing, notarization or auto-update yet (M5).
 
