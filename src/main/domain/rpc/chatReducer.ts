@@ -30,6 +30,17 @@ type GenericFireAndForgetUIRequest = {
 
 const NOTIFICATION_SEVERITIES: ReadonlySet<string> = new Set<string>(Object.values(NOTIFICATION_SEVERITY));
 
+/**
+ * How many notifications ChatState retains (desktop-rpc T2b). Chosen as a
+ * small constant: ten rows is enough recent feedback to scan in the
+ * renderer's transient stack, while the array cloned into every pushed
+ * ChatState — which the renderer receives on every event — stays O(1)-size
+ * regardless of how many notifications a child publishes. Independent
+ * verification measured the unbounded list at 82 ms for 10k notifications
+ * and 5248 ms for 40k, paid repeatedly on every event.
+ */
+export const MAX_NOTIFICATIONS = 10;
+
 // ChatState itself now lives in @shared/bridge-types (T3: the renderer
 // receives it directly through GentleBridge.onState/openChat/newChat).
 // Re-exported here so existing call sites in this main-process domain
@@ -248,7 +259,12 @@ function applyNotify(state: ChatState, event: GenericFireAndForgetUIRequest): Ch
   }
 
   const notification: ChatNotification = { message, severity };
-  return { ...state, notifications: [...(state.notifications ?? []), notification] };
+  const retained = [...(state.notifications ?? []), notification];
+  // Bounded retention (desktop-rpc T2b): keep at most MAX_NOTIFICATIONS,
+  // dropping oldest first, so survivors stay in arrival order. Without the
+  // cap the list grows forever and the clone shipped with every state push
+  // grows with it.
+  return { ...state, notifications: retained.slice(-MAX_NOTIFICATIONS) };
 }
 
 /**

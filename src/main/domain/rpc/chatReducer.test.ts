@@ -3,7 +3,7 @@ import path from "node:path";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { decodeLine } from "./codec";
-import { INITIAL_CHAT_STATE, reduceChat, type ChatState } from "./chatReducer";
+import { INITIAL_CHAT_STATE, MAX_NOTIFICATIONS, reduceChat, type ChatState } from "./chatReducer";
 import type { RpcEvent } from "./types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -363,6 +363,27 @@ describe("reduceChat: keyed statuses and notifications (U1, desktop-rpc T2)", ()
     expect(reduceChat(INITIAL_CHAT_STATE, noMessage)).toBe(INITIAL_CHAT_STATE);
     expect(reduceChat(INITIAL_CHAT_STATE, badMessage)).toBe(INITIAL_CHAT_STATE);
     expect(reduceChat(INITIAL_CHAT_STATE, badSeverity)).toBe(INITIAL_CHAT_STATE);
+  });
+
+  it("caps state.notifications at MAX_NOTIFICATIONS, dropping the oldest first", () => {
+    let state = INITIAL_CHAT_STATE;
+    for (let i = 1; i <= MAX_NOTIFICATIONS + 1; i += 1) {
+      state = reduceChat(state, notify(`u-${i}`, { message: `n-${i}` }));
+    }
+    expect(state.notifications!.map((notification) => notification.message)).toEqual(
+      Array.from({ length: MAX_NOTIFICATIONS }, (_, i) => `n-${i + 2}`),
+    );
+  });
+
+  it("keeps the arrival order of the survivors while the cap is exceeded repeatedly", () => {
+    let state = INITIAL_CHAT_STATE;
+    for (let i = 1; i <= MAX_NOTIFICATIONS * 2; i += 1) {
+      state = reduceChat(state, notify(`u-${i}`, { message: `n-${i}`, notifyType: "info" }));
+    }
+    expect(state.notifications!.map((notification) => notification.message)).toEqual(
+      Array.from({ length: MAX_NOTIFICATIONS }, (_, i) => `n-${MAX_NOTIFICATIONS + 1 + i}`),
+    );
+    expect(state.notifications!.every((notification) => notification.severity === "info")).toBe(true);
   });
 
   it("never folds a gentle-desktop-rpc setWidget frame into chat state (interception lives in PiSession)", () => {

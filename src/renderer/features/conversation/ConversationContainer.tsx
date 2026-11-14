@@ -42,7 +42,9 @@ function errorText(cause: unknown): string {
  * `ChatState` (messages, working, pendingDialogs, lastError) — nothing is
  * derived or invented locally. Errors (ChatState.lastError and
  * bridge.onError pushes) render in a dedicated StatusLine, never as a
- * synthetic ChatMessage appended to the thread.
+ * synthetic ChatMessage appended to the thread. Keyed statuses and
+ * notifications (desktop-rpc T2b) render in the same status surface for
+ * the same reason: they are feedback chrome, never transcript entries.
  */
 export function ConversationContainer({ activeChat }: ConversationContainerProps) {
   const bridge = useBridge();
@@ -128,7 +130,7 @@ export function ConversationContainer({ activeChat }: ConversationContainerProps
         runningHelpersCount={chatState.helpers.summary.running}
         onSelectPane={setPane}
       />
-      <StatusLine error={error} />
+      <StatusLine error={error} statuses={chatState.statuses} notifications={chatState.notifications} />
       {pane === CONVERSATION_PANE.HELPERS ? (
         <HelpersContainer
           activity={chatState.helpers}

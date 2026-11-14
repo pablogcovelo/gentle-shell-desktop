@@ -2,7 +2,9 @@ import {
   CHAT_STATE,
   HELPER_STATUS,
   MESSAGE_ROLE,
+  NOTIFICATION_SEVERITY,
   type ChatMessage,
+  type ChatNotification,
   type ChatState,
   type ChatSummary,
   type Dialog,
@@ -15,6 +17,7 @@ import {
   type HelpersActivity,
   type HelpersSummary,
   type HomeMode,
+  type NotificationSeverity,
   type PiDetection,
   type PromptResult,
   type SetupStatus,
@@ -122,7 +125,28 @@ function emptyState(): ChatState {
       nextId: 6,
       updatedTurn: 3,
     },
+    // T2b demo data so `pnpm dev:web` exercises the keyed statuses and the
+    // transient notification stack without a real gentle-shell child: two
+    // status keys in the shape the wire's setStatus produces, and a
+    // representative notification (severity is cycled by the "notify"
+    // message keyword in sendMessage below).
+    statuses: { "gentle-todo": "4 tasks · 1 in progress", "gentle-agents": "1 helper running" },
+    notifications: [{ message: "Mock notification: this is transient feedback, not a message.", severity: NOTIFICATION_SEVERITY.INFO }],
   };
+}
+
+/** Severity cycle for the mock "notify" keyword, so all three severities are reachable in the preview. */
+const NOTIFY_SEVERITY_CYCLE: readonly NotificationSeverity[] = [
+  NOTIFICATION_SEVERITY.INFO,
+  NOTIFICATION_SEVERITY.WARNING,
+  NOTIFICATION_SEVERITY.ERROR,
+];
+let nextNotifyIndex = 0;
+
+function mockNotification(text: string): ChatNotification {
+  const severity = NOTIFY_SEVERITY_CYCLE[nextNotifyIndex % NOTIFY_SEVERITY_CYCLE.length]!;
+  nextNotifyIndex += 1;
+  return { message: `Mock notify: ${text}`, severity };
 }
 
 let currentState: ChatState = emptyState();
@@ -148,6 +172,7 @@ export function resetMockBridge(): void {
   currentState = emptyState();
   nextMessageId = 0;
   nextDialogId = 0;
+  nextNotifyIndex = 0;
   stateListeners.clear();
   errorListeners.clear();
 }
@@ -460,6 +485,11 @@ export const mockBridge: GentleBridge = {
     const lower = text.toLowerCase();
     if (lower.includes("fail")) {
       await failReply();
+      return { queued: true };
+    }
+    if (lower.includes("notify")) {
+      await delay(STREAM_DELAY_MS);
+      setState({ ...currentState, notifications: [...(currentState.notifications ?? []), mockNotification(text)] });
       return { queued: true };
     }
     if (lower.includes("delete") || lower.includes("name") || lower.includes("?")) {

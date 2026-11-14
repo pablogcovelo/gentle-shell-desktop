@@ -388,6 +388,68 @@ describe("ConversationContainer", () => {
     expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
   });
 
+  it("renders pushed keyed statuses in the status surface, never as messages", async () => {
+    let pushState: (state: ChatState) => void = () => {};
+    const bridge = makeBridge({
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+
+    pushState({
+      messages: [],
+      working: false,
+      pendingDialogs: [],
+      activity: 0,
+      helpers: EMPTY_HELPERS,
+      statuses: { "gentle-todo": "2 tasks open" },
+    });
+
+    const statusList = await screen.findByLabelText("Session status");
+    expect(statusList).toHaveTextContent("gentle-todo");
+    expect(statusList).toHaveTextContent("2 tasks open");
+    // A keyed status is status chrome, not a transcript bubble.
+    expect(screen.queryByText("2 tasks open", { selector: ".gc-message__text" })).not.toBeInTheDocument();
+  });
+
+  it("renders pushed notifications with their severity, never as conversation messages", async () => {
+    let pushState: (state: ChatState) => void = () => {};
+    const bridge = makeBridge({
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+
+    pushState({
+      messages: [],
+      working: false,
+      pendingDialogs: [],
+      activity: 0,
+      helpers: EMPTY_HELPERS,
+      notifications: [
+        { message: "Command blocked by user", severity: "warning" },
+        { message: "Disk full", severity: "error" },
+      ],
+    });
+
+    const stack = await screen.findByLabelText("Notifications");
+    expect(stack.querySelector(".gc-status-line__notification--warning")).toHaveTextContent("Command blocked by user");
+    expect(stack.querySelector(".gc-status-line__notification--error")).toHaveTextContent("Disk full");
+    // No bubble, no transcript entry, no placeholder in the message list.
+    expect(screen.queryByText("Command blocked by user", { selector: ".gc-message__text" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Disk full", { selector: ".gc-message__text" })).not.toBeInTheDocument();
+  });
+
   it("keeps the todo card above the composer, mirroring the TUI bottom widget", async () => {
     let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({

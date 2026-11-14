@@ -7,3 +7,67 @@
   padding: 0.5rem 0.75rem;
   margin: 0 1rem;
 }
+
+/* Keyed statuses (desktop-rpc T2b): status chrome from ChatState.statuses,
+ * one row per wire statusKey, in the same boxed style as the error line
+ * but in neutral text colour — they are state, not a failure. */
+.gc-status-entries {
+  list-style: none;
+  margin: 0.5rem 1rem 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.gc-status-entries__entry {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.gc-status-entries__key {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.gc-status-entries__text {
+  color: var(--text-2);
+}
+
+/* Transient notifications (desktop-rpc T2b): one row per retained
+ * notification, coloured by wire severity so info / warning / error are
+ * distinguishable at a glance. They never join the message thread. */
+.gc-status-notifications {
+  list-style: none;
+  margin: 0.5rem 1rem 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.gc-status-line__notification {
+  padding-left: 0.5rem;
+  border-left: 2px solid currentColor;
+}
+
+.gc-status-line__notification--info {
+  color: var(--blue);
+}
+
+.gc-status-line__notification--warning {
+  color: var(--amber);
+}
+
+.gc-status-line__notification--error {
+  color: var(--red);
+}
