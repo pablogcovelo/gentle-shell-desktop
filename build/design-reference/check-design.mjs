@@ -1,0 +1,83 @@
+import { chromium } from 'playwright';
+import { readFileSync, mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import assert from 'node:assert/strict';
+
+const root = resolve('design/slack-gentle');
+let manifest;
+try { manifest = JSON.parse(readFileSync(`${root}/design.json`, 'utf8')); }
+catch (error) { throw new Error('Cannot read design manifest', { cause: error }); }
+const source = readFileSync('src/renderer/shared/theme/tokens.css', 'utf8');
+const palette = new Set([...source.matchAll(/#[0-9a-f]{6}/gi)].map(m => m[0].toLowerCase()));
+mkdirSync('build/design-reference/screenshots', { recursive: true });
+const browser = await chromium.launch({ headless: true });
+let assertions = 0;
+const check = (condition, label) => { assert.ok(condition, label); assertions++; };
+try {
+  for (const board of manifest.artboards) {
+    const html = readFileSync(`${root}/${board.file}`, 'utf8');
+    check(!/(?:src|href)=["']https?:|@import|url\(/i.test(html), `${board.file}: self-contained`);
+    check([...html.matchAll(/#[0-9a-f]{6}/gi)].every(m => palette.has(m[0].toLowerCase())), `${board.file}: project colors only`);
+    const context = await browser.newContext({ viewport: { width: 1440, height: 960 }, reducedMotion: 'reduce' });
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    let remoteRequests = 0;
+    await page.route('https://**/*', route => { remoteRequests++; return route.abort(); });
+    await page.goto(pathToFileURL(`${root}/${board.file}`).href);
+    check(await page.locator('h1').innerText() === 'A warmer welcome', 'Initial conversation title');
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'No desktop horizontal overflow');
+    await page.screenshot({ path: `build/design-reference/screenshots/${board.file}.desktop.png` });
+    await page.locator('#helpers-tab').click();
+    check(await page.locator('#helpers-panel').isVisible(), 'Helpers opens');
+    await page.locator('[data-helper="verifier"]').click();
+    check(await page.locator('#verifier-log').isVisible(), 'Queued helper state');
+    await page.locator('[data-helper="explorer"]').click();
+    await page.locator('summary').click();
+    check(await page.locator('details').getAttribute('open') !== null, 'Tool disclosure opens');
+    await page.locator('#chat-tab').click();
+    await page.locator('#chat-tab').press('ArrowRight');
+    check(await page.locator('#helpers-tab').getAttribute('aria-selected') === 'true', 'Keyboard tabs');
+    await page.locator('#helpers-tab').press('Home');
+    check(await page.locator('#chat-tab').getAttribute('aria-selected') === 'true', 'Keyboard Home');
+    const before = await page.locator('.message').count();
+    await page.locator('#prompt').fill('<img src=x onerror=alert(1)>');
+    await page.locator('#prompt').press('Enter');
+    check(await page.locator('.message').count() === before + 1, 'Local send appends one message');
+    check(await page.locator('.thread img').count() === 0, 'Input is literal text');
+    check((await page.locator('#local-status').innerText()).includes('Not saved or sent'), 'Honest local-only feedback');
+    await page.locator('#prompt').press('Enter');
+    check(await page.locator('.message').count() === before + 1, 'Empty submit does not append');
+    await page.locator('#search').fill('no-such-conversation');
+    check(await page.locator('.empty-search').isVisible(), 'No-result state');
+    await page.locator('#search').fill('');
+    await page.locator('[data-title="Understand the codebase"]').click();
+    check(await page.locator('#helpers-tab').isDisabled(), 'Empty chat has no helpers');
+    check(!(await page.locator('#task-inspector').isVisible()), 'Empty chat has no foreign tasks');
+    await page.locator('[data-title="A warmer welcome"]').click();
+    check(await page.locator('.message').count() === before, 'Example restores without another chat messages');
+    await page.locator('.newchat').click();
+    check(await page.locator('#chat-title').innerText() === 'New chat', 'New chat title');
+    check((await page.locator('.thread').innerText()).includes('Start a conversation'), 'New chat empty state');
+    await page.locator('[data-title="A warmer welcome"]').click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'No mobile horizontal overflow');
+    await page.screenshot({ path: `build/design-reference/screenshots/${board.file}.mobile.png` });
+    await page.locator('.menu-toggle').click();
+    check(await page.locator('#chat-sidebar').isVisible(), 'Mobile navigation opens');
+    await page.keyboard.press('Escape');
+    check(!(await page.locator('#chat-sidebar').isVisible()), 'Mobile Escape closes navigation');
+    await page.locator('.tasks-toggle').click();
+    check(await page.locator('#task-inspector').isVisible(), 'Narrow tasks accessible');
+    await page.locator('.tasks-toggle').click();
+    await page.locator('#helpers-tab').click();
+    check(await page.locator('#helpers-panel').isVisible(), 'Narrow helpers accessible');
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'No mobile helper horizontal overflow');
+    check(errors.length === 0, `No browser errors: ${errors.join('; ')}`);
+    check(remoteRequests === 0, 'No remote asset requests');
+    console.log(`PASS ${board.file}: desktop/mobile, navigation, tabs, helpers, tasks, local composer, palette, isolation`);
+    await context.close();
+  }
+  console.log(`PASS ${assertions} assertions; 3 artboards; 6 screenshots`);
+} finally { await browser.close(); }

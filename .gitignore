@@ -10,3 +10,6 @@ release/
 .atl/
 # Local CodeGraph index
 .codegraph/
+
+# Local build and QA artifacts (the design check script stays tracked)
+build/
