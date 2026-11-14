@@ -1,47 +1,35 @@
-import type { McpStatus, SessionIdentityView, WorkspaceInfo } from "@shared/bridge-types";
+import type { McpStatus, WorkspaceInfo } from "@shared/bridge-types";
 import "./Footer.css";
 
 export interface FooterProps {
   /** Worktree/MCP/profile facts from desktop-rpc (T8). Each part is optional
    * and renders only when it arrived. */
   readonly workspace?: WorkspaceInfo;
-  /** The session identity the status line already reads (T4), repeated here
-   * so the footer is one place rather than two. */
-  readonly session?: SessionIdentityView;
 }
 
 /**
- * The composed footer: profile, MCP inventory, model, reasoning, context and
- * session cost — one quiet line, each field rendered only when the child
- * actually supplied it.
+ * The composed footer: the session-effective profile and the MCP inventory.
  *
- * Two honesty rules are visible in the copy itself. MCP is inventory, never
- * health: the label says what is configured and how many tool groups exist,
- * and no wording here may ever say a server is connected, because pi does not
- * expose that. And an absent value renders nothing rather than a zero.
+ * It deliberately does NOT repeat the model, reasoning, context or cost: those
+ * live in the status line (T4), and rendering them twice made two surfaces
+ * compete for the same fact. One home per datum.
+ *
+ * MCP is inventory, never health: the label says what is configured and how
+ * many tool groups exist, and no wording here may ever say a server is
+ * connected, because pi does not expose that.
  */
-export function Footer({ workspace, session }: FooterProps) {
+export function Footer({ workspace }: FooterProps) {
   const profile = workspace?.profile?.label;
   const mcp = workspace?.mcp;
-  const modelLabel = session?.modelName ?? session?.modelId;
-  const thinking = session?.thinkingLevel;
-  const contextPercent = session?.contextPercent;
-  const cost = session?.sessionCost;
   const mcpSummary = mcp ? describeMcp(mcp) : undefined;
 
-  const hasAny =
-    Boolean(profile) || Boolean(mcpSummary) || Boolean(modelLabel) || contextPercent != null || cost != null;
-  if (!hasAny) return null;
+  if (!profile && !mcpSummary) return null;
 
   return (
-    <footer className="gc-footer" aria-label="Session footer">
+    <section className="gc-footer" aria-label="Session footer">
       {profile ? <Field label="profile" value={profile} /> : null}
       {mcpSummary ? <Field label="MCP" value={mcpSummary} /> : null}
-      {modelLabel ? <Field label="model" value={modelLabel} /> : null}
-      {thinking ? <Field label="thinking" value={thinking} /> : null}
-      {contextPercent != null ? <Field label="context" value={`${contextPercent}%`} /> : null}
-      {cost != null ? <Field label="cost" value={formatCost(cost)} /> : null}
-    </footer>
+    </section>
   );
 }
 
@@ -61,8 +49,4 @@ function describeMcp(mcp: McpStatus): string {
   const names = mcp.configuredNames.length > 0 ? mcp.configuredNames.length : mcp.registered.length;
   if (names === 0 && mcp.configuredStatus === "absent") return "none configured";
   return `${names} configured · ${mcp.namespaces.length} tool groups`;
-}
-
-function formatCost(cost: number): string {
-  return `$${cost % 1 === 0 ? cost.toFixed(0) : cost.toFixed(2)}`;
 }

@@ -51,26 +51,4 @@ describe("Footer (desktop-rpc T8)", () => {
     expect(screen.getByLabelText("Session footer")).toHaveTextContent("none configured");
   });
 
-  it("renders the session identity beside the workspace facts", () => {
-    render(
-      <Footer
-        workspace={{ profile: { label: "opensourcing" } }}
-        session={{ modelName: "Claude Sonnet 4", thinkingLevel: "medium", contextPercent: 30, sessionCost: 0.45 }}
-      />,
-    );
-
-    const footer = screen.getByLabelText("Session footer");
-    expect(footer).toHaveTextContent("Claude Sonnet 4");
-    expect(footer).toHaveTextContent("medium");
-    expect(footer).toHaveTextContent("30%");
-    expect(footer).toHaveTextContent("$0.45");
-  });
-
-  it("keeps an unavailable context out of the footer instead of showing 0%", () => {
-    render(<Footer session={{ contextPercent: null, sessionCost: 0.45 }} />);
-
-    const footer = screen.getByLabelText("Session footer");
-    expect(within(footer).queryByText("context")).not.toBeInTheDocument();
-    expect(footer).toHaveTextContent("$0.45");
-  });
 });

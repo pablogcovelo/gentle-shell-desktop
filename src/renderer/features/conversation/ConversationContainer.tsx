@@ -139,7 +139,7 @@ export function ConversationContainer({ activeChat }: ConversationContainerProps
         notifications={chatState.notifications}
         session={chatState.session}
       />
-      <Footer workspace={chatState.workspace} session={chatState.session} />
+      <Footer workspace={chatState.workspace} />
       {pane === CONVERSATION_PANE.HELPERS ? (
         <HelpersContainer
           activity={chatState.helpers}
