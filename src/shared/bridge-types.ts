@@ -143,6 +143,64 @@ export interface ChatNotification {
   readonly severity: NotificationSeverity;
 }
 
+export const SUBSCRIPTION_USAGE_STATUS = {
+  OK: "ok",
+  PENDING: "pending",
+  STALE: "stale",
+  FAILED: "failed",
+  UNAVAILABLE: "unavailable",
+} as const;
+
+/** One of the five statuses gentle-pi's usage owner derives from facts it
+ * already holds (gentle-pi docs/desktop-rpc.md "get_subscription_usage").
+ * A closed union on purpose: an unknown status is dropped by the parser
+ * instead of being guessed into one of these. */
+export type SubscriptionUsageStatus = (typeof SUBSCRIPTION_USAGE_STATUS)[keyof typeof SUBSCRIPTION_USAGE_STATUS];
+
+/** One usage window as the wire carries it: label, real percentage,
+ * window length, and the reset instant — `null` when the provider does not
+ * report one. Modelled field-for-field, nothing added. */
+export interface UsageWindow {
+  readonly label: string;
+  readonly usedPercent: number;
+  readonly windowSeconds: number;
+  readonly resetAt: number | null;
+}
+
+/** One limit group inside a provider snapshot. `used`/`budget` are the raw
+ * allowance numbers the nan provider reports; absent for every other
+ * provider (the parser keeps them only when the wire supplies them). */
+export interface UsageLimit {
+  readonly name: string;
+  readonly limitReached: boolean;
+  readonly windows: readonly UsageWindow[];
+  readonly used?: number;
+  readonly budget?: number;
+}
+
+/** One provider's recorded snapshot, exactly the safe projection the
+ * desktop-rpc contract documents: `fetchedAt` present when there is a
+ * snapshot, `plan` present only when public, `limits` present only when
+ * the provider reported any. A header-only provider (Anthropic) is
+ * `pending` with no limits until its first response records one — it must
+ * render as pending, never as zero usage. */
+export interface UsageProvider {
+  readonly provider: string;
+  readonly status: SubscriptionUsageStatus;
+  readonly fetchedAt?: number;
+  readonly plan?: string;
+  readonly limits?: readonly UsageLimit[];
+}
+
+/** The whole subscription-usage answer: the read's current scope
+ * (`get_subscription_usage`), or the changed-snapshot set of a
+ * `rate_limit` event. Lives here (not src/main) because main decodes it
+ * and the renderer renders it — the Scope Rule: a type used by 2+
+ * processes stays under src/shared. */
+export interface SubscriptionUsage {
+  readonly providers: readonly UsageProvider[];
+}
+
 export interface ChatState {
   readonly messages: readonly ChatMessage[];
   readonly working: boolean;
@@ -167,6 +225,22 @@ export interface ChatState {
    * session actually carries a todo state. Lives here for the same Scope
    * Rule reason as the rest of ChatState: the renderer renders it. */
   readonly todo?: TodoPanelState;
+  /** The chat's subscription-usage meters (desktop-rpc T3), decoded from
+   * `get_subscription_usage` replies and `rate_limit` events on the
+   * `gentle-desktop-rpc` widget channel — never from the conversation
+   * transcript, and bound to this chat's own session (each PiSession folds
+   * only its own child's frames). Optional: absent until the first usage
+   * answer or event arrives, so an unavailable source renders nothing, not
+   * zero. */
+  readonly usage?: SubscriptionUsage;
+  /** Set when the desktop control channel probe failed for this chat's
+   * child (desktop-rpc T3 correction): the child never answered
+   * `capabilities`, so NO control traffic — usage reads included — may be
+   * written to it, and the usage surface must say the channel is
+   * unavailable rather than render meters or a pending state. Distinct
+   * from a provider's `pending`, which means the provider has not reported
+   * yet. Optional: absent while the channel is unprobed or working. */
+  readonly usageChannelUnavailable?: boolean;
 }
 
 /**

@@ -1,7 +1,14 @@
-import { MESSAGE_ROLE, type ChatMessage, type ChatState, type DialogAnswer, type PromptResult } from "@shared/bridge-types";
+import {
+  MESSAGE_ROLE,
+  type ChatMessage,
+  type ChatState,
+  type DialogAnswer,
+  type PromptResult,
+} from "@shared/bridge-types";
 import { INITIAL_CHAT_STATE, reduceChat } from "../rpc/chatReducer";
 import { decodeLine, encodeCommand } from "../rpc/codec";
-import { DESKTOP_RPC_WIDGET_KEY, DesktopRpcClient } from "../rpc/desktopRpc";
+import { DESKTOP_RPC_WIDGET_KEY, DesktopRpcClient, parseDesktopRpcWidget } from "../rpc/desktopRpc";
+import { mergeUsageProviders, parseRateLimitEvent, parseSubscriptionUsage } from "../rpc/usage";
 import { extractHistoryMessages, historyToMessages } from "../rpc/history";
 import { extractTodoPanel } from "../rpc/todoPanel";
 import type { RpcCommand, RpcEvent, RpcResponse } from "../rpc/types";
@@ -95,6 +102,21 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
   private stopping = false;
   private rpcClient: DesktopRpcClient | undefined;
   private historyRequestCounter = 0;
+  /** Counts the subscription-usage requests this session has sent (T3).
+   * A usage reply folds only while it is the NEWEST request's answer: a
+   * late answer for an older request (out-of-order reconciliation, or an
+   * answer that arrives after the chat was replaced) must never overwrite
+   * the current usage. */
+  private usageRequestEpoch = 0;
+  /** The desktop control channel's adoption state for THIS child's
+   * lifetime (T3 correction). S10: `capabilities` is the only support
+   * probe — until it succeeds for the live child, NOTHING is written to
+   * the child's stdin on our initiative, because on a child without the
+   * bundled desktop extension a `/gentle:desktop {…}` prompt is an
+   * unregistered slash string that would fall through as an ordinary
+   * prompt (a model call and transcript pollution). Failed stays failed
+   * for the child's lifetime; no re-probe, no timer. */
+  private probeState: "idle" | "pending" | "ok" | "failed" = "idle";
   /** Set right after a `get_messages` history request is sent (reopening a
    * session with a `sessionPath`); cleared once its matching response
    * arrives. Lets `applyHistoryResponse` correlate the response by `id`
@@ -158,11 +180,23 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
         },
       });
 
-      // Reopening an existing chat (sessionPath set): the child already has
-      // this session's prior messages, but the renderer starts with an
-      // empty thread until we ask for them. A fresh chat has no history to
-      // load, so this is skipped entirely when sessionPath is unset.
-      if (this.sessionPath) this.requestHistory();
+      // desktop-rpc T3 correction: control traffic is gated on the
+      // capabilities probe (S10's only support probe). A REOPENED chat
+      // probes at its chat-ready moment, immediately BEFORE the history
+      // request, so ChatHost's bounded history wait still keys on
+      // `get_messages` being the child's LAST write; the usage read itself
+      // goes out only when the probe replies ok. A FRESH chat stays silent
+      // on stdin until the user acts (ChatHost.test.ts pins that
+      // contract); its first control write is the probe at its first
+      // settled turn (agent_settled, below), and the `rate_limit` event is
+      // the live usage path before that — a provider's first response
+      // records windows and pushes them without any request. See
+      // probeChannel/requestUsage for the full trigger set (never a
+      // timer).
+      if (this.sessionPath) {
+        this.probeChannel();
+        this.requestHistory();
+      }
     } catch (error) {
       this.surfaceError(toError(error));
     }
@@ -222,6 +256,89 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
     } else {
       this.send({ type: "extension_ui_response", id, value: answer.value });
     }
+  }
+
+  /**
+   * Probes the child's advertised surface ONCE per child via `capabilities`
+   * (desktop-rpc T3 correction; S10: capabilities is the only support
+   * probe) and adopts or closes the control channel accordingly:
+   *
+   *   - ok → `probeState` becomes "ok" and the first usage read goes out.
+   *     Later usage reads are triggered by chat lifecycle (see
+   *     requestUsage) — never a re-probe, never a timer.
+   *   - failure (timeout, disposed, or a server error) → `probeState`
+   *     becomes "failed" for the child's LIFETIME: no further control
+   *     write of any kind, and `state.usageChannelUnavailable` tells the
+   *     renderer to say the channel is unavailable (a distinct state from
+   *     a provider's `pending`, which means the provider has not reported
+   *     yet).
+   *
+   * Issued from exactly two places, both lifecycle boundaries and neither
+   * a timer: a REOPENED chat's start (before the history request, so
+   * `get_messages` stays the child's last write), and a FRESH chat's
+   * first settled turn (its start stays stdin-silent — ChatHost.test.ts
+   * pins that). `probeState !== "idle"` makes repeat calls no-ops.
+   */
+  private probeChannel(): void {
+    const rpc = this.rpcClient;
+    if (!rpc || this.probeState !== "idle") return;
+    this.probeState = "pending";
+    void rpc.probe().then((capabilities) => {
+      // A probe resolved after the child died (stop/exit disposes and
+      // clears the client) settles as a failure for a session nobody is
+      // using: never fold state for it.
+      if (this.rpcClient !== rpc) return;
+      if (capabilities) {
+        this.probeState = "ok";
+        this.requestUsage();
+      } else {
+        this.probeState = "failed";
+        this.state = { ...this.state, usageChannelUnavailable: true };
+        this.emit("state", this.state);
+      }
+    });
+  }
+
+  /**
+   * Asks the child for its recorded subscription-usage snapshot
+   * (`get_subscription_usage`, gentle-pi docs/desktop-rpc.md) and folds the
+   * validated answer into `state.usage` (desktop-rpc T3).
+   *
+   * GATED on the channel probe: until `capabilities` has succeeded for the
+   * live child this is a no-op that writes NOTHING to the child's stdin —
+   * on a child without the bundled desktop extension a `/gentle:desktop`
+   * prompt would fall through as an ordinary prompt (a model call and
+   * transcript pollution).
+   *
+   * Refresh triggers — named, never a timer loop:
+   *   1. the probe's success (the first read, right after adoption), and
+   *   2. each settled turn (`agent_settled`, both chat kinds) — the
+   *      meaningful lifecycle boundary where the provider's response
+   *      headers may have recorded new windows. The `rate_limit` event is
+   *      the live path between those points; the settled turn is the
+   *      reconciliation point (a client that missed an event can reconcile
+   *      from the response alone).
+   *
+   * Binding (U3): the answer folds only while it is BOTH the newest
+   * request's answer (epoch) AND still this session's client — stop()/exit
+   * dispose and clear the client, so a late answer for a replaced chat can
+   * never overwrite the current one. A failed, unavailable, or malformed
+   * reply leaves the previous state untouched: a pending provider stays
+   * pending (it says so) and unavailable is never rendered as zero.
+   */
+  private requestUsage(): void {
+    const rpc = this.rpcClient;
+    if (!rpc || this.probeState !== "ok") return;
+    const epoch = ++this.usageRequestEpoch;
+    void rpc.request("get_subscription_usage", {}).then((reply) => {
+      if (this.rpcClient !== rpc || epoch !== this.usageRequestEpoch) return;
+      if (!reply.ok) return;
+      const usage = parseSubscriptionUsage(reply.data);
+      if (!usage) return;
+      // The read IS the whole current scope: replace state wholesale.
+      this.state = { ...this.state, usage };
+      this.emit("state", this.state);
+    });
   }
 
   getState(): ChatState {
@@ -291,6 +408,22 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
         decoded.widgetKey === DESKTOP_RPC_WIDGET_KEY
       ) {
         const widgetLines = Array.isArray(decoded.widgetLines) ? (decoded.widgetLines as readonly string[]) : undefined;
+        // The `rate_limit` event is the usage meters' LIVE update path
+        // (T3, docs/desktop-rpc.md "rate_limit"): it arrives unsolicited
+        // on this same widget channel — without a requestId, so it never
+        // settles a pending request — and carries the changed snapshots.
+        // They merge into this chat's own usage state (never another
+        // session's: this fold reads this.state only), and only while the
+        // session is still live (a frame that arrives after exit belongs
+        // to a chat nobody is looking at).
+        const frame = parseDesktopRpcWidget(decoded.widgetKey, widgetLines);
+        if (frame?.kind === "event" && frame.event === "rate_limit" && this.rpcClient) {
+          const event = parseRateLimitEvent(frame.data);
+          if (event) {
+            this.state = { ...this.state, usage: mergeUsageProviders(this.state.usage, event.providers) };
+            this.emit("state", this.state);
+          }
+        }
         this.rpcClient?.handleWidget(decoded.widgetKey, widgetLines);
         this.emit("event", decoded);
         return;
@@ -300,6 +433,14 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
       // (endedAt for a task gentle-pi drops after it finishes); PiSession
       // is the impure boundary, reduceChat itself stays pure.
       this.state = reduceChat(this.state, decoded, new Date().toISOString());
+      // desktop-rpc T3 (correction): a settled turn is a refresh trigger
+      // for BOTH chat kinds — but only the probe has adopted the channel;
+      // otherwise the FIRST settled turn carries the one capabilities
+      // probe (a no-op once probed, pending, or failed).
+      if (decoded.type === "agent_settled") {
+        if (this.probeState === "ok") this.requestUsage();
+        else this.probeChannel();
+      }
       // reduceChat has no case for "response" (its default arm returns
       // state unchanged), so folding the get_messages history response in
       // here, right after, never fights it.

@@ -1,0 +1,130 @@
+/*
+ * UsageMeters (desktop-rpc T3) — compact meters block, one row per
+ * subscription-usage window. Every color comes from the Gentleman-Cute
+ * tokens (src/renderer/shared/theme/tokens.css); bar fill = accent, like
+ * the artboard's Usage section (design/slack-gentle/01-workspace.html).
+ */
+.gc-usage {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  gap: 0.6rem;
+  padding: 0.6rem 0.7rem;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 0.85rem;
+}
+
+.gc-usage__provider {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.gc-usage__provider-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.gc-usage__provider-name {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.gc-usage__plan {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.gc-usage__windows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.gc-usage__limit-name {
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.gc-usage__window {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.gc-usage__window-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.gc-usage__label {
+  flex: none;
+  min-width: 2.4rem;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+
+.gc-usage__meter {
+  flex: 1;
+  min-width: 0;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--line-strong);
+  overflow: hidden;
+}
+
+.gc-usage__meter > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.gc-usage__percent {
+  flex: none;
+  min-width: 2.2rem;
+  text-align: right;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Secondary line: the window's reset instant, indented past the label. */
+.gc-usage__reset {
+  color: var(--muted);
+  font-size: 0.7rem;
+  padding-left: calc(2.4rem + 0.5rem);
+}
+
+/* Honest-state notes: a provider without windows says so, never meters. */
+.gc-usage__note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.gc-usage__note--pending {
+  color: var(--amber);
+}
+
+.gc-usage__note--failed {
+  color: var(--red);
+}
+
+/* The child's desktop control channel never adopted (capabilities probe
+ * failed): a real failure, shown in the failure colour and distinct from
+ * a provider's pending (amber). */
+.gc-usage__note--channel-unavailable {
+  color: var(--red);
+}

@@ -8,6 +8,7 @@ import { HelpersStrip } from "./components/HelpersStrip";
 import { MessageThread } from "./components/MessageThread";
 import { StatusLine } from "./components/StatusLine";
 import { TodoCard } from "./components/TodoCard";
+import { UsageMeters } from "./components/UsageMeters";
 import "./ConversationContainer.css";
 
 /**
@@ -149,6 +150,12 @@ export function ConversationContainer({ activeChat }: ConversationContainerProps
             with CSS grid. Fed strictly from the pushed ChatState.todo of the
             open chat (S1), never a global list, and absent from Helpers. */}
             {chatState.todo ? <TodoCard todo={chatState.todo} /> : null}
+            {/* Subscription-usage meters (desktop-rpc T3): fed strictly from
+            the pushed ChatState.usage of the open chat — one block per
+            provider, honest states for pending/failed/unavailable, and
+            nothing at all when there is no usage data. Never a transcript
+            entry, like TodoCard above. */}
+            <UsageMeters usage={chatState.usage} channelUnavailable={chatState.usageChannelUnavailable} />
             <Composer value={draft} working={chatState.working} onChange={setDraft} onSend={handleSend} onAbort={handleAbort} />
           </div>
         </div>

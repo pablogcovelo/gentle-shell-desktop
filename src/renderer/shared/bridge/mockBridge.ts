@@ -130,6 +130,32 @@ function emptyState(): ChatState {
     // status keys in the shape the wire's setStatus produces, and a
     // representative notification (severity is cycled by the "notify"
     // message keyword in sendMessage below).
+    // desktop-rpc T3 demo data so `pnpm dev:web` exercises the subscription
+    // usage meters without a real gentle-shell child: exactly the wire
+    // shape the contract documents — one `ok` provider with its recorded
+    // windows (the documented openai-codex example), and one `pending`
+    // header-only provider (Anthropic) that must render as pending, never
+    // as zero usage.
+    usage: {
+      providers: [
+        { provider: "anthropic", status: "pending" },
+        {
+          provider: "openai-codex",
+          status: "ok",
+          fetchedAt: Date.now(),
+          plan: "pro",
+          limits: [
+            {
+              name: "codex",
+              limitReached: false,
+              windows: [
+                { label: "week", usedPercent: 40, windowSeconds: 604800, resetAt: Date.now() + 3 * 24 * 60 * 60 * 1000 },
+              ],
+            },
+          ],
+        },
+      ],
+    },
     statuses: { "gentle-todo": "4 tasks · 1 in progress", "gentle-agents": "1 helper running" },
     notifications: [{ message: "Mock notification: this is transient feedback, not a message.", severity: NOTIFICATION_SEVERITY.INFO }],
   };

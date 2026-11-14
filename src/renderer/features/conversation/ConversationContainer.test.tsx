@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { CHAT_STATE, MESSAGE_ROLE, type ChatState, type ChatSummary, type GentleBridge } from "@shared/bridge-types";
+import { CHAT_STATE, MESSAGE_ROLE, type ChatState, type ChatSummary, type GentleBridge, type SubscriptionUsage } from "@shared/bridge-types";
 import { ConversationContainer, type ActiveChat } from "./ConversationContainer";
 
 const NEW_CHAT: ActiveChat = { kind: "new" };
@@ -93,6 +93,94 @@ describe("ConversationContainer", () => {
     });
 
     expect(await screen.findByText("Hello there")).toBeInTheDocument();
+  });
+
+  it("renders the subscription-usage meters when the pushed ChatState carries usage data", async () => {
+    const usage: SubscriptionUsage = {
+      providers: [
+        {
+          provider: "openai-codex",
+          status: "ok",
+          plan: "pro",
+          limits: [
+            { name: "codex", limitReached: false, windows: [{ label: "week", usedPercent: 40, windowSeconds: 604800, resetAt: 1788777491000 }] },
+          ],
+        },
+        { provider: "anthropic", status: "pending" },
+      ],
+    };
+    let pushState: (state: ChatState) => void = () => {};
+    const bridge = makeBridge({
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+
+    pushState({
+      messages: [{ id: "m1", role: MESSAGE_ROLE.ASSISTANT, text: "Hello there", streaming: false }],
+      working: false,
+      pendingDialogs: [],
+      activity: 0,
+      helpers: EMPTY_HELPERS,
+      usage,
+    });
+
+    expect(await screen.findByText("openai-codex")).toBeInTheDocument();
+    expect(screen.getByText("anthropic")).toBeInTheDocument();
+    // The meters are chrome around the transcript, never transcript rows:
+    // the pushed messages are still exactly the conversation's messages.
+    expect(screen.getByText("Hello there")).toBeInTheDocument();
+    expect(screen.queryByText(/gentle:desktop/i)).not.toBeInTheDocument();
+  });
+
+  it("renders the channel-unavailable note when the control channel probe failed, with no meters", async () => {
+    let pushState: (state: ChatState) => void = () => {};
+    const bridge = makeBridge({
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+
+    pushState({ ...emptyState(), usageChannelUnavailable: true });
+
+    expect(await screen.findByText(/channel unavailable/i)).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+  });
+
+  it("renders no usage block when the state carries no usage data", async () => {
+    let pushState: (state: ChatState) => void = () => {};
+    const bridge = makeBridge({
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+
+    pushState({
+      messages: [{ id: "m1", role: MESSAGE_ROLE.ASSISTANT, text: "Hello there", streaming: false }],
+      working: false,
+      pendingDialogs: [],
+      activity: 0,
+      helpers: EMPTY_HELPERS,
+    });
+
+    expect(await screen.findByText("Hello there")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /subscription usage/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("openai-codex")).not.toBeInTheDocument();
   });
 
   it("calls bridge.sendMessage with the trimmed draft on submit", async () => {

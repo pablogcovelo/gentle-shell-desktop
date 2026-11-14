@@ -1,9 +1,10 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createNodeProcessSpawner } from "../../adapters/nodeProcessSpawner";
 import { createLauncherLocator } from "../../adapters/launcherLocator";
+import { DESKTOP_RPC_DEFAULT_TIMEOUT_MS } from "../rpc/desktopRpc";
 import { PiSession } from "./PiSession";
 import type { ChatState } from "../rpc/chatReducer";
 import type { LauncherLocator, ProcessSpawner, SpawnedProcess } from "../../ports";
@@ -53,6 +54,72 @@ function streamReply(text) {
 
 function handleLine(line) {
   const cmd = JSON.parse(line);
+
+  // Desktop control traffic (T3): a /gentle:desktop prompt is an extension
+  // command, not a user prompt — consume it and answer the documented way
+  // (a correlated gentle-desktop-rpc setWidget frame), so it never becomes
+  // a transcript message. The usage answer uses the contract's documented
+  // example payload.
+  if (cmd.type === "prompt" && cmd.message.startsWith("/gentle:desktop ")) {
+    const req = JSON.parse(cmd.message.slice("/gentle:desktop ".length));
+    if (req.method === "capabilities") {
+      write({
+        type: "extension_ui_request",
+        id: "ui-capabilities",
+        method: "setWidget",
+        widgetKey: "gentle-desktop-rpc",
+        widgetLines: [
+          JSON.stringify({
+            schema: "gentle-shell.desktop-rpc/v1",
+            kind: "response",
+            requestId: req.requestId,
+            ok: true,
+            data: {
+              schema: "gentle-shell.desktop-rpc/v1",
+              command: "gentle:desktop",
+              widget: "gentle-desktop-rpc",
+              methods: ["capabilities", "get_subscription_usage"],
+              events: ["rate_limit"],
+            },
+          }),
+        ],
+      });
+    }
+    if (req.method === "get_subscription_usage") {
+      write({
+        type: "extension_ui_request",
+        id: "ui-usage",
+        method: "setWidget",
+        widgetKey: "gentle-desktop-rpc",
+        widgetLines: [
+          JSON.stringify({
+            schema: "gentle-shell.desktop-rpc/v1",
+            kind: "response",
+            requestId: req.requestId,
+            ok: true,
+            data: {
+              providers: [
+                {
+                  provider: "openai-codex",
+                  status: "ok",
+                  fetchedAt: 1788600000000,
+                  plan: "pro",
+                  limits: [
+                    {
+                      name: "codex",
+                      limitReached: false,
+                      windows: [{ label: "week", usedPercent: 40, windowSeconds: 604800, resetAt: 1788777491000 }],
+                    },
+                  ],
+                },
+              ],
+            },
+          }),
+        ],
+      });
+    }
+    return;
+  }
 
   if (cmd.type === "prompt" && cmd.message === "ask") {
     write({ type: "agent_start" });
@@ -553,8 +620,13 @@ describe("PiSession: Electron host follow-ups", () => {
 
     session.start();
 
-    expect(handles[0]?.writes).toHaveLength(1);
-    const sent = JSON.parse(handles[0]?.writes[0] ?? "{}");
+    // desktop-rpc T3 correction: start() sends the capabilities probe
+    // BEFORE the history request (S10's only support probe; ChatHost's
+    // bounded history wait keys on get_messages being the child's LAST
+    // write, which still holds).
+    expect(handles[0]?.writes).toHaveLength(2);
+    expect(handles[0]?.writes[0]).toMatch("capabilities");
+    const sent = JSON.parse(handles[0]?.writes[1] ?? "{}");
     expect(sent).toMatchObject({ type: "get_messages" });
     expect(typeof sent.id).toBe("string");
 
@@ -585,6 +657,10 @@ describe("PiSession: Electron host follow-ups", () => {
 
     session.start();
 
+    // desktop-rpc T3: a FRESH chat's stdin stays silent until the user
+    // acts (ChatHost.test.ts pins that contract) — no get_messages, and no
+    // control write of any kind; its first control write (the capabilities
+    // probe) waits for its first settled turn.
     expect(handles[0]?.writes).toEqual([]);
   });
 
@@ -593,7 +669,9 @@ describe("PiSession: Electron host follow-ups", () => {
     const session = new PiSession({ spawner, locator: fakeLocator, env: {}, sessionPath: "/a/sess-1.jsonl" });
 
     session.start();
-    const sent = JSON.parse(handles[0]?.writes[0] ?? "{}");
+    // desktop-rpc T3: the capabilities probe is writes[0]; get_messages is
+    // writes[1].
+    const sent = JSON.parse(handles[0]?.writes[1] ?? "{}");
 
     handles[0]?.emitStdout(
       JSON.stringify({ type: "response", id: sent.id, command: "get_messages", success: false, error: "boom" }),
@@ -795,6 +873,7 @@ describe("PiSession: desktop-rpc control plane (U1, desktop-rpc T2)", () => {
     const client = session.desktopRpc;
     if (!client) throw new Error("desktop-rpc client not bound after start()");
     const pending = client.request("get_config");
+    const getConfigRequestId = controlRequestId(handle.writes[handle.writes.length - 1] ?? "");
     const writesBefore = handle.writes.length;
 
     handle.emitStdout(
@@ -810,7 +889,7 @@ describe("PiSession: desktop-rpc control plane (U1, desktop-rpc T2)", () => {
     expect(client.pendingCount).toBe(1);
     expect(session.getState().messages).toEqual([]);
 
-    handle.emitStdout(desktopWidgetFrame(controlRequestId(handle.writes[0] ?? ""), { after: true }));
+    handle.emitStdout(desktopWidgetFrame(getConfigRequestId, { after: true }));
     await expect(pending).resolves.toEqual({ ok: true, data: { after: true } });
 
     handle.resolveExited({ code: 0, signal: null });
@@ -875,5 +954,377 @@ describe("PiSession: desktop-rpc control plane (U1, desktop-rpc T2)", () => {
 
     handleA.resolveExited({ code: 0, signal: null });
     handleB.resolveExited({ code: 0, signal: null });
+  });
+
+  // -----------------------------------------------------------------------
+  // Subscription usage (desktop-rpc T3, U3 acceptance boundaries): the
+  // usage meters are fed by `get_subscription_usage` replies and
+  // `rate_limit` events on the gentle-desktop-rpc widget channel, folded
+  // into ChatState.usage — never the transcript, never another session's
+  // state, and never rendered as zero when the source has nothing.
+  // -----------------------------------------------------------------------
+
+  const USAGE_INITIAL = {
+    providers: [
+      {
+        provider: "openai-codex",
+        status: "ok",
+        plan: "pro",
+        limits: [
+          { name: "codex", limitReached: false, windows: [{ label: "week", usedPercent: 40, windowSeconds: 604800, resetAt: 1788777491000 }] },
+        ],
+      },
+    ],
+  };
+  const USAGE_NEWEST = {
+    providers: [
+      {
+        provider: "openai-codex",
+        status: "ok",
+        plan: "pro",
+        limits: [
+          { name: "codex", limitReached: false, windows: [{ label: "week", usedPercent: 70, windowSeconds: 604800, resetAt: 1788777491000 }] },
+        ],
+      },
+    ],
+  };
+  const USAGE_STALE = {
+    providers: [
+      {
+        provider: "openai-codex",
+        status: "ok",
+        plan: "pro",
+        limits: [
+          { name: "codex", limitReached: false, windows: [{ label: "week", usedPercent: 1, windowSeconds: 604800, resetAt: 1788777491000 }] },
+        ],
+      },
+    ],
+  };
+  const RATE_LIMIT_EVENT_DATA = {
+    source: "response",
+    snapshots: [
+      {
+        provider: "anthropic",
+        status: "ok",
+        fetchedAt: 1788600000000,
+        limits: [
+          {
+            name: "claude",
+            limitReached: false,
+            windows: [
+              { label: "5h", usedPercent: 25, windowSeconds: 18000, resetAt: null },
+              { label: "week", usedPercent: 90, windowSeconds: 604800, resetAt: null },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+
+  /** An unsolicited event frame: no requestId on the envelope (events are
+   * published on the widget channel without one, per docs/desktop-rpc.md). */
+  function rateLimitEventFrame(data: unknown): string {
+    return JSON.stringify({
+      type: "extension_ui_request",
+      id: "ui-desktop-event",
+      method: "setWidget",
+      widgetKey: "gentle-desktop-rpc",
+      widgetLines: [
+        JSON.stringify({ schema: "gentle-shell.desktop-rpc/v1", kind: "event", seq: 3, event: "rate_limit", data }),
+      ],
+    });
+  }
+
+  async function flushReplies(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  /** The documented capabilities payload shape: a successful probe adopts
+   * the channel for this child's lifetime and unlocks control traffic. */
+  const CAPABILITIES_DATA = {
+    schema: "gentle-shell.desktop-rpc/v1",
+    command: "gentle:desktop",
+    widget: "gentle-desktop-rpc",
+    methods: ["capabilities", "get_subscription_usage"],
+    events: ["rate_limit"],
+  };
+
+  /** Answers the one capabilities probe a session is allowed to send. */
+  async function adoptChannel(handle: FakeProcessHandle): Promise<void> {
+    const probeWrite = handle.writes.find((write) => write.includes('capabilities'));
+    if (!probeWrite) throw new Error("expected a capabilities probe write");
+    handle.emitStdout(desktopWidgetFrame(controlRequestId(probeWrite), CAPABILITIES_DATA));
+    await flushReplies();
+  }
+
+  /** A correlated reply carrying a server error (ok: false). */
+  function desktopErrorWidgetFrame(requestId: string, code: string): string {
+    return JSON.stringify({
+      type: "extension_ui_request",
+      id: "ui-desktop-error",
+      method: "setWidget",
+      widgetKey: "gentle-desktop-rpc",
+      widgetLines: [
+        JSON.stringify({
+          schema: "gentle-shell.desktop-rpc/v1",
+          kind: "response",
+          requestId,
+          ok: false,
+          error: { code, message: `the server said ${code}` },
+        }),
+      ],
+    });
+  }
+
+  it("a REOPENED chat probes capabilities at its chat-ready moment — get_messages stays the child's last write — and the usage read follows only once the probe succeeds", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {}, sessionPath: "/a/sess-1.jsonl" });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    // Ordering pins: the capabilities probe (S10's only support probe) is
+    // the FIRST write, and get_messages is still the LAST one, so
+    // ChatHost's bounded history wait keeps working.
+    expect(handle.writes).toHaveLength(2);
+    expect(handle.writes[0]).toMatch("capabilities");
+    expect(JSON.parse(handle.writes[1] ?? "{}")).toMatchObject({ type: "get_messages" });
+
+    // Before the probe succeeds, nothing else may be written.
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    expect(handle.writes).toHaveLength(2);
+
+    await adoptChannel(handle);
+
+    // The probe unlocked the channel: the usage read goes out now.
+    const usageRequestId = controlRequestId(handle.writes[handle.writes.length - 1] ?? "");
+    handle.emitStdout(desktopWidgetFrame(usageRequestId, USAGE_INITIAL));
+    await flushReplies();
+
+    expect(session.getState().usage).toEqual(USAGE_INITIAL);
+    // Nothing about usage reaches the conversation transcript.
+    expect(session.getState().messages).toEqual([]);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("a fresh chat sends nothing at start; its first control write is the capabilities probe at the first settled turn", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    // Silent until the user acts (ChatHost.test.ts pins that contract).
+    expect(handle.writes).toEqual([]);
+
+    // agent_settled is the meaningful lifecycle boundary: exactly ONE
+    // probe goes out, never a repeating timer — and NO usage read, which
+    // stays gated on the probe's success.
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    expect(handle.writes).toHaveLength(1);
+    expect(handle.writes[0]).toMatch("capabilities");
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("a child that never answers capabilities receives no usage write at all, and the surface reports the channel unavailable", async () => {
+    vi.useFakeTimers();
+    try {
+      const { spawner, handles } = createFakeSpawner();
+      const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+      session.start();
+      const handle = handles[0];
+      if (!handle) throw new Error("no spawned handle");
+
+      handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+      expect(handle.writes).toHaveLength(1);
+      expect(handle.writes[0]).toMatch("capabilities");
+
+      // Another settled turn while the probe is unanswered: still nothing.
+      handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+      expect(handle.writes).toHaveLength(1);
+
+      // The child never answers: the probe times out.
+      await vi.advanceTimersByTimeAsync(DESKTOP_RPC_DEFAULT_TIMEOUT_MS + 1);
+
+      expect(session.getState().usageChannelUnavailable).toBe(true);
+      expect(session.getState().usage).toBeUndefined();
+
+      // The channel stays closed: no usage write ever, even on later turns.
+      handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+      expect(handle.writes).toHaveLength(1);
+      expect(session.getState().usage).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a probe answered with a server error closes the channel the same way (fast failure, no timeout wait)", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    expect(handle.writes).toHaveLength(1);
+
+    handle.emitStdout(desktopErrorWidgetFrame(controlRequestId(handle.writes[0] ?? ""), "unsupported_method"));
+    await flushReplies();
+
+    expect(session.getState().usageChannelUnavailable).toBe(true);
+    expect(session.getState().usage).toBeUndefined();
+
+    // No further control write of any kind after the failure.
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    expect(handle.writes).toHaveLength(1);
+  });
+
+  it("a child that answers capabilities receives the usage read — the probe is sent exactly once per child", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+
+    // The probe unlocked the channel: the usage read follows.
+    const usageRequestId = controlRequestId(handle.writes[handle.writes.length - 1] ?? "");
+    handle.emitStdout(desktopWidgetFrame(usageRequestId, USAGE_INITIAL));
+    await flushReplies();
+    expect(session.getState().usage).toEqual(USAGE_INITIAL);
+
+    // Later settled turns trigger usage reads, but never a second probe.
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    expect(handle.writes.filter((write) => write.includes('capabilities'))).toHaveLength(1);
+    const secondRequestId = controlRequestId(handle.writes[handle.writes.length - 1] ?? "");
+    handle.emitStdout(desktopWidgetFrame(secondRequestId, USAGE_NEWEST));
+    await flushReplies();
+    expect(session.getState().usage).toEqual(USAGE_NEWEST);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("a rate_limit event updates an already-rendered meter live, without a reload and without transcript traffic", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {}, sessionPath: "/a/sess-1.jsonl" });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+    handle.emitStdout(desktopWidgetFrame(controlRequestId(handle.writes[handle.writes.length - 1] ?? ""), USAGE_INITIAL));
+    await flushReplies();
+    expect(session.getState().usage).toEqual(USAGE_INITIAL);
+
+    // Unsolicited event (no requestId): the live update path. It merges in
+    // the changed snapshot and keeps the providers it did not touch.
+    handle.emitStdout(rateLimitEventFrame(RATE_LIMIT_EVENT_DATA));
+    expect(session.getState().usage).toEqual({
+      providers: [
+        USAGE_INITIAL.providers[0],
+        {
+          provider: "anthropic",
+          status: "ok",
+          fetchedAt: 1788600000000,
+          limits: [
+            {
+              name: "claude",
+              limitReached: false,
+              windows: [
+                { label: "5h", usedPercent: 25, windowSeconds: 18000, resetAt: null },
+                { label: "week", usedPercent: 90, windowSeconds: 604800, resetAt: null },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(session.getState().messages).toEqual([]);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("ignores a malformed usage reply and a malformed rate_limit event without throwing", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    // Good data first (also proves the channel for the settled-turn path).
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+    handle.emitStdout(desktopWidgetFrame(controlRequestId(handle.writes[handle.writes.length - 1] ?? ""), USAGE_INITIAL));
+    await flushReplies();
+
+    // A settled turn triggers a second request; its reply is garbage.
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    const secondRequestId = controlRequestId(handle.writes[handle.writes.length - 1] ?? "");
+    handle.emitStdout(desktopWidgetFrame(secondRequestId, { providers: "nope" }));
+    await flushReplies();
+    expect(session.getState().usage).toEqual(USAGE_INITIAL);
+
+    // A malformed event keeps the previous usage state too.
+    handle.emitStdout(rateLimitEventFrame({ source: "response", snapshots: "nope" }));
+    handle.emitStdout(rateLimitEventFrame("not even an object"));
+    expect(session.getState().usage).toEqual(USAGE_INITIAL);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("a late answer for an older usage request never overwrites the newest answer's data", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    // Request 1 (first settled turn) is answered normally.
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+    const firstRequestId = controlRequestId(handle.writes[handle.writes.length - 1] ?? "");
+    handle.emitStdout(desktopWidgetFrame(firstRequestId, USAGE_INITIAL));
+    await flushReplies();
+
+    // Two settled turns trigger requests 2 and 3; both stay unanswered for
+    // now, and the child then answers them OUT OF ORDER: request 3 (the
+    // newest) first, request 2 late. The late older answer must lose.
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    const secondRequestId = controlRequestId(handle.writes[handle.writes.length - 1] ?? "");
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    const thirdRequestId = controlRequestId(handle.writes[handle.writes.length - 1] ?? "");
+
+    handle.emitStdout(desktopWidgetFrame(thirdRequestId, USAGE_NEWEST));
+    handle.emitStdout(desktopWidgetFrame(secondRequestId, USAGE_STALE));
+    await flushReplies();
+
+    expect(session.getState().usage).toEqual(USAGE_NEWEST);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("a usage reply that arrives after the session stopped never folds into state", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+    const requestId = controlRequestId(handle.writes[handle.writes.length - 1] ?? "");
+    handle.resolveExited({ code: 0, signal: null });
+    await flushMicrotasks();
+
+    // The child's last gasp lands after exit: the client is disposed and
+    // cleared, so neither the reply nor any state fold may happen.
+    handle.emitStdout(desktopWidgetFrame(requestId, USAGE_INITIAL));
+    await flushReplies();
+    expect(session.getState().usage).toBeUndefined();
   });
 });
