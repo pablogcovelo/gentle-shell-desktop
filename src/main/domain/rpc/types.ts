@@ -35,14 +35,16 @@ export type RpcCommand =
   | { readonly type: "abort" }
   | { readonly type: "new_session" }
   | { readonly type: "switch_session"; readonly sessionPath: string }
-  | { readonly type: "get_state" }
+  | { readonly type: "get_state"; readonly id?: string }
   /**
    * `id` is the optional request/response correlation id rpc.md documents
    * for every command ("All commands support an optional `id` field...").
-   * Modeled only here (not on the other simple commands above) because
-   * PiSession is the one caller that needs to correlate a `get_messages`
-   * request with its response — see PiSession.ts's history-loading flow.
+   * Modeled on the commands PiSession actually correlates: `get_messages`
+   * for history, and `get_session_stats`/`get_state` for the session
+   * identity block (desktop-rpc T4, which must tell a late reply apart from
+   * the current one).
    */
+  | { readonly type: "get_session_stats"; readonly id?: string }
   | { readonly type: "get_messages"; readonly id?: string }
   | RpcExtensionUIResponse;
 

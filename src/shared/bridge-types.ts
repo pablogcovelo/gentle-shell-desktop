@@ -157,6 +157,55 @@ export const SUBSCRIPTION_USAGE_STATUS = {
  * instead of being guessed into one of these. */
 export type SubscriptionUsageStatus = (typeof SUBSCRIPTION_USAGE_STATUS)[keyof typeof SUBSCRIPTION_USAGE_STATUS];
 
+/** The closed thinking-level union pi's `get_state` reports in
+ * `thinkingLevel` (pi-agent-core `ThinkingLevel`; rendered as reported,
+ * never invented). Lives here for the Scope-Rule reason as the rest of
+ * the wire types: main decodes it, the renderer renders it. */
+export const THINKING_LEVEL = {
+  OFF: "off",
+  MINIMAL: "minimal",
+  LOW: "low",
+  MEDIUM: "medium",
+  HIGH: "high",
+  XHIGH: "xhigh",
+  MAX: "max",
+} as const;
+
+export type ThinkingLevel = (typeof THINKING_LEVEL)[keyof typeof THINKING_LEVEL];
+
+/**
+ * The chat's own session identity (desktop-rpc T4), decoded from pi's own
+ * `get_session_stats` and `get_state` RPC replies — ordinary commands
+ * correlated by `id`, never the desktop-rpc widget channel. Every field
+ * is present ONLY when the child supplied it: an absent field renders as
+ * nothing, never as zero, and no context window is ever guessed.
+ *
+ * - `sessionCost` is the SESSION's cost as the child reports it — never
+ *   presented as provider quota.
+ * - `tokensTotal` is the session's accumulated token total; it is NOT
+ *   occupied context — the context fields come only from the child's own
+ *   `contextUsage`, and stay absent when it omitted or malformed it.
+ * - `contextTokens`/`contextPercent` are `number | null`: `null` is the
+ *   wire's "supplied as unknown" (right after compaction), distinct from
+ *   absent (`contextUsage` not supplied at all).
+ * - `modelId`/`modelName`/`thinkingLevel` are the EFFECTIVE values the
+ *   child reports (`get_state`), never the last requested ones.
+ *
+ * Lives here because main decodes it and the renderer renders it (the
+ * Scope Rule: a type used by 2+ processes stays under src/shared).
+ */
+export interface SessionIdentityView {
+  readonly modelId?: string;
+  readonly modelName?: string;
+  readonly modelProvider?: string;
+  readonly thinkingLevel?: ThinkingLevel;
+  readonly contextTokens?: number | null;
+  readonly contextWindow?: number;
+  readonly contextPercent?: number | null;
+  readonly sessionCost?: number;
+  readonly tokensTotal?: number;
+}
+
 /** One usage window as the wire carries it: label, real percentage,
  * window length, and the reset instant — `null` when the provider does not
  * report one. Modelled field-for-field, nothing added. */
@@ -241,6 +290,13 @@ export interface ChatState {
    * from a provider's `pending`, which means the provider has not reported
    * yet. Optional: absent while the channel is unprobed or working. */
   readonly usageChannelUnavailable?: boolean;
+  /** The chat's own session identity (desktop-rpc T4), decoded from the
+   * child's `get_session_stats` and `get_state` replies — see
+   * SessionIdentityView. Optional: absent until the first correlated
+   * reply arrives, and folded field-wise so a reply that supplies only
+   * one half never clobbers the other. Last-known (S12): refreshed at
+   * the named lifecycle boundaries, never a live push. */
+  readonly session?: SessionIdentityView;
 }
 
 /**

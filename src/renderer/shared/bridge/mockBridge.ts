@@ -159,6 +159,21 @@ function emptyState(): ChatState {
     },
     statuses: { "gentle-todo": "4 tasks · 1 in progress", "gentle-agents": "1 helper running" },
     notifications: [{ message: "Mock notification: this is transient feedback, not a message.", severity: NOTIFICATION_SEVERITY.INFO }],
+    // desktop-rpc T4 demo identity so `pnpm dev:web` exercises the status
+    // line's identity block without a child. Every field is optional and
+    // rendered only when supplied: drop any one of them here to see that
+    // field disappear rather than fall back to a zero.
+    session: {
+      modelId: "claude-sonnet-4-20250514",
+      modelName: "Claude Sonnet 4",
+      modelProvider: "anthropic",
+      thinkingLevel: "medium",
+      contextTokens: 60000,
+      contextWindow: 200000,
+      contextPercent: 30,
+      sessionCost: 0.45,
+      tokensTotal: 105000,
+    },
   };
 }
 

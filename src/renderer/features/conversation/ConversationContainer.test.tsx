@@ -95,6 +95,60 @@ describe("ConversationContainer", () => {
     expect(await screen.findByText("Hello there")).toBeInTheDocument();
   });
 
+  it("renders the session identity block when the pushed ChatState carries one", async () => {
+    let pushState: (state: ChatState) => void = () => {};
+    const bridge = makeBridge({
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+
+    pushState({
+      messages: [],
+      working: false,
+      pendingDialogs: [],
+      activity: 0,
+      helpers: EMPTY_HELPERS,
+      session: { modelName: "Claude Sonnet 4", thinkingLevel: "medium", contextPercent: 30, sessionCost: 0.45 },
+    });
+
+    const block = await screen.findByLabelText("Session identity");
+    expect(block).toHaveTextContent("Claude Sonnet 4");
+    expect(block).toHaveTextContent("30%");
+    expect(block).toHaveTextContent("$0.45");
+    // Identity is status chrome, never conversation content.
+    expect(screen.queryByText("Claude Sonnet 4")).toBe(block.querySelector("dd"));
+  });
+
+  it("renders no session identity block when the pushed ChatState carries none", async () => {
+    let pushState: (state: ChatState) => void = () => {};
+    const bridge = makeBridge({
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+
+    pushState({
+      messages: [],
+      working: false,
+      pendingDialogs: [],
+      activity: 0,
+      helpers: EMPTY_HELPERS,
+    });
+
+    await vi.waitFor(() => expect(screen.queryByLabelText("Session identity")).not.toBeInTheDocument());
+  });
+
   it("renders the subscription-usage meters when the pushed ChatState carries usage data", async () => {
     const usage: SubscriptionUsage = {
       providers: [

@@ -13,6 +13,7 @@ import { INITIAL_CHAT_STATE, reduceChat } from "../rpc/chatReducer";
 import { decodeLine, encodeCommand } from "../rpc/codec";
 import { applyAgentState, mergeAgentEntry, parseAgentEntry, parseAgentList } from "../rpc/agents";
 import { DESKTOP_RPC_WIDGET_KEY, DesktopRpcClient, parseDesktopRpcWidget } from "../rpc/desktopRpc";
+import { parseSessionState, parseSessionStats } from "../rpc/sessionStats";
 import { mergeUsageProviders, parseRateLimitEvent, parseSubscriptionUsage } from "../rpc/usage";
 import { extractHistoryMessages, historyToMessages } from "../rpc/history";
 import { extractTodoPanel } from "../rpc/todoPanel";
@@ -138,6 +139,14 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
    * and ignore anything else that happens to carry `command: "get_messages"`
    * (a stale or unrelated response). */
   private pendingHistoryRequestId: string | undefined;
+  /** Correlation ids for the session identity reads (desktop-rpc T4).
+   * `get_session_stats` and `get_state` are ORDINARY RPC commands whose
+   * answers arrive as `response` frames by `id`, exactly like history. Kept
+   * apart per command so a late stats reply can never be folded as the
+   * current state reply. */
+  private pendingStatsRequestId: string | undefined;
+  private pendingStateRequestId: string | undefined;
+  private identityRequestCounter = 0;
 
   constructor(options: PiSessionOptions) {
     super();
@@ -308,6 +317,9 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
         this.probeState = "ok";
         this.state = this.attachStopChannel(this.state);
         this.emit("state", this.state);
+        // Identity first, usage last: the usage read stays the child's last
+        // control write, the ordering the T3 pins observe.
+        this.requestIdentity();
         this.requestUsage();
         this.requestAgentSnapshot();
       } else {
@@ -317,6 +329,51 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
         this.emit("state", this.state);
       }
     });
+  }
+
+  /**
+   * Reads the session identity from pi's own RPC commands (desktop-rpc T4):
+   * `get_session_stats` for cost, tokens and context usage, `get_state` for
+   * the effective model and thinking level. Both are ordinary commands
+   * correlated by `id`, never desktop-rpc prompts, and both are gated on the
+   * adopted channel like every other control write.
+   */
+  private requestIdentity(): void {
+    if (this.probeState !== "ok") return;
+    const statsId = `stats-${this.identityRequestCounter++}`;
+    this.pendingStatsRequestId = statsId;
+    this.send({ type: "get_session_stats", id: statsId });
+    const stateId = `state-${this.identityRequestCounter++}`;
+    this.pendingStateRequestId = stateId;
+    this.send({ type: "get_state", id: stateId });
+  }
+
+  /**
+   * Folds a session identity reply, once, and only when its `id` matches the
+   * request it answers: a late reply for an older request is ignored, so it
+   * cannot overwrite the current chat's identity. A failed or malformed reply
+   * keeps the last-known identity — U3's rule is that unavailable is never
+   * rendered as zero, and inventing a value is the same mistake with a
+   * friendlier face.
+   */
+  private applyIdentityResponse(state: ChatState, response: RpcResponse): ChatState {
+    // A reply that lands after the child exited belongs to a session nobody
+    // is using: nothing may fold. `handleExit` clears `process`, which is the
+    // live-child signal the other late-reply guards already rely on.
+    if (!this.process) return state;
+    if (response.command === "get_session_stats" && response.id === this.pendingStatsRequestId) {
+      this.pendingStatsRequestId = undefined;
+      if (!response.success) return state;
+      const parsed = parseSessionStats(response.data);
+      return parsed ? { ...state, session: { ...state.session, ...parsed } } : state;
+    }
+    if (response.command === "get_state" && response.id === this.pendingStateRequestId) {
+      this.pendingStateRequestId = undefined;
+      if (!response.success) return state;
+      const parsed = parseSessionState(response.data);
+      return parsed ? { ...state, session: { ...state.session, ...parsed } } : state;
+    }
+    return state;
   }
 
   /**
@@ -606,8 +663,10 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
       // otherwise the FIRST settled turn carries the one capabilities
       // probe (a no-op once probed, pending, or failed).
       if (decoded.type === "agent_settled") {
-        if (this.probeState === "ok") this.requestUsage();
-        else this.probeChannel();
+        if (this.probeState === "ok") {
+          this.requestIdentity();
+          this.requestUsage();
+        } else this.probeChannel();
       }
       // The activity path narrates but must never regress the structured
       // state the subagents projection already reported, and the Stop
@@ -620,6 +679,7 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
       if (decoded.type === "response") {
         const historyWasPending = this.pendingHistoryRequestId !== undefined;
         this.state = this.applyHistoryResponse(this.state, decoded);
+        this.state = this.applyIdentityResponse(this.state, decoded);
         // Correction R3-001: the reopened chat's capabilities probe is
         // issued HERE, after the history response has landed, so the
         // child's writes are [get_messages, probe] and its last write is

@@ -1683,3 +1683,301 @@ describe("subagents (desktop-rpc T6)", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Session identity (desktop-rpc T4): the chat's own cost, tokens, context
+// usage, model and thinking level, read from pi's own `get_session_stats`
+// and `get_state` — ORDINARY RPC commands, correlated by `id` the way
+// `get_messages` is, never the desktop-rpc widget channel. U3's honesty
+// boundaries are binding: unavailable is never zero, context is never
+// derived from accumulated tokens, no context window is guessed, and the
+// model/thinking shown are the child's effective values.
+// ---------------------------------------------------------------------------
+
+describe("session identity (desktop-rpc T4)", () => {
+  function desktopWidgetFrame(requestId: string, data: unknown): string {
+    return JSON.stringify({
+      type: "extension_ui_request",
+      id: "ui-desktop",
+      method: "setWidget",
+      widgetKey: "gentle-desktop-rpc",
+      widgetLines: [JSON.stringify({ schema: "gentle-shell.desktop-rpc/v1", kind: "response", requestId, data })],
+    });
+  }
+
+  function controlRequestId(write: string): string {
+    const prompt = JSON.parse(write) as { type: string; message: string };
+    if (prompt.type !== "prompt" || !prompt.message.startsWith("/gentle:desktop ")) {
+      throw new Error(`expected a /gentle:desktop prompt command, got: ${write}`);
+    }
+    return (JSON.parse(prompt.message.slice("/gentle:desktop ".length)) as { requestId: string }).requestId;
+  }
+
+  async function flushReplies(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  const CAPABILITIES_DATA = {
+    schema: "gentle-shell.desktop-rpc/v1",
+    command: "gentle:desktop",
+    widget: "gentle-desktop-rpc",
+    methods: ["capabilities", "get_subscription_usage"],
+    events: ["rate_limit"],
+  };
+
+  async function adoptChannel(handle: FakeProcessHandle): Promise<void> {
+    const probeWrite = handle.writes.find((write) => write.includes("capabilities"));
+    if (!probeWrite) throw new Error("expected a capabilities probe write");
+    handle.emitStdout(desktopWidgetFrame(controlRequestId(probeWrite), CAPABILITIES_DATA));
+    await flushReplies();
+  }
+
+  function writesOf(handle: FakeProcessHandle, type: string): string[] {
+    return handle.writes.filter((write) => (JSON.parse(write) as { type?: string }).type === type);
+  }
+
+  function commandId(write: string): string {
+    const id = (JSON.parse(write) as { id?: string }).id;
+    if (!id) throw new Error(`expected a correlation id on: ${write}`);
+    return id;
+  }
+
+  // The documented get_session_stats example payload (fixture values).
+  function statsReply(id: string, overrides: Record<string, unknown> = {}): string {
+    return JSON.stringify({
+      type: "response",
+      id,
+      command: "get_session_stats",
+      success: true,
+      data: {
+        sessionFile: "/path/to/session.jsonl",
+        sessionId: "abc123",
+        userMessages: 5,
+        assistantMessages: 5,
+        toolCalls: 12,
+        toolResults: 12,
+        totalMessages: 22,
+        tokens: { input: 50000, output: 10000, cacheRead: 40000, cacheWrite: 5000, total: 105000 },
+        cost: 0.45,
+        contextUsage: { tokens: 60000, contextWindow: 200000, percent: 30 },
+        ...overrides,
+      },
+    });
+  }
+
+  // The documented get_state example payload (fixture values).
+  function stateReply(id: string, overrides: Record<string, unknown> = {}): string {
+    return JSON.stringify({
+      type: "response",
+      id,
+      command: "get_state",
+      success: true,
+      data: {
+        model: { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", provider: "anthropic" },
+        thinkingLevel: "medium",
+        isStreaming: false,
+        isCompacting: false,
+        steeringMode: "all",
+        followUpMode: "one-at-a-time",
+        sessionId: "abc123",
+        autoCompactionEnabled: true,
+        messageCount: 5,
+        pendingMessageCount: 0,
+        ...overrides,
+      },
+    });
+  }
+
+  it("a reopened chat requests its session identity only after the probe, correlated by id, and folds both replies", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {}, sessionPath: "/a/sess-1.jsonl" });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    // The reopened-chat write ordering is unchanged: the history request
+    // is the FIRST write and the capabilities probe the second — the
+    // identity reads may never displace either (correction R3-001's pin).
+    expect(JSON.parse(handle.writes[0] ?? "{}")).toMatchObject({ type: "get_messages" });
+    handle.emitStdout(
+      JSON.stringify({ type: "response", id: commandId(handle.writes[0] ?? ""), command: "get_messages", success: true, data: { messages: [] } }),
+    );
+    await flushReplies();
+    expect(handle.writes[1]).toContain("capabilities");
+
+    await adoptChannel(handle);
+
+    // Two ordinary RPC commands, each with its own correlation id — never
+    // a /gentle:desktop prompt and never the widget channel. The usage
+    // read stays the LAST control write, the ordering the existing pins
+    // observe.
+    const statsWrites = writesOf(handle, "get_session_stats");
+    const stateWrites = writesOf(handle, "get_state");
+    expect(statsWrites).toHaveLength(1);
+    expect(stateWrites).toHaveLength(1);
+    expect(handle.writes[handle.writes.length - 1]).toContain("/gentle:desktop");
+
+    handle.emitStdout(statsReply(commandId(statsWrites[0] ?? "")));
+    handle.emitStdout(stateReply(commandId(stateWrites[0] ?? "")));
+    await flushReplies();
+
+    expect(session.getState().session).toEqual({
+      tokensTotal: 105000,
+      sessionCost: 0.45,
+      contextTokens: 60000,
+      contextWindow: 200000,
+      contextPercent: 30,
+      modelId: "claude-sonnet-4-20250514",
+      modelName: "Claude Sonnet 4",
+      modelProvider: "anthropic",
+      thinkingLevel: "medium",
+    });
+    // Identity chrome never becomes transcript traffic.
+    expect(session.getState().messages).toEqual([]);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("a fresh chat writes nothing until the user acts; its identity reads go out only after the probe at the first settled turn", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    // Silent until the user acts (ChatHost.test.ts pins that contract).
+    expect(handle.writes).toEqual([]);
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    expect(handle.writes).toHaveLength(1);
+    expect(handle.writes[0]).toContain("capabilities");
+
+    await adoptChannel(handle);
+    expect(writesOf(handle, "get_session_stats")).toHaveLength(1);
+    expect(writesOf(handle, "get_state")).toHaveLength(1);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("every settled turn re-reads the identity, and a late answer for an older request never overwrites the newest", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+    const firstStatsId = commandId(writesOf(handle, "get_session_stats")[0] ?? "");
+    const firstStateId = commandId(writesOf(handle, "get_state")[0] ?? "");
+
+    // Settled turn 2: fresh requests, new ids. The child answers the NEW
+    // ones first, then the OLD ones late — the late answers must lose.
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    const secondStatsId = commandId(writesOf(handle, "get_session_stats")[1] ?? "");
+    const secondStateId = commandId(writesOf(handle, "get_state")[1] ?? "");
+    expect(secondStatsId).not.toBe(firstStatsId);
+    expect(secondStateId).not.toBe(firstStateId);
+
+    handle.emitStdout(statsReply(secondStatsId, { cost: 1.25 }));
+    handle.emitStdout(stateReply(secondStateId, { data: undefined, thinkingLevel: "high" }));
+    handle.emitStdout(statsReply(firstStatsId, { cost: 9999 }));
+    handle.emitStdout(stateReply(firstStateId, { data: undefined, thinkingLevel: "off" }));
+    await flushReplies();
+
+    // The NEWEST answers win; the late older replies never overwrite them.
+    expect(session.getState().session?.sessionCost).toBe(1.25);
+    expect(session.getState().session?.thinkingLevel).toBe("high");
+    expect(session.getState().session?.contextPercent).toBe(30);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("a malformed or failed identity reply keeps the previous identity — absent stays absent, never zero", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+    const firstStatsId = commandId(writesOf(handle, "get_session_stats")[0] ?? "");
+    const firstStateId = commandId(writesOf(handle, "get_state")[0] ?? "");
+    handle.emitStdout(statsReply(firstStatsId));
+    handle.emitStdout(stateReply(firstStateId));
+    await flushReplies();
+    const identity = session.getState().session;
+    expect(identity?.sessionCost).toBe(0.45);
+
+    // Settled turn 2, whose replies are malformed / failed / mis-addressed:
+    // every one of them must leave the last-known identity untouched.
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    const secondStatsId = commandId(writesOf(handle, "get_session_stats")[1] ?? "");
+    handle.emitStdout(statsReply(secondStatsId, { cost: "0.45" })); // wrong-typed cost
+    handle.emitStdout(statsReply(commandId(writesOf(handle, "get_session_stats")[1] ?? ""), { tokens: "nope" }));
+    handle.emitStdout(JSON.stringify({ type: "response", id: secondStatsId, command: "get_session_stats", success: false, error: "boom" }));
+    handle.emitStdout(JSON.stringify({ type: "response", id: "not-the-pending-id", command: "get_session_stats", success: true, data: {} }));
+    await flushReplies();
+
+    expect(session.getState().session).toEqual(identity);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("context is never derived from the session's accumulated tokens, no fallback window is invented, and supplied-as-unknown stays null", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+
+    // A child that omits contextUsage (no model or context window
+    // available): the tokens total is recorded, but NOTHING contextual is
+    // derived from it — no percentage, no guessed window.
+    handle.emitStdout(statsReply(commandId(writesOf(handle, "get_session_stats")[0] ?? ""), { contextUsage: undefined }));
+    await flushReplies();
+    let identity = session.getState().session;
+    expect(identity?.tokensTotal).toBe(105000);
+    expect(identity).not.toHaveProperty("contextPercent");
+    expect(identity).not.toHaveProperty("contextTokens");
+    expect(identity).not.toHaveProperty("contextWindow");
+
+    // Right after compaction the child supplies contextUsage with null
+    // tokens/percent: that is "supplied as unknown", not zero.
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    handle.emitStdout(statsReply(commandId(writesOf(handle, "get_session_stats")[1] ?? ""), { contextUsage: { tokens: null, contextWindow: 200000, percent: null } }));
+    await flushReplies();
+    identity = session.getState().session;
+    expect(identity?.contextTokens).toBe(null);
+    expect(identity?.contextPercent).toBe(null);
+    expect(identity?.contextWindow).toBe(200000);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("an identity reply that arrives after the session stopped never folds into state", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+    const statsId = commandId(writesOf(handle, "get_session_stats")[0] ?? "");
+    const stateId = commandId(writesOf(handle, "get_state")[0] ?? "");
+
+    handle.resolveExited({ code: 0, signal: null });
+    await flushMicrotasks();
+
+    // The child's last gasp lands after exit: nothing may fold.
+    handle.emitStdout(statsReply(statsId));
+    handle.emitStdout(stateReply(stateId));
+    await flushReplies();
+    expect(session.getState().session).toBeUndefined();
+  });
+});

@@ -131,7 +131,12 @@ export function ConversationContainer({ activeChat }: ConversationContainerProps
         runningHelpersCount={chatState.helpers.summary.running}
         onSelectPane={setPane}
       />
-      <StatusLine error={error} statuses={chatState.statuses} notifications={chatState.notifications} />
+      <StatusLine
+        error={error}
+        statuses={chatState.statuses}
+        notifications={chatState.notifications}
+        session={chatState.session}
+      />
       {pane === CONVERSATION_PANE.HELPERS ? (
         <HelpersContainer
           activity={chatState.helpers}
