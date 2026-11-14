@@ -14,6 +14,7 @@ import { decodeLine, encodeCommand } from "../rpc/codec";
 import { applyAgentState, mergeAgentEntry, parseAgentEntry, parseAgentList } from "../rpc/agents";
 import { DESKTOP_RPC_WIDGET_KEY, DesktopRpcClient, parseDesktopRpcWidget } from "../rpc/desktopRpc";
 import { parseSessionState, parseSessionStats } from "../rpc/sessionStats";
+import { parseToolVocabulary } from "../rpc/toolVocabulary";
 import { mergeUsageProviders, parseRateLimitEvent, parseSubscriptionUsage } from "../rpc/usage";
 import { extractHistoryMessages, historyToMessages } from "../rpc/history";
 import { extractTodoPanel } from "../rpc/todoPanel";
@@ -320,6 +321,7 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
         // Identity first, usage last: the usage read stays the child's last
         // control write, the ordering the T3 pins observe.
         this.requestIdentity();
+        this.requestVocabulary();
         this.requestUsage();
         this.requestAgentSnapshot();
       } else {
@@ -374,6 +376,28 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
       return parsed ? { ...state, session: { ...state.session, ...parsed } } : state;
     }
     return state;
+  }
+
+  /**
+   * Reads the published action vocabulary (desktop-rpc T7b, S7) so the action
+   * rows can show the SAME glyph the terminal shows. It rides the control
+   * channel and is therefore gated like every other control write: no probe,
+   * no advertisement of the method, no request. A failed read leaves the
+   * vocabulary absent, and an absent vocabulary means raw tool names — never
+   * a category the child does not publish.
+   */
+  private requestVocabulary(): void {
+    const rpc = this.rpcClient;
+    if (!rpc || this.probeState !== "ok") return;
+    if (!this.advertisedMethods?.has("tool_vocabulary")) return;
+    void rpc.request("tool_vocabulary").then((reply) => {
+      // A reply for a session nobody is using must not fold state.
+      if (this.rpcClient !== rpc || !reply.ok) return;
+      const vocabulary = parseToolVocabulary(reply.data);
+      if (!vocabulary) return;
+      this.state = { ...this.state, toolVocabulary: vocabulary };
+      this.emit("state", this.state);
+    });
   }
 
   /**

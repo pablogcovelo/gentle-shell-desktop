@@ -1,0 +1,22 @@
+{
+  "categories": ["read", "edit", "write", "search", "list", "bash", "delegation", "rdd"],
+  "entries": [
+    { "category": "read", "glyph": "≡", "tools": ["read"] },
+    { "category": "edit", "glyph": "✎", "tools": ["edit"] },
+    { "category": "write", "glyph": "+", "tools": ["write"] },
+    { "category": "search", "glyph": "⌕", "tools": ["grep"] },
+    { "category": "search", "glyph": "⌖", "tools": ["find"] },
+    { "category": "list", "glyph": "☷", "tools": ["ls"] },
+    { "category": "bash", "glyph": "$", "tools": ["bash"] },
+    { "category": "delegation", "glyph": "→", "tools": ["subagent_run"], "heading": "Delegating" },
+    { "category": "delegation", "glyph": "◎", "tools": ["subagent_status"], "heading": "Agent status" },
+    { "category": "delegation", "glyph": "↩", "tools": ["subagent_result"], "heading": "Agent answer" },
+    { "category": "delegation", "glyph": "⨯", "tools": ["subagent_cancel"], "heading": "Stopping agent" },
+    { "category": "delegation", "glyph": "✉", "tools": ["subagent_send_message"], "heading": "Messaging agent" },
+    { "category": "delegation", "glyph": "✉", "tools": ["subagent_reply"], "heading": "Replying to agent" },
+    { "category": "delegation", "glyph": "↻", "tools": ["subagent_continue"], "heading": "Resuming agent" },
+    { "category": "delegation", "glyph": "☰", "tools": ["subagent_list_tasks"], "heading": "Agent tasks" },
+    { "category": "delegation", "glyph": "☰", "tools": ["subagent_list_agents"], "heading": "Agent roster" },
+    { "category": "rdd", "glyph": "🌹", "patterns": ["gentle_review*"], "heading": "rdd" }
+  ]
+}

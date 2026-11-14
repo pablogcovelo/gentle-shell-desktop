@@ -264,6 +264,27 @@ export interface ToolCallView {
   readonly status: "running" | "done";
 }
 
+/** One published action category: a glyph, and the tools (exact names) or
+ * patterns (single-`*` globs) it covers, plus the heading the TUI shows in
+ * place of the tool name. Data only — the app renders from it and never
+ * keeps its own copy of gentle-pi's tables (desktop-rpc T7b, S7). */
+export interface ToolVocabularyEntry {
+  readonly category: string;
+  readonly glyph: string;
+  readonly tools?: readonly string[];
+  readonly patterns?: readonly string[];
+  readonly heading?: string;
+}
+
+/** gentle-pi's published vocabulary as one value: the categories it knows and
+ * how each of them renders. Absent until the child answers
+ * `tool_vocabulary`; a tool the vocabulary does not cover renders its raw
+ * name rather than an invented category. */
+export interface ToolVocabulary {
+  readonly categories: readonly string[];
+  readonly entries: readonly ToolVocabularyEntry[];
+}
+
 export interface ChatState {
   readonly messages: readonly ChatMessage[];
   readonly working: boolean;
@@ -275,6 +296,10 @@ export interface ChatState {
    * provider's own payloads, carried for the action rows' detail and never
    * interpreted. Optional: absent until the first tool runs. */
   readonly toolCalls?: readonly ToolCallView[];
+  /** The action vocabulary the child published (desktop-rpc T7b). Absent
+   * until it answers `tool_vocabulary`; the renderer falls back to raw tool
+   * names, never to invented categories. */
+  readonly toolVocabulary?: ToolVocabulary;
   readonly helpers: HelpersActivity;
   /** Status entries published through pi RPC's fire-and-forget `setStatus`
    * method, keyed by the wire's `statusKey`: a frame carrying `statusText`
