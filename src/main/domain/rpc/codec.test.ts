@@ -129,14 +129,23 @@ describe("decodeLine", () => {
   });
 
   it("decodes tool_execution_start/update/end", () => {
+    // `args` and `result` are carried verbatim for the action rows
+    // (desktop-rpc T7): the decoder keeps the provider's own payload instead
+    // of dropping it, and adds nothing of its own.
     expect(
       decodeLine('{"type":"tool_execution_start","toolCallId":"call_1","toolName":"bash","args":{}}'),
-    ).toEqual({ type: "tool_execution_start", toolCallId: "call_1", toolName: "bash" });
+    ).toEqual({ type: "tool_execution_start", toolCallId: "call_1", toolName: "bash", args: {} });
     expect(
       decodeLine(
         '{"type":"tool_execution_end","toolCallId":"call_1","toolName":"bash","result":{},"isError":false}',
       ),
-    ).toEqual({ type: "tool_execution_end", toolCallId: "call_1", toolName: "bash", isError: false });
+    ).toEqual({
+      type: "tool_execution_end",
+      toolCallId: "call_1",
+      toolName: "bash",
+      result: {},
+      isError: false,
+    });
   });
 
   it("decodes an extension_ui_request select dialog", () => {

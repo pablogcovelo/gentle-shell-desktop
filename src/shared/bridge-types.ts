@@ -250,12 +250,31 @@ export interface SubscriptionUsage {
   readonly providers: readonly UsageProvider[];
 }
 
+/** One tool execution as the wire reports it (desktop-rpc T7). `args` and
+ * `result` stay `unknown` on purpose: they are the provider's own payloads,
+ * carried for the action rows' detail and never interpreted here. `status`
+ * comes from the execution events — a call is running until its end frame
+ * arrives — never guessed from the payload. */
+export interface ToolCallView {
+  readonly id: string;
+  readonly toolName: string;
+  readonly args?: unknown;
+  readonly result?: unknown;
+  readonly isError?: boolean;
+  readonly status: "running" | "done";
+}
+
 export interface ChatState {
   readonly messages: readonly ChatMessage[];
   readonly working: boolean;
   readonly pendingDialogs: readonly Dialog[];
   readonly lastError?: string;
   readonly activity: number;
+  /** The tool executions this chat has seen (desktop-rpc T7): one row per
+   * call, newest kept up to MAX_TOOL_CALLS. `args`/`result` are the
+   * provider's own payloads, carried for the action rows' detail and never
+   * interpreted. Optional: absent until the first tool runs. */
+  readonly toolCalls?: readonly ToolCallView[];
   readonly helpers: HelpersActivity;
   /** Status entries published through pi RPC's fire-and-forget `setStatus`
    * method, keyed by the wire's `statusKey`: a frame carrying `statusText`

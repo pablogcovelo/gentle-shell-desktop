@@ -802,3 +802,65 @@ describe("reduceChat: helpers retention (gentle-pi drops finished tasks from its
     ]);
   });
 });
+
+describe("tool execution detail (desktop-rpc T7)", () => {
+  function start(toolCallId: string, toolName: string, args?: unknown): RpcEvent {
+    return { type: "tool_execution_start", toolCallId, toolName, args };
+  }
+  function end(toolCallId: string, toolName: string, result: unknown, isError = false): RpcEvent {
+    return { type: "tool_execution_end", toolCallId, toolName, result, isError };
+  }
+
+  it("pairs a start with its end into one row, keeping args and result verbatim", () => {
+    const args = { path: "README.md" };
+    const result = { lines: 42 };
+    const afterStart = reduceChat(INITIAL_CHAT_STATE, start("c1", "read", args));
+    expect(afterStart.toolCalls).toEqual([{ id: "c1", toolName: "read", args, status: "running" }]);
+
+    const afterEnd = reduceChat(afterStart, end("c1", "read", result));
+    expect(afterEnd.toolCalls).toEqual([
+      { id: "c1", toolName: "read", args, result, isError: false, status: "done" },
+    ]);
+    // The activity counter keeps behaving as before: the fold is additive.
+    expect(afterEnd.activity).toBe(afterStart.activity + 1);
+  });
+
+  it("an update adds no row and keeps the call running until its end arrives", () => {
+    const started = reduceChat(INITIAL_CHAT_STATE, start("c1", "bash"));
+    const updated = reduceChat(started, { type: "tool_execution_update", toolCallId: "c1", toolName: "bash" });
+
+    expect(updated.toolCalls).toEqual([{ id: "c1", toolName: "bash", args: undefined, status: "running" }]);
+    expect(updated.activity).toBe(started.activity + 1);
+  });
+
+  it("a duplicate start never opens a second row for the same call", () => {
+    const once = reduceChat(INITIAL_CHAT_STATE, start("c1", "read", { path: "a" }));
+    const twice = reduceChat(once, start("c1", "read", { path: "b" }));
+
+    expect(twice.toolCalls).toHaveLength(1);
+    expect(twice.toolCalls?.[0]?.args).toEqual({ path: "a" });
+  });
+
+  it("an end for a call whose start was never seen still yields a done row", () => {
+    const state = reduceChat(INITIAL_CHAT_STATE, end("c9", "grep", "match", true));
+
+    expect(state.toolCalls).toEqual([
+      { id: "c9", toolName: "grep", args: undefined, result: "match", isError: true, status: "done" },
+    ]);
+  });
+
+  it("keeps the newest MAX_TOOL_CALLS rows so a long session cannot grow without limit", () => {
+    let state: ChatState = INITIAL_CHAT_STATE;
+    for (let index = 0; index < 25; index += 1) state = reduceChat(state, start(`c${index}`, "read"));
+
+    expect(state.toolCalls).toHaveLength(20);
+    expect(state.toolCalls?.[0]?.id).toBe("c5");
+    expect(state.toolCalls?.[19]?.id).toBe("c24");
+  });
+
+  it("never invents an error flag or a result the wire did not carry", () => {
+    const started = reduceChat(INITIAL_CHAT_STATE, start("c1", "read", { path: "a" }));
+    expect(started.toolCalls?.[0]?.isError).toBeUndefined();
+    expect(started.toolCalls?.[0]?.result).toBeUndefined();
+  });
+});

@@ -8,6 +8,7 @@ import {
   type Dialog,
   type HelperTask,
   type HelpersActivity,
+  type ToolCallView,
   type NotificationSeverity,
 } from "@shared/bridge-types";
 import { emptyHelpersActivity, parseHelpersActivity } from "./helpersActivity";
@@ -40,6 +41,11 @@ const NOTIFICATION_SEVERITIES: ReadonlySet<string> = new Set<string>(Object.valu
  * and 5248 ms for 40k, paid repeatedly on every event.
  */
 export const MAX_NOTIFICATIONS = 10;
+
+/** How many tool executions the detail list retains (desktop-rpc T7). Same
+ * reasoning as MAX_NOTIFICATIONS: enough to see recent actions, small enough
+ * that the state stays cheap to clone to the renderer on every event. */
+export const MAX_TOOL_CALLS = 20;
 
 // ChatState itself now lives in @shared/bridge-types (T3: the renderer
 // receives it directly through GentleBridge.onState/openChat/newChat).
@@ -92,8 +98,37 @@ export function reduceChat(state: ChatState, event: RpcEvent, now?: string): Cha
       return closeAssistantMessage(state, event.message);
     case "tool_execution_start":
     case "tool_execution_update":
-    case "tool_execution_end":
-      return { ...state, activity: state.activity + 1 };
+    case "tool_execution_end": {
+      const next = { ...state, activity: state.activity + 1 };
+      // An update carries no new identity or payload: the row it belongs to
+      // already exists and the end frame is what completes it.
+      if (event.type === "tool_execution_update") return next;
+      const calls = state.toolCalls ?? [];
+      const existing = calls.find((call) => call.id === event.toolCallId);
+      if (event.type === "tool_execution_start") {
+        // A duplicate start must not open a second row for the same call.
+        if (existing) return next;
+        const started: ToolCallView = {
+          id: event.toolCallId,
+          toolName: event.toolName,
+          args: event.args,
+          status: "running",
+        };
+        return { ...next, toolCalls: [...calls, started].slice(-MAX_TOOL_CALLS) };
+      }
+      const finished: ToolCallView = {
+        id: event.toolCallId,
+        toolName: event.toolName,
+        args: existing?.args,
+        result: event.result,
+        isError: event.isError,
+        status: "done",
+      };
+      return {
+        ...next,
+        toolCalls: [...calls.filter((call) => call.id !== event.toolCallId), finished].slice(-MAX_TOOL_CALLS),
+      };
+    }
     case "extension_ui_request":
       return applyExtensionUIRequest(state, event, now);
     case "extension_error":
