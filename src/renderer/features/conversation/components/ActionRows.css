@@ -1,0 +1,107 @@
+/* Tool activity rows (desktop-rpc T7b): quiet, one line per call, expanding in
+ * place to the exact payload. Same tokens and scroll treatment as the rest of
+ * the conversation surface. */
+
+.gc-action-rows {
+  padding: 0 32px 8px;
+}
+
+.gc-action-rows__caption {
+  margin: 0 0 6px;
+  color: var(--gc-muted, #a78e9b);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.gc-action-rows__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gc-action-row {
+  border-bottom: 1px solid var(--gc-line, #2a1720);
+}
+
+.gc-action-row__summary {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.gc-action-row__summary:hover {
+  background: var(--gc-panel, #100a0f);
+}
+
+.gc-action-row__glyph {
+  font-size: 16px;
+  line-height: 1;
+  text-align: center;
+}
+
+.gc-action-row__label {
+  font-family: var(--gc-mono, "SFMono-Regular", Consolas, monospace);
+  font-size: 11px;
+  color: var(--gc-text-2, #d2cbd0);
+  overflow-wrap: anywhere;
+}
+
+.gc-action-row__tool {
+  font-size: 10px;
+  color: var(--gc-muted, #a78e9b);
+}
+
+.gc-action-row__state {
+  font-size: 10px;
+  color: var(--gc-muted, #a78e9b);
+  white-space: nowrap;
+}
+
+/* Running and failed states earn colour; done stays quiet. */
+.gc-action-row[data-status="running"] .gc-action-row__state {
+  color: var(--gc-amber, #f2b86d);
+}
+
+.gc-action-row[data-status="failed"] .gc-action-row__state {
+  color: var(--gc-red, #ff718f);
+}
+
+.gc-action-row__detail {
+  padding: 2px 0 12px 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gc-action-row__field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.gc-action-row__field-label {
+  font-size: 10px;
+  color: var(--gc-muted, #a78e9b);
+}
+
+.gc-action-row__field-value {
+  margin: 0;
+  font-family: var(--gc-mono, "SFMono-Regular", Consolas, monospace);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--gc-text-2, #d2cbd0);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

@@ -1,5 +1,7 @@
 import type { ToolVocabulary, ToolVocabularyEntry } from "@shared/bridge-types";
 
+export { resolveToolCategory } from "@shared/toolVocabulary";
+
 /**
  * Decoder and resolver for gentle-pi's published action vocabulary (T7b;
  * contract: gentle-pi `docs/desktop-rpc.md` "tool_vocabulary", implemented in
@@ -37,33 +39,6 @@ export function parseToolVocabulary(data: unknown): ToolVocabulary | undefined {
     entries.push(entry);
   }
   return { categories, entries };
-}
-
-/**
- * Resolves the glyph and category a tool call should render with, or
- * `undefined` when the vocabulary does not cover it. Exact tool matches win
- * over patterns, so a vocabulary that grows a specific entry keeps it.
- */
-export function resolveToolCategory(
-  vocabulary: ToolVocabulary | undefined,
-  toolName: string,
-): ToolVocabularyEntry | undefined {
-  if (!vocabulary || toolName.length === 0) return undefined;
-  for (const entry of vocabulary.entries) {
-    if (entry.tools?.includes(toolName)) return entry;
-  }
-  for (const entry of vocabulary.entries) {
-    if (entry.patterns?.some((pattern) => matchesPattern(pattern, toolName))) return entry;
-  }
-  return undefined;
-}
-
-/** A vocabulary pattern is a glob with a single `*` (gentle-pi's form:
- * `gentle_review*`). Anything more elaborate is compared literally. */
-function matchesPattern(pattern: string, value: string): boolean {
-  const star = pattern.indexOf("*");
-  if (star === -1) return pattern === value;
-  return value.startsWith(pattern.slice(0, star)) && value.endsWith(pattern.slice(star + 1));
 }
 
 function toEntry(value: unknown): ToolVocabularyEntry | undefined {

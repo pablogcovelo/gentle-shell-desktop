@@ -149,6 +149,41 @@ describe("ConversationContainer", () => {
     await vi.waitFor(() => expect(screen.queryByLabelText("Session identity")).not.toBeInTheDocument());
   });
 
+  it("renders tool activity with the glyph the child's vocabulary assigns, and the raw name otherwise", async () => {
+    let pushState: (state: ChatState) => void = () => {};
+    const bridge = makeBridge({
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+
+    pushState({
+      messages: [],
+      working: false,
+      pendingDialogs: [],
+      activity: 2,
+      helpers: EMPTY_HELPERS,
+      toolCalls: [
+        { id: "c1", toolName: "read", args: { path: "a" }, result: "ok", isError: false, status: "done" },
+        { id: "c2", toolName: "some_future_tool", status: "running" },
+      ],
+      toolVocabulary: { categories: ["read"], entries: [{ category: "read", glyph: "≡", tools: ["read"] }] },
+    });
+
+    const rows = await screen.findByLabelText("Tool activity");
+    expect(rows).toHaveTextContent("≡");
+    // The uncovered tool keeps its raw name: no invented category.
+    expect(rows).toHaveTextContent("some_future_tool");
+    // Activity is chrome: the caption appears once, in its own section, and
+    // never gets duplicated into the transcript.
+    expect(screen.getAllByText("Tool activity")).toHaveLength(1);
+  });
+
   it("renders the subscription-usage meters when the pushed ChatState carries usage data", async () => {
     const usage: SubscriptionUsage = {
       providers: [

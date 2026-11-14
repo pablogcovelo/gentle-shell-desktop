@@ -174,6 +174,20 @@ function emptyState(): ChatState {
       sessionCost: 0.45,
       tokensTotal: 105000,
     },
+    // desktop-rpc T7b demo: two executions plus the vocabulary that gives them
+    // their native glyphs, so `pnpm dev:web` shows the action rows without a
+    // child. The second row matches by pattern, exactly like `rdd` does.
+    toolCalls: [
+      { id: "call-1", toolName: "read", args: { path: "src/main/index.ts" }, result: "export {}", isError: false, status: "done" },
+      { id: "call-2", toolName: "gentle_review_start", args: { scope: "staged" }, status: "running" },
+    ],
+    toolVocabulary: {
+      categories: ["read", "rdd"],
+      entries: [
+        { category: "read", glyph: "≡", tools: ["read"] },
+        { category: "rdd", glyph: "🌹", patterns: ["gentle_review*"], heading: "rdd" },
+      ],
+    },
   };
 }
 

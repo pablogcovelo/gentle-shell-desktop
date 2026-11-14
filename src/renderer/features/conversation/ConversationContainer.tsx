@@ -3,6 +3,7 @@ import type { ChatState, ChatSummary, DialogAnswer } from "@shared/bridge-types"
 import { useBridge } from "@renderer/shared/bridge/useBridge";
 import { HelpersContainer } from "@renderer/features/helpers/HelpersContainer";
 import { Composer } from "./components/Composer";
+import { ActionRows } from "./components/ActionRows";
 import { CONVERSATION_PANE, ConversationHeader, type ConversationPane } from "./components/ConversationHeader";
 import { HelpersStrip } from "./components/HelpersStrip";
 import { MessageThread } from "./components/MessageThread";
@@ -148,6 +149,7 @@ export function ConversationContainer({ activeChat }: ConversationContainerProps
           <div className="gc-conversation__stack">
             <HelpersStrip helpers={chatState.helpers} onOpen={() => setPane(CONVERSATION_PANE.HELPERS)} />
             <MessageThread messages={chatState.messages} dialogs={chatState.pendingDialogs} onAnswerDialog={handleAnswerDialog} />
+            <ActionRows toolCalls={chatState.toolCalls} vocabulary={chatState.toolVocabulary} />
             {/* The chat's own ODD task card (M3: S5). It lives INSIDE the
             stack and above the composer so the narrow layout keeps the TUI's
             order — its bottom widget renders above the prompt, never below
