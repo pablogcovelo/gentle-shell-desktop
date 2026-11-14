@@ -620,13 +620,12 @@ describe("PiSession: Electron host follow-ups", () => {
 
     session.start();
 
-    // desktop-rpc T3 correction: start() sends the capabilities probe
-    // BEFORE the history request (S10's only support probe; ChatHost's
-    // bounded history wait keys on get_messages being the child's LAST
-    // write, which still holds).
-    expect(handles[0]?.writes).toHaveLength(2);
-    expect(handles[0]?.writes[0]).toMatch("capabilities");
-    const sent = JSON.parse(handles[0]?.writes[1] ?? "{}");
+    // desktop-rpc T3 correction (R3-001): start() writes ONLY the history
+    // request. The capabilities probe follows the history RESPONSE, so
+    // `get_messages` stays the child's LAST write while ChatHost's bounded
+    // history wait is observing it.
+    expect(handles[0]?.writes).toHaveLength(1);
+    const sent = JSON.parse(handles[0]?.writes[0] ?? "{}");
     expect(sent).toMatchObject({ type: "get_messages" });
     expect(typeof sent.id).toBe("string");
 
@@ -669,9 +668,9 @@ describe("PiSession: Electron host follow-ups", () => {
     const session = new PiSession({ spawner, locator: fakeLocator, env: {}, sessionPath: "/a/sess-1.jsonl" });
 
     session.start();
-    // desktop-rpc T3: the capabilities probe is writes[0]; get_messages is
-    // writes[1].
-    const sent = JSON.parse(handles[0]?.writes[1] ?? "{}");
+    // desktop-rpc T3 correction (R3-001): the history request is the ONLY
+    // start write; the capabilities probe waits for its response.
+    const sent = JSON.parse(handles[0]?.writes[0] ?? "{}");
 
     handles[0]?.emitStdout(
       JSON.stringify({ type: "response", id: sent.id, command: "get_messages", success: false, error: "boom" }),
@@ -1083,16 +1082,21 @@ describe("PiSession: desktop-rpc control plane (U1, desktop-rpc T2)", () => {
     const handle = handles[0];
     if (!handle) throw new Error("no spawned handle");
 
-    // Ordering pins: the capabilities probe (S10's only support probe) is
-    // the FIRST write, and get_messages is still the LAST one, so
-    // ChatHost's bounded history wait keeps working.
-    expect(handle.writes).toHaveLength(2);
-    expect(handle.writes[0]).toMatch("capabilities");
-    expect(JSON.parse(handle.writes[1] ?? "{}")).toMatchObject({ type: "get_messages" });
+    // Correction R3-001: a reopened chat writes ONLY its history request at
+    // start, so `get_messages` is the child's last write while ChatHost's
+    // bounded history wait observes it. The capabilities probe deliberately
+    // waits for the history RESPONSE instead of taking that position away.
+    expect(handle.writes).toHaveLength(1);
+    const historySent = JSON.parse(handle.writes[0] ?? "{}");
+    expect(historySent).toMatchObject({ type: "get_messages" });
 
-    // Before the probe succeeds, nothing else may be written.
-    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    handle.emitStdout(
+      JSON.stringify({ type: "response", id: historySent.id, command: "get_messages", success: true, data: { messages: [] } }),
+    );
+
+    // History landed: now, and only now, the probe takes the next write.
     expect(handle.writes).toHaveLength(2);
+    expect(handle.writes[1]).toMatch("capabilities");
 
     await adoptChannel(handle);
 

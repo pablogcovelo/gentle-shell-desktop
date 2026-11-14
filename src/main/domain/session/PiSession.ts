@@ -182,19 +182,19 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
 
       // desktop-rpc T3 correction: control traffic is gated on the
       // capabilities probe (S10's only support probe). A REOPENED chat
-      // probes at its chat-ready moment, immediately BEFORE the history
-      // request, so ChatHost's bounded history wait still keys on
-      // `get_messages` being the child's LAST write; the usage read itself
-      // goes out only when the probe replies ok. A FRESH chat stays silent
-      // on stdin until the user acts (ChatHost.test.ts pins that
-      // contract); its first control write is the probe at its first
-      // settled turn (agent_settled, below), and the `rate_limit` event is
-      // the live usage path before that — a provider's first response
-      // records windows and pushes them without any request. See
-      // probeChannel/requestUsage for the full trigger set (never a
-      // timer).
+      // sends ONLY its history request here; the probe follows once that
+      // response has been folded (`handleLine`), because a probe reply
+      // landing first would write a `/gentle:desktop` line and take
+      // `get_messages` out of last position while ChatHost's bounded
+      // history wait is still observing it (correction R3-001). A FRESH
+      // chat stays silent on stdin until the user acts
+      // (ChatHost.test.ts pins that contract); its first control write is
+      // the probe at its first settled turn (agent_settled, below), and
+      // the `rate_limit` event is the live usage path before that — a
+      // provider's first response records windows and pushes them without
+      // any request. See probeChannel/requestUsage for the full trigger
+      // set (never a timer).
       if (this.sessionPath) {
-        this.probeChannel();
         this.requestHistory();
       }
     } catch (error) {
@@ -444,7 +444,17 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
       // reduceChat has no case for "response" (its default arm returns
       // state unchanged), so folding the get_messages history response in
       // here, right after, never fights it.
-      if (decoded.type === "response") this.state = this.applyHistoryResponse(this.state, decoded);
+      if (decoded.type === "response") {
+        const historyWasPending = this.pendingHistoryRequestId !== undefined;
+        this.state = this.applyHistoryResponse(this.state, decoded);
+        // Correction R3-001: the reopened chat's capabilities probe is
+        // issued HERE, after the history response has landed, so the
+        // child's writes are [get_messages, probe] and its last write is
+        // never taken away from the bounded history wait. `probeChannel`
+        // no-ops once it has started or failed, and a child that never
+        // answers history still probes at its first settled turn.
+        if (historyWasPending && this.pendingHistoryRequestId === undefined) this.probeChannel();
+      }
       this.emit("event", decoded);
       this.emit("state", this.state);
     } catch (error) {
