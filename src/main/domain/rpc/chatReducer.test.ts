@@ -266,14 +266,126 @@ describe("reduceChat: extension UI dialogs", () => {
     expect(state.pendingDialogs).toEqual([{ id: "dlg-4", method: "editor", title: "Edit", prefill: "line 1" }]);
   });
 
-  it("ignores fire-and-forget methods", () => {
+  it("ignores fire-and-forget methods that carry no chat state (setTitle)", () => {
     const state = reduceChat(INITIAL_CHAT_STATE, {
       type: "extension_ui_request",
       id: "dlg-5",
-      method: "notify",
-      message: "hi",
+      method: "setTitle",
+      title: "Untitled",
     });
     expect(state).toBe(INITIAL_CHAT_STATE);
+  });
+});
+
+describe("reduceChat: keyed statuses and notifications (U1, desktop-rpc T2)", () => {
+  function decodedEvent(value: Record<string, unknown>): RpcEvent {
+    const decoded = decodeLine(JSON.stringify(value));
+    if ("kind" in decoded) throw new Error("expected a decoded extension_ui_request");
+    return decoded;
+  }
+
+  function setStatus(id: string, fields: Record<string, unknown>): RpcEvent {
+    return decodedEvent({ type: "extension_ui_request", id, method: "setStatus", ...fields });
+  }
+
+  function notify(id: string, fields: Record<string, unknown>): RpcEvent {
+    return decodedEvent({ type: "extension_ui_request", id, method: "notify", ...fields });
+  }
+
+  it("folds a setStatus frame into state.statuses keyed by its wire statusKey", () => {
+    const state = reduceChat(INITIAL_CHAT_STATE, setStatus("u-1", { statusKey: "gentle-todo", statusText: "2 tasks open" }));
+    expect(state.statuses).toEqual({ "gentle-todo": "2 tasks open" });
+  });
+
+  it("a second setStatus for the same key replaces the entry instead of duplicating it", () => {
+    let state = reduceChat(INITIAL_CHAT_STATE, setStatus("u-1", { statusKey: "gentle-todo", statusText: "2 tasks open" }));
+    state = reduceChat(state, setStatus("u-2", { statusKey: "gentle-todo", statusText: "1 task open" }));
+    expect(state.statuses).toEqual({ "gentle-todo": "1 task open" });
+  });
+
+  it("a setStatus frame without statusText clears that key and keeps other keys", () => {
+    let state = reduceChat(INITIAL_CHAT_STATE, setStatus("u-1", { statusKey: "gentle-todo", statusText: "2 tasks open" }));
+    state = reduceChat(state, setStatus("u-2", { statusKey: "other-ext", statusText: "busy" }));
+    state = reduceChat(state, setStatus("u-3", { statusKey: "gentle-todo" }));
+    expect(state.statuses).toEqual({ "other-ext": "busy" });
+  });
+
+  it("a clear for a key that was never set leaves the state object untouched", () => {
+    const state = reduceChat(INITIAL_CHAT_STATE, setStatus("u-1", { statusKey: "never-set" }));
+    expect(state).toBe(INITIAL_CHAT_STATE);
+  });
+
+  it("a notify frame carries its message and wire severity into state.notifications", () => {
+    let state = reduceChat(INITIAL_CHAT_STATE, notify("u-1", { message: "Command blocked by user", notifyType: "warning" }));
+    state = reduceChat(state, notify("u-2", { message: "Sync finished" }));
+    state = reduceChat(state, notify("u-3", { message: "Disk full", notifyType: "error" }));
+    expect(state.notifications).toEqual([
+      { message: "Command blocked by user", severity: "warning" },
+      { message: "Sync finished", severity: "info" },
+      { message: "Disk full", severity: "error" },
+    ]);
+  });
+
+  it("neither setStatus nor notify ever adds a conversation message", () => {
+    const before = { ...INITIAL_CHAT_STATE, messages: [{ id: "msg-0", role: "assistant" as const, text: "hi" }] };
+    const state = reduceChat(
+      reduceChat(before, setStatus("u-1", { statusKey: "k", statusText: "v" })),
+      notify("u-2", { message: "note", notifyType: "warning" }),
+    );
+    expect(state.messages).toBe(before.messages);
+  });
+
+  it("ignores a malformed setStatus frame (missing or non-string statusKey, non-string statusText) without throwing", () => {
+    const noKey = { type: "extension_ui_request", id: "u-1", method: "setStatus", statusText: "x" } as unknown as RpcEvent;
+    const badKey = { type: "extension_ui_request", id: "u-2", method: "setStatus", statusKey: 7 } as unknown as RpcEvent;
+    const badText = {
+      type: "extension_ui_request",
+      id: "u-3",
+      method: "setStatus",
+      statusKey: "gentle-todo",
+      statusText: 42,
+    } as unknown as RpcEvent;
+    expect(reduceChat(INITIAL_CHAT_STATE, noKey)).toBe(INITIAL_CHAT_STATE);
+    expect(reduceChat(INITIAL_CHAT_STATE, badKey)).toBe(INITIAL_CHAT_STATE);
+    expect(reduceChat(INITIAL_CHAT_STATE, badText)).toBe(INITIAL_CHAT_STATE);
+  });
+
+  it("ignores a malformed notify frame (missing message, wrong-typed or unknown severity) without throwing", () => {
+    const noMessage = { type: "extension_ui_request", id: "u-1", method: "notify", notifyType: "info" } as unknown as RpcEvent;
+    const badMessage = { type: "extension_ui_request", id: "u-2", method: "notify", message: true } as unknown as RpcEvent;
+    const badSeverity = {
+      type: "extension_ui_request",
+      id: "u-3",
+      method: "notify",
+      message: "hi",
+      notifyType: "urgent",
+    } as unknown as RpcEvent;
+    expect(reduceChat(INITIAL_CHAT_STATE, noMessage)).toBe(INITIAL_CHAT_STATE);
+    expect(reduceChat(INITIAL_CHAT_STATE, badMessage)).toBe(INITIAL_CHAT_STATE);
+    expect(reduceChat(INITIAL_CHAT_STATE, badSeverity)).toBe(INITIAL_CHAT_STATE);
+  });
+
+  it("never folds a gentle-desktop-rpc setWidget frame into chat state (interception lives in PiSession)", () => {
+    const desktop = decodedEvent({
+      type: "extension_ui_request",
+      id: "u-1",
+      method: "setWidget",
+      widgetKey: "gentle-desktop-rpc",
+      widgetLines: ['{"schema":"gentle-shell.desktop-rpc/v1","kind":"response","requestId":"r-1","data":{"ok":true}}'],
+    });
+    expect(reduceChat(INITIAL_CHAT_STATE, desktop)).toBe(INITIAL_CHAT_STATE);
+  });
+
+  it("replays the status-notify fixture: statuses end cleared, notifications keep severity, transcript untouched", () => {
+    const state = replay(readFixtureEvents("status-notify.jsonl"));
+    expect(state.statuses).toEqual({});
+    expect(state.notifications).toEqual([
+      { message: "Command blocked by user", severity: "warning" },
+      { message: "Sync finished", severity: "info" },
+    ]);
+    expect(state.messages).toEqual([]);
+    expect(state.helpers).toEqual({ summary: { running: 0, queued: 0, waiting: 0, finished: 0 }, tasks: [] });
+    expect(state.pendingDialogs).toEqual([]);
   });
 });
 

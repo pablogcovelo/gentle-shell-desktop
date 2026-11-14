@@ -1,3 +1,4 @@
+import { NOTIFICATION_SEVERITY, type NotificationSeverity } from "@shared/bridge-types";
 import type {
   AssistantMessageEvent,
   DecodedLine,
@@ -7,6 +8,8 @@ import type {
   RpcMessage,
   RpcResponse,
 } from "./types";
+
+const NOTIFICATION_SEVERITIES: ReadonlySet<string> = new Set<string>(Object.values(NOTIFICATION_SEVERITY));
 
 /** One JSON command line, LF-terminated per rpc.md framing rules. */
 export function encodeCommand(command: RpcCommand): string {
@@ -188,7 +191,33 @@ function toExtensionUIRequest(parsed: Record<string, unknown>): RpcExtensionUIRe
         ? { type: "extension_ui_request", id, method, title: parsed.title, prefill: asString(parsed.prefill) }
         : undefined;
     case "notify":
+      // Exact wire shape verified against the resolved pi build
+      // (rpc-types.d.ts) and docs/rpc-extension-ui.md "notify". Malformed
+      // payloads (missing/wrong-typed message, unknown severity) decode to
+      // unknown and are ignored, the same way unmodeled events already are.
+      if (typeof parsed.message !== "string") return undefined;
+      if (parsed.notifyType !== undefined) {
+        if (typeof parsed.notifyType !== "string" || !NOTIFICATION_SEVERITIES.has(parsed.notifyType)) return undefined;
+        return {
+          type: "extension_ui_request",
+          id,
+          method: "notify",
+          message: parsed.message,
+          notifyType: parsed.notifyType as NotificationSeverity,
+        };
+      }
+      return { type: "extension_ui_request", id, method: "notify", message: parsed.message };
     case "setStatus":
+      // Exact wire shape verified against the resolved pi build and
+      // docs/rpc-extension-ui.md "setStatus". statusText omitted means
+      // "clear this key"; a present-but-non-string statusText is malformed.
+      if (typeof parsed.statusKey !== "string") return undefined;
+      if (parsed.statusText === undefined) {
+        return { type: "extension_ui_request", id, method: "setStatus", statusKey: parsed.statusKey };
+      }
+      return typeof parsed.statusText === "string"
+        ? { type: "extension_ui_request", id, method: "setStatus", statusKey: parsed.statusKey, statusText: parsed.statusText }
+        : undefined;
     case "setWidget":
     case "setTitle":
     case "set_editor_text":

@@ -158,6 +158,81 @@ describe("decodeLine", () => {
     expect(decoded).toMatchObject({ type: "extension_ui_request", id: "uuid-5", method: "notify" });
   });
 
+  it("decodes a setStatus frame with its statusKey and statusText", () => {
+    const line =
+      '{"type":"extension_ui_request","id":"u-1","method":"setStatus","statusKey":"gentle-todo","statusText":"2 tasks open"}';
+    expect(decodeLine(line)).toEqual({
+      type: "extension_ui_request",
+      id: "u-1",
+      method: "setStatus",
+      statusKey: "gentle-todo",
+      statusText: "2 tasks open",
+    });
+  });
+
+  it("decodes a setStatus clear frame (statusText omitted) so the reducer can clear that key", () => {
+    const line = '{"type":"extension_ui_request","id":"u-2","method":"setStatus","statusKey":"gentle-todo"}';
+    expect(decodeLine(line)).toEqual({
+      type: "extension_ui_request",
+      id: "u-2",
+      method: "setStatus",
+      statusKey: "gentle-todo",
+    });
+  });
+
+  it("decodes a notify frame with its message and notifyType", () => {
+    const line =
+      '{"type":"extension_ui_request","id":"u-3","method":"notify","message":"Command blocked by user","notifyType":"warning"}';
+    expect(decodeLine(line)).toEqual({
+      type: "extension_ui_request",
+      id: "u-3",
+      method: "notify",
+      message: "Command blocked by user",
+      notifyType: "warning",
+    });
+  });
+
+  it("decodes a notify frame without notifyType (the wire default is applied downstream)", () => {
+    const line = '{"type":"extension_ui_request","id":"u-4","method":"notify","message":"Sync finished"}';
+    expect(decodeLine(line)).toEqual({
+      type: "extension_ui_request",
+      id: "u-4",
+      method: "notify",
+      message: "Sync finished",
+    });
+  });
+
+  it("is unknown for a setStatus frame without a string statusKey (ignored, not thrown)", () => {
+    expect(decodeLine('{"type":"extension_ui_request","id":"u-5","method":"setStatus","statusText":"x"}')).toEqual({
+      kind: "unknown",
+      raw: '{"type":"extension_ui_request","id":"u-5","method":"setStatus","statusText":"x"}',
+    });
+    expect(
+      decodeLine('{"type":"extension_ui_request","id":"u-6","method":"setStatus","statusKey":7}'),
+    ).toEqual({
+      kind: "unknown",
+      raw: '{"type":"extension_ui_request","id":"u-6","method":"setStatus","statusKey":7}',
+    });
+  });
+
+  it("is unknown for a setStatus frame with a non-string statusText", () => {
+    const line =
+      '{"type":"extension_ui_request","id":"u-7","method":"setStatus","statusKey":"gentle-todo","statusText":42}';
+    expect(decodeLine(line)).toEqual({ kind: "unknown", raw: line });
+  });
+
+  it("is unknown for a notify frame without a string message", () => {
+    const noMessage = '{"type":"extension_ui_request","id":"u-8","method":"notify","notifyType":"info"}';
+    expect(decodeLine(noMessage)).toEqual({ kind: "unknown", raw: noMessage });
+    const wrongMessage = '{"type":"extension_ui_request","id":"u-9","method":"notify","message":true}';
+    expect(decodeLine(wrongMessage)).toEqual({ kind: "unknown", raw: wrongMessage });
+  });
+
+  it("is unknown for a notify frame with a notifyType outside info|warning|error", () => {
+    const line = '{"type":"extension_ui_request","id":"u-10","method":"notify","message":"hi","notifyType":"urgent"}';
+    expect(decodeLine(line)).toEqual({ kind: "unknown", raw: line });
+  });
+
   it("decodes extension_error", () => {
     const line =
       '{"type":"extension_error","extensionPath":"/ext.ts","event":"tool_call","error":"boom"}';
@@ -198,7 +273,7 @@ describe("decodeLine", () => {
   });
 
   it("decodes every line of the recorded fixtures without falling back to unknown", () => {
-    for (const fixture of ["prompt-turn.jsonl", "select-dialog.jsonl", "extension-error.jsonl"]) {
+    for (const fixture of ["prompt-turn.jsonl", "select-dialog.jsonl", "extension-error.jsonl", "status-notify.jsonl"]) {
       for (const line of readFixtureLines(fixture)) {
         const decoded = decodeLine(line);
         expect("kind" in decoded, `expected a recognized event in ${fixture} for line: ${line}`).toBe(false);

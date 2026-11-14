@@ -1,18 +1,34 @@
 import {
   HELPER_STATUS,
   MESSAGE_ROLE,
+  NOTIFICATION_SEVERITY,
   type ChatMessage,
+  type ChatNotification,
   type ChatState,
   type Dialog,
   type HelperTask,
   type HelpersActivity,
+  type NotificationSeverity,
 } from "@shared/bridge-types";
 import { emptyHelpersActivity, parseHelpersActivity } from "./helpersActivity";
 import { TODO_STATE_CUSTOM_TYPE, parseTodoPanel } from "./todoPanel";
 import type { AssistantMessageEvent, FireAndForgetMethod, RpcEvent, RpcExtensionUIRequest, RpcMessage } from "./types";
 
-/** The fire-and-forget branch of RpcExtensionUIRequest (notify, setStatus, setWidget, setTitle, set_editor_text). */
-type FireAndForgetUIRequest = Extract<RpcExtensionUIRequest, { readonly method: FireAndForgetMethod }>;
+/**
+ * The generic fire-and-forget branch of RpcExtensionUIRequest (setWidget,
+ * setTitle, set_editor_text): decoded by spread, so its extra fields are
+ * only known through the index signature. notify and setStatus are decoded
+ * as exact members (see types.ts) and handled by their own cases in
+ * applyExtensionUIRequest below — which is why they are excluded here.
+ */
+type GenericFireAndForgetUIRequest = {
+  readonly type: "extension_ui_request";
+  readonly id: string;
+  readonly method: FireAndForgetMethod;
+  readonly [key: string]: unknown;
+};
+
+const NOTIFICATION_SEVERITIES: ReadonlySet<string> = new Set<string>(Object.values(NOTIFICATION_SEVERITY));
 
 // ChatState itself now lives in @shared/bridge-types (T3: the renderer
 // receives it directly through GentleBridge.onState/openChat/newChat).
@@ -202,10 +218,60 @@ function applyExtensionUIRequest(state: ChatState, event: RpcExtensionUIRequest,
       return pushDialog(state, { id: event.id, method: "editor", title: event.title, prefill: event.prefill });
     case "setWidget":
       return applySetWidget(state, event, now);
+    case "notify":
+      return applyNotify(state, event);
+    case "setStatus":
+      return applySetStatus(state, event);
     default:
-      // Other fire-and-forget methods: notify, setStatus, setTitle, set_editor_text.
+      // Other fire-and-forget methods: setTitle, set_editor_text.
       return state;
   }
+}
+
+/**
+ * `notify` (U1, desktop-rpc T2): carries one notification with its wire
+ * severity (`notifyType`, defaulting to "info" when omitted per
+ * rpc-extension-ui.md). It folds into `state.notifications` and NEVER
+ * becomes a conversation message or transcript entry. Malformed frames
+ * (missing/wrong-typed message, unknown severity) keep the previous state
+ * instead of throwing, mirroring the helpersActivity malformed-frame rule.
+ */
+function applyNotify(state: ChatState, event: GenericFireAndForgetUIRequest): ChatState {
+  const message = event.message;
+  if (typeof message !== "string") return state;
+
+  const notifyType = event.notifyType;
+  let severity: NotificationSeverity = "info";
+  if (notifyType !== undefined) {
+    if (typeof notifyType !== "string" || !NOTIFICATION_SEVERITIES.has(notifyType)) return state;
+    severity = notifyType as NotificationSeverity;
+  }
+
+  const notification: ChatNotification = { message, severity };
+  return { ...state, notifications: [...(state.notifications ?? []), notification] };
+}
+
+/**
+ * `setStatus` (U1, desktop-rpc T2): keyed by the wire's `statusKey`. A
+ * frame with a string `statusText` replaces that key's entry; a frame
+ * without one CLEARS the key (rpc-extension-ui.md "setStatus": clearing is
+ * expressible on the wire, so it is implemented, not swallowed). Malformed
+ * frames keep the previous state untouched without throwing.
+ */
+function applySetStatus(state: ChatState, event: GenericFireAndForgetUIRequest): ChatState {
+  const statusKey = event.statusKey;
+  if (typeof statusKey !== "string") return state;
+
+  const statusText = event.statusText;
+  if (statusText !== undefined) {
+    if (typeof statusText !== "string") return state;
+    return { ...state, statuses: { ...(state.statuses ?? {}), [statusKey]: statusText } };
+  }
+
+  if (!state.statuses || !Object.prototype.hasOwnProperty.call(state.statuses, statusKey)) return state;
+  const statuses = { ...state.statuses };
+  delete statuses[statusKey];
+  return { ...state, statuses };
 }
 
 /**
@@ -216,7 +282,7 @@ function applyExtensionUIRequest(state: ChatState, event: RpcExtensionUIRequest,
  * (a different extension's own widget) is still ignored — never a global
  * list, per the M2 objective (the parent-child relation stays direct).
  */
-function applySetWidget(state: ChatState, event: FireAndForgetUIRequest, now: string | undefined): ChatState {
+function applySetWidget(state: ChatState, event: GenericFireAndForgetUIRequest, now: string | undefined): ChatState {
   if (event.widgetKey !== HELPERS_WIDGET_KEY) return state;
 
   const widgetLines = Array.isArray(event.widgetLines) ? toStringArray(event.widgetLines) : undefined;

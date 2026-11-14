@@ -312,6 +312,37 @@ describe("DesktopRpcClient.request", () => {
     await expect(promise).resolves.toEqual({ ok: true, data: { after: "null" } });
   });
 
+  it("never settles a pending request from a kind-event frame, even one carrying a requestId", async () => {
+    // docs/desktop-rpc.md: events are published on the same widget channel
+    // but are not replies; only a response settles a request. A future or
+    // misbehaving server must not be able to answer a request with an event.
+    const { client, sent } = makeClient();
+    const promise = client.request("get_config");
+    client.handleWidget(DESKTOP_RPC_WIDGET_KEY, [
+      JSON.stringify({ schema: DESKTOP_RPC_SCHEMA, kind: "event", requestId: requestIdOf(sent[0]), event: "rate_limit", data: {} }),
+    ]);
+    expect(client.pendingCount).toBe(1);
+    client.handleWidget(DESKTOP_RPC_WIDGET_KEY, [frameFor(requestIdOf(sent[0]), { data: { real: true } })]);
+    await expect(promise).resolves.toEqual({ ok: true, data: { real: true } });
+  });
+
+  it("settles as send_failed instead of rejecting when the injected send throws", async () => {
+    const client = new DesktopRpcClient({
+      send: () => {
+        throw new Error("stdin gone");
+      },
+    });
+    await expect(client.request("capabilities")).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "send_failed", detail: "stdin gone" },
+    });
+    expect(client.pendingCount).toBe(0);
+    // No leaked timer: advancing it must not produce a late settlement or
+    // an unhandled rejection.
+    vi.advanceTimersByTime(DESKTOP_RPC_DEFAULT_TIMEOUT_MS * 2);
+    await Promise.resolve();
+  });
+
   it("does not throw on a malformed widget line and leaves unrelated pending requests alone", async () => {
     const { client, sent } = makeClient();
     const unrelated = client.request("get_config");

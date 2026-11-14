@@ -119,6 +119,30 @@ export interface PromptResult {
  * newChat's return value — the Scope Rule promotes it out of src/main once
  * a second process needs the shape.
  */
+export const NOTIFICATION_SEVERITY = {
+  INFO: "info",
+  WARNING: "warning",
+  ERROR: "error",
+} as const;
+
+/** Severity of an RPC `notify` notification, as carried by the wire's
+ * `notifyType` field (rpc-extension-ui.md; the wire default when omitted is
+ * "info"). Lives here (not src/main) because the renderer renders it. */
+export type NotificationSeverity = (typeof NOTIFICATION_SEVERITY)[keyof typeof NOTIFICATION_SEVERITY];
+
+/**
+ * One notification published through pi RPC's fire-and-forget `notify`
+ * method. Never a conversation message and never part of the transcript:
+ * it lives only in `ChatState.notifications`, in arrival order. Scoped to
+ * its own chat: each PiSession folds only its own child's frames, so
+ * another session's notifications are never merged in or reconstructed
+ * here (single-child host today; this stays true per session).
+ */
+export interface ChatNotification {
+  readonly message: string;
+  readonly severity: NotificationSeverity;
+}
+
 export interface ChatState {
   readonly messages: readonly ChatMessage[];
   readonly working: boolean;
@@ -126,6 +150,17 @@ export interface ChatState {
   readonly lastError?: string;
   readonly activity: number;
   readonly helpers: HelpersActivity;
+  /** Status entries published through pi RPC's fire-and-forget `setStatus`
+   * method, keyed by the wire's `statusKey`: a frame carrying `statusText`
+   * replaces that key's entry, and a frame without one clears it
+   * (rpc-extension-ui.md "setStatus" — clearing IS expressible on the
+   * wire). Optional: absent until an extension publishes a status, so
+   * INITIAL_CHAT_STATE stays as it was. Renderer-facing (status bar);
+   * never a transcript message. */
+  readonly statuses?: Readonly<Record<string, string>>;
+  /** Notifications from pi RPC's `notify` method, in arrival order (see
+   * ChatNotification). Optional for the same reason as `statuses`. */
+  readonly notifications?: readonly ChatNotification[];
   /** The chat's own ODD task-panel state (S7), decoded from the hidden
    * `gentle-todo-state` custom messages — never from transcript text, which
    * those messages never become (S3). Optional: absent until the chat's

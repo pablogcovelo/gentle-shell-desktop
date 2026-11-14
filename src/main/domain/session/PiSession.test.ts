@@ -710,3 +710,170 @@ describe("PiSession: Electron host follow-ups", () => {
     });
   });
 });
+
+describe("PiSession: desktop-rpc control plane (U1, desktop-rpc T2)", () => {
+  function desktopWidgetFrame(requestId: string, data: unknown): string {
+    return JSON.stringify({
+      type: "extension_ui_request",
+      id: "ui-desktop",
+      method: "setWidget",
+      widgetKey: "gentle-desktop-rpc",
+      widgetLines: [JSON.stringify({ schema: "gentle-shell.desktop-rpc/v1", kind: "response", requestId, data })],
+    });
+  }
+
+  function controlRequestId(write: string): string {
+    const prompt = JSON.parse(write) as { type: string; message: string };
+    if (prompt.type !== "prompt" || !prompt.message.startsWith("/gentle:desktop ")) {
+      throw new Error(`expected a /gentle:desktop prompt command, got: ${write}`);
+    }
+    return (JSON.parse(prompt.message.slice("/gentle:desktop ".length)) as { requestId: string }).requestId;
+  }
+
+  it("binds the desktop-rpc client on spawn and clears it on exit", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+
+    expect(session.desktopRpc).toBeUndefined();
+    session.start();
+    expect(session.desktopRpc).toBeDefined();
+
+    handles[0]?.resolveExited({ code: 0, signal: null });
+    await flushMicrotasks();
+    expect(session.desktopRpc).toBeUndefined();
+  });
+
+  it("sends control traffic while the agent is working (bypassing the user-prompt guard) and settles it from the correlated widget frame", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_start" }));
+    expect(session.getState().working).toBe(true);
+
+    // A user prompt is still refused while working...
+    expect(session.prompt("a user message")).toEqual({ queued: false, reason: "Gentle is still working" });
+    const messagesBefore = session.getState().messages.length;
+    const writesBefore = handle.writes.length;
+
+    // ...but control traffic goes out on the same stdin as a /gentle:desktop prompt.
+    const client = session.desktopRpc;
+    if (!client) throw new Error("desktop-rpc client not bound after start()");
+    const pending = client.request("get_session_stats");
+    expect(handle.writes.length).toBe(writesBefore + 1);
+    const requestId = controlRequestId(handle.writes[handle.writes.length - 1] ?? "");
+
+    // pi's response to that prompt only reports disposition: it must never
+    // become the domain answer nor add a conversation message.
+    handle.emitStdout(
+      JSON.stringify({ type: "response", command: "prompt", success: true, data: { disposition: "handled" } }),
+    );
+    expect(session.getState().messages.length).toBe(messagesBefore);
+    await Promise.resolve();
+    expect(client.pendingCount).toBe(1);
+
+    // The correlated setWidget frame settles the request and never reaches
+    // the chat reducer: no message, no helpers change.
+    handle.emitStdout(desktopWidgetFrame(requestId, { stats: true }));
+    await expect(pending).resolves.toEqual({ ok: true, data: { stats: true } });
+    expect(session.getState().messages.length).toBe(messagesBefore);
+    expect(session.getState().helpers).toEqual({ summary: { running: 0, queued: 0, waiting: 0, finished: 0 }, tasks: [] });
+
+    handle.resolveExited({ code: 0, signal: null });
+    await flushMicrotasks();
+  });
+
+  it("a setWidget frame for another widget key keeps today's behaviour: not intercepted, not folded, does not settle a pending request", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    const client = session.desktopRpc;
+    if (!client) throw new Error("desktop-rpc client not bound after start()");
+    const pending = client.request("get_config");
+    const writesBefore = handle.writes.length;
+
+    handle.emitStdout(
+      JSON.stringify({
+        type: "extension_ui_request",
+        id: "ui-other",
+        method: "setWidget",
+        widgetKey: "some-other-extension",
+        widgetLines: ["irrelevant"],
+      }),
+    );
+    expect(handle.writes.length).toBe(writesBefore);
+    expect(client.pendingCount).toBe(1);
+    expect(session.getState().messages).toEqual([]);
+
+    handle.emitStdout(desktopWidgetFrame(controlRequestId(handle.writes[0] ?? ""), { after: true }));
+    await expect(pending).resolves.toEqual({ ok: true, data: { after: true } });
+
+    handle.resolveExited({ code: 0, signal: null });
+    await flushMicrotasks();
+  });
+
+  it("folds setStatus and notify events from the child into this chat's state without creating conversation messages", () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(
+      JSON.stringify({ type: "extension_ui_request", id: "u-1", method: "setStatus", statusKey: "gentle-todo", statusText: "2 open" }),
+    );
+    expect(session.getState().statuses).toEqual({ "gentle-todo": "2 open" });
+
+    handle.emitStdout(
+      JSON.stringify({ type: "extension_ui_request", id: "u-2", method: "setStatus", statusKey: "gentle-todo", statusText: "1 open" }),
+    );
+    expect(session.getState().statuses).toEqual({ "gentle-todo": "1 open" });
+
+    handle.emitStdout(
+      JSON.stringify({ type: "extension_ui_request", id: "u-3", method: "notify", message: "Blocked", notifyType: "warning" }),
+    );
+    handle.emitStdout(JSON.stringify({ type: "extension_ui_request", id: "u-4", method: "notify", message: "Done" }));
+    expect(session.getState().notifications).toEqual([
+      { message: "Blocked", severity: "warning" },
+      { message: "Done", severity: "info" },
+    ]);
+    expect(session.getState().messages).toEqual([]);
+
+    // Wire clearing: a setStatus without statusText drops the key.
+    handle.emitStdout(JSON.stringify({ type: "extension_ui_request", id: "u-5", method: "setStatus", statusKey: "gentle-todo" }));
+    expect(session.getState().statuses).toEqual({});
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("notifications and statuses stay scoped to their own session (another open chat never sees them)", () => {
+    const { spawner, handles } = createFakeSpawner();
+    const a = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    const b = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    a.start();
+    b.start();
+    const handleA = handles[0];
+    const handleB = handles[1];
+    if (!handleA || !handleB) throw new Error("expected two spawned handles");
+
+    handleA.emitStdout(
+      JSON.stringify({ type: "extension_ui_request", id: "u-1", method: "notify", message: "only for A", notifyType: "error" }),
+    );
+    handleB.emitStdout(
+      JSON.stringify({ type: "extension_ui_request", id: "u-2", method: "setStatus", statusKey: "b-only", statusText: "B" }),
+    );
+
+    expect(a.getState().notifications).toEqual([{ message: "only for A", severity: "error" }]);
+    expect(a.getState().statuses).toBeUndefined();
+    expect(b.getState().notifications).toBeUndefined();
+    expect(b.getState().statuses).toEqual({ "b-only": "B" });
+
+    handleA.resolveExited({ code: 0, signal: null });
+    handleB.resolveExited({ code: 0, signal: null });
+  });
+});

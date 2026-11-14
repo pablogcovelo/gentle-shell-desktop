@@ -101,6 +101,8 @@ export type AssistantMessageEvent =
 // editor) block for a response; the rest are fire-and-forget.
 // ---------------------------------------------------------------------------
 
+import type { NotificationSeverity } from "@shared/bridge-types";
+
 export type DialogMethod = "select" | "confirm" | "input" | "editor";
 export type FireAndForgetMethod = "notify" | "setStatus" | "setWidget" | "setTitle" | "set_editor_text";
 
@@ -135,6 +137,31 @@ export type RpcExtensionUIRequest =
       readonly method: "editor";
       readonly title: string;
       readonly prefill?: string;
+    }
+  | {
+      // Exact member, verified against the resolved pi build
+      // (dist/modes/rpc/rpc-types.d.ts) and docs/rpc-extension-ui.md
+      // "notify": `message` is required, `notifyType` is
+      // info|warning|error and defaults to "info" when omitted. The
+      // codec validates both fields; a wrong-typed or unknown-severity
+      // frame decodes to unknown instead.
+      readonly type: "extension_ui_request";
+      readonly id: string;
+      readonly method: "notify";
+      readonly message: string;
+      readonly notifyType?: NotificationSeverity;
+    }
+  | {
+      // Exact member, verified against the resolved pi build and
+      // docs/rpc-extension-ui.md "setStatus": `statusKey` is required,
+      // `statusText` optional — omitted/undefined CLEARS that key's entry
+      // (clearing is expressible on the wire, so the reducer implements
+      // it instead of keeping the last value).
+      readonly type: "extension_ui_request";
+      readonly id: string;
+      readonly method: "setStatus";
+      readonly statusKey: string;
+      readonly statusText?: string;
     }
   | {
       readonly type: "extension_ui_request";

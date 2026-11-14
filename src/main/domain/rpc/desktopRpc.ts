@@ -8,8 +8,11 @@
  *
  * Pure domain module (hexagonal main process, see src/README.md): no
  * Electron or Node process imports, global timers only so tests can drive
- * them with `vi.useFakeTimers()`. Not yet wired into `PiSession` — the
- * transport adapter that feeds `handleWidget` lands in T2.
+ * them with `vi.useFakeTimers()`. Wired into `PiSession` in T2: its `send`
+ * is bound to the spawned child's stdin there (it only exists after
+ * spawn), and `handleLine` feeds every `gentle-desktop-rpc` setWidget
+ * frame to `handleWidget` BEFORE the chat reducer — the control channel's
+ * frames are never chat state (odd/tasks/desktop-rpc-client.md S11).
  */
 
 export const DESKTOP_RPC_SCHEMA = "gentle-shell.desktop-rpc/v1";
@@ -37,6 +40,10 @@ export type DesktopRpcError =
   | { kind: "invalid_method"; detail?: string }
   | { kind: "request_too_large"; detail?: string }
   | { kind: "malformed_reply"; detail?: string }
+  /** The injected `send` threw synchronously: the request was never
+   * written, so it is settled here instead of rejecting the promise or
+   * leaking a pending entry. */
+  | { kind: "send_failed"; detail?: string }
   | { kind: "schema_mismatch"; detail?: string }
   | { kind: "unsupported_method"; detail?: string }
   /** Any server code other than `unsupported_method`. `code` is preserved
@@ -261,7 +268,20 @@ export class DesktopRpcClient {
         });
       }, this.timeoutMs);
       this.pending.set(requestId, { resolve, timer });
-      this.send(built.message);
+      try {
+        this.send(built.message);
+      } catch (error) {
+        // An injected send that throws (e.g. a dead transport) must not
+        // turn into a rejected promise — callers settle on DesktopRpcReply,
+        // never on exceptions — nor leave the pending entry behind to leak
+        // until its timer fires.
+        this.pending.delete(requestId);
+        clearTimeout(timer);
+        return resolve({
+          ok: false,
+          error: { kind: "send_failed", detail: error instanceof Error ? error.message : String(error) },
+        });
+      }
     });
   }
 
@@ -275,6 +295,11 @@ export class DesktopRpcClient {
   handleWidget(widgetKey: string, widgetLines: readonly string[] | undefined): void {
     const frame = parseDesktopRpcWidget(widgetKey, widgetLines);
     if (!frame || !frame.requestId) return;
+    // An unsolicited `kind: "event"` frame is never a reply (docs/
+    // desktop-rpc.md: one response per request; events are published on
+    // this same widget channel without a requestId). Even if one carried a
+    // matching requestId, it must not settle a pending request.
+    if (frame.kind === "event") return;
     const entry = this.pending.get(frame.requestId);
     if (!entry) return; // unknown or already-settled requestId: ignore
     this.pending.delete(frame.requestId);

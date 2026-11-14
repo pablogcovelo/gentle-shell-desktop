@@ -1,6 +1,7 @@
 import { MESSAGE_ROLE, type ChatMessage, type ChatState, type DialogAnswer, type PromptResult } from "@shared/bridge-types";
 import { INITIAL_CHAT_STATE, reduceChat } from "../rpc/chatReducer";
 import { decodeLine, encodeCommand } from "../rpc/codec";
+import { DESKTOP_RPC_WIDGET_KEY, DesktopRpcClient } from "../rpc/desktopRpc";
 import { extractHistoryMessages, historyToMessages } from "../rpc/history";
 import { extractTodoPanel } from "../rpc/todoPanel";
 import type { RpcCommand, RpcEvent, RpcResponse } from "../rpc/types";
@@ -92,6 +93,7 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
   private state: ChatState = INITIAL_CHAT_STATE;
   private process: SpawnedProcess | undefined;
   private stopping = false;
+  private rpcClient: DesktopRpcClient | undefined;
   private historyRequestCounter = 0;
   /** Set right after a `get_messages` history request is sent (reopening a
    * session with a `sessionPath`); cleared once its matching response
@@ -140,6 +142,21 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
       proc.onStderrLine((line) => this.handleStderrLine(line));
       proc.onError((error) => this.surfaceError(error));
       proc.exited.then(({ code, signal, error }) => this.handleExit(code, signal, error)).catch(() => undefined);
+
+      // The desktop-rpc control plane (U1, desktop-rpc T2) rides the same
+      // child: bind the client now, because its `send` only exists once the
+      // process does. A request becomes a `/gentle:desktop` prompt command
+      // (docs/desktop-rpc.md transport); it bypasses prompt()'s
+      // while-working guard, and its `disposition: "handled"` response is
+      // never the domain answer — only the correlated `gentle-desktop-rpc`
+      // widget frame settles it (handled in handleLine below).
+      this.rpcClient = new DesktopRpcClient({
+        send: (message) => {
+          const proc = this.process;
+          if (!proc || this.stopping) return; // the request surfaces its timeout instead; never throws
+          this.send({ type: "prompt", message });
+        },
+      });
 
       // Reopening an existing chat (sessionPath set): the child already has
       // this session's prior messages, but the renderer starts with an
@@ -211,9 +228,24 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
     return this.state;
   }
 
+  /**
+   * The desktop-rpc control-plane client for this session, bound to the
+   * spawned child's stdin in start(). Undefined until the child is spawned
+   * (the `send` function only exists then) and cleared again on stop/exit,
+   * so a caller never writes into a dead child. Requests sent through it
+   * are control traffic: a `/gentle:desktop` prompt that never touches
+   * prompt()'s user-prompt working guard, whose response is never treated
+   * as the domain answer (odd/tasks/desktop-rpc-client.md S10/S11).
+   */
+  get desktopRpc(): DesktopRpcClient | undefined {
+    return this.rpcClient;
+  }
+
   /** Graceful shutdown: close stdin, wait up to 3s for exit, then kill. */
   async stop(): Promise<void> {
     const proc = this.process;
+    this.rpcClient?.dispose();
+    this.rpcClient = undefined;
     if (!proc) return;
 
     this.stopping = true;
@@ -247,6 +279,22 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
     try {
       const decoded = decodeLine(line);
       if ("kind" in decoded) return; // unknown/unmodeled line: nothing to fold or emit
+
+      // The desktop-rpc control channel answers on a `gentle-desktop-rpc`
+      // setWidget frame (S10/S11): feed the client and stop — this frame
+      // is never chat state, so reduceChat must not see it. Any other
+      // widgetKey keeps the ordinary path (helpers folding, etc.) below.
+      if (
+        decoded.type === "extension_ui_request" &&
+        decoded.method === "setWidget" &&
+        typeof decoded.widgetKey === "string" &&
+        decoded.widgetKey === DESKTOP_RPC_WIDGET_KEY
+      ) {
+        const widgetLines = Array.isArray(decoded.widgetLines) ? (decoded.widgetLines as readonly string[]) : undefined;
+        this.rpcClient?.handleWidget(decoded.widgetKey, widgetLines);
+        this.emit("event", decoded);
+        return;
+      }
 
       // `now` feeds reduceChat's setWidget helpers-retention fallback
       // (endedAt for a task gentle-pi drops after it finishes); PiSession
@@ -317,6 +365,8 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
    * clean self-exit is not, by itself, evidence of a failure.
    */
   private handleExit(code: number | null, signal: NodeJS.Signals | null, spawnError?: Error): void {
+    this.rpcClient?.dispose();
+    this.rpcClient = undefined;
     this.process = undefined;
     if (this.stopping) return;
 

@@ -1,0 +1,6 @@
+{"type":"extension_ui_request","id":"status-1","method":"setStatus","statusKey":"gentle-todo","statusText":"2 tasks open"}
+{"type":"extension_ui_request","id":"status-2","method":"setStatus","statusKey":"gentle-todo","statusText":"1 task open"}
+{"type":"extension_ui_request","id":"status-3","method":"notify","message":"Command blocked by user","notifyType":"warning"}
+{"type":"extension_ui_request","id":"status-4","method":"notify","message":"Sync finished"}
+{"type":"extension_ui_request","id":"status-5","method":"setStatus","statusKey":"gentle-todo"}
+{"type":"extension_ui_request","id":"status-6","method":"setWidget","widgetKey":"gentle-desktop-rpc","widgetLines":["{\"schema\":\"gentle-shell.desktop-rpc/v1\",\"kind\":\"response\",\"requestId\":\"desktop-fixture-1\",\"data\":{\"ok\":true}}"]}
