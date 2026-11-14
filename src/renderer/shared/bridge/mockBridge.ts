@@ -21,6 +21,7 @@ import {
   type PiDetection,
   type PromptResult,
   type SetupStatus,
+  type StopHelperOutcome,
 } from "@shared/bridge-types";
 
 /**
@@ -468,10 +469,37 @@ function startHelpersScenario(): void {
     }),
   ];
 
-  const helpers: HelpersActivity = { summary: helpersSummaryFor(tasks), tasks };
+  const helpers: HelpersActivity = { summary: helpersSummaryFor(tasks), tasks, stopChannel: { available: true } };
   setState({ ...currentState, helpers });
   void runHelpersScenario(token);
 }
+
+/** How long the mock's Stop request leaves the helper running before the
+ * async transition lands (desktop-rpc T6: a cancel_subagent response may
+ * still report the helper as running; the real transition arrives later
+ * as an agents_update state push — the mock mirrors exactly that so the
+ * control is exercisable without a child). */
+const STOP_TRANSITION_DELAY_MS = 1200;
+
+async function stopHelper(id: string): Promise<StopHelperOutcome> {
+  const task = currentState.helpers.tasks.find((entry) => entry.id === id);
+  if (!task || !CANCELLABLE_MOCK_STATUSES.has(task.status)) return "not_tracked";
+
+  // The response resolves "requested" while the helper is STILL running;
+  // the transition arrives later as a state push, like the wire's
+  // agents_update event does.
+  const token = helpersScenarioToken;
+  setTimeout(() => {
+    if (token !== helpersScenarioToken) return; // the chat was switched away
+    const tasks = currentState.helpers.tasks.map((entry) =>
+      entry.id === id ? { ...entry, status: HELPER_STATUS.CANCELLED, endedAt: new Date().toISOString(), lastStep: "cancelled" } : entry,
+    );
+    setState({ ...currentState, helpers: { ...currentState.helpers, tasks, summary: helpersSummaryFor(tasks) } });
+  }, STOP_TRANSITION_DELAY_MS);
+  return "requested";
+}
+
+const CANCELLABLE_MOCK_STATUSES: ReadonlySet<string> = new Set([HELPER_STATUS.QUEUED, HELPER_STATUS.RUNNING]);
 
 export const mockBridge: GentleBridge = {
   async listChats(): Promise<ChatSummary[]> {
@@ -561,4 +589,6 @@ export const mockBridge: GentleBridge = {
   async chooseHome(mode: HomeMode): Promise<void> {
     homeChoice = mode;
   },
+
+  stopHelper,
 };

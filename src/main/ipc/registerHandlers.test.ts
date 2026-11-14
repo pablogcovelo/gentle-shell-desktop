@@ -12,6 +12,7 @@ function fakeHost(overrides: Partial<ChatHost> = {}): ChatHost {
     sendMessage: vi.fn(),
     abort: vi.fn(),
     answerDialog: vi.fn(),
+    stopHelper: vi.fn(),
     onState: vi.fn().mockReturnValue(() => {}),
     onError: vi.fn().mockReturnValue(() => {}),
     ...overrides,
@@ -85,6 +86,17 @@ describe("registerHandlers", () => {
 
     void chooseHomeHandler({} as never, "link");
     expect(setup.chooseHome).toHaveBeenCalledWith("link");
+  });
+
+  it("registers helpers.stop, wired to the host's stopHelper with the helper id (desktop-rpc T6)", async () => {
+    const ipc = fakeIpcMain();
+    const host = fakeHost({ stopHelper: vi.fn().mockResolvedValue("requested") });
+
+    registerHandlers(host, fakeSetup(), fakeWebContents(), ipc);
+
+    const stopHandler = registeredHandler(ipc, "helpers.stop");
+    await expect(stopHandler({} as never, "m3a1-worker")).resolves.toBe("requested");
+    expect(host.stopHelper).toHaveBeenCalledWith("m3a1-worker");
   });
 
   // registerRequestHandler is a thin pass-through (ipc.handle(channel,

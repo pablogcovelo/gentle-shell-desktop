@@ -33,6 +33,7 @@ export function registerHandlers(host: ChatHost, setup: SetupService, webContent
   registerRequestHandler(ipc, IPC_CHANNELS.ANSWER_DIALOG, (_event, id: string, answer: DialogAnswer) =>
     host.answerDialog(id, answer),
   );
+  registerRequestHandler(ipc, IPC_CHANNELS.STOP_HELPER, (_event, id: string) => host.stopHelper(id));
   registerRequestHandler(ipc, IPC_CHANNELS.SETUP_STATUS, () => setup.status());
   registerRequestHandler(ipc, IPC_CHANNELS.CHOOSE_HOME, (_event, mode: HomeMode) => setup.chooseHome(mode));
 

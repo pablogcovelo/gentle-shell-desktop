@@ -59,7 +59,7 @@ or set `GENTLE_SHELL_BIN` to the launcher's full path (`which gentle-shell`). ma
 
 ### Known limitations
 
-- Stop in the Helpers tab is disabled until the app consumes gentle-pi's desktop RPC channel, where `cancel_subagent` already waits (see [`odd/tasks/desktop-rpc-client.md`](odd/tasks/desktop-rpc-client.md)).
+- Stop in the Helpers tab needs a gentle-pi whose desktop control channel advertises `cancel_subagent` (the method exists in current gentle-pi builds; see [`odd/tasks/desktop-rpc-client.md`](odd/tasks/desktop-rpc-client.md)). The app probes `capabilities` once per chat and keeps Stop disabled — with the reason shown next to the button — while the channel is still connecting, unavailable, or lacks the method. Stopping is asynchronous: the button sends `cancel_subagent` and the row updates when the following `agents_update` event confirms the helper exited, never from the response alone.
 - No ODD phase indicator yet (M3b): the M3 task card shows tasks only, not the phase. Sign in and manage providers or extensions through `gentle-shell` in the terminal (M4).
 - No signing, notarization or auto-update yet (M5).
 
@@ -98,9 +98,12 @@ started — queued, running, waiting, done or failed — and, once you pick
 one, its narrated thread: Task, Plan, Step N with tool calls collapsed to
 one line (a "Show tool details" toggle reveals args/output), and Update or
 Note rows. Footer controls: Follow live (auto-scrolls as new activity
-arrives), Back to chat, and Stop (disabled until gentle-agents exposes a
-stop command over RPC). The tab is per chat, never a global list — a
-helper only ever shows under the chat that started it.
+arrives), Back to chat, and Stop — enabled for a queued or running helper
+once the chat's desktop control channel is adopted and gentle-shell
+advertises `cancel_subagent`; otherwise it stays disabled with the reason
+(next to the button). Stop is asynchronous: the list updates when
+gentle-shell confirms the helper exited. The tab is per chat, never a
+global list — a helper only ever shows under the chat that started it.
 
 The app sets `GENTLE_SHELL_INTERACTIVE_HOST=1` on the pi process it spawns
 so gentle-pi publishes helper activity and enables RPC dialogs (gentle-pi

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { HELPER_STATUS, type HelpersActivity } from "@shared/bridge-types";
+import { HELPER_STATUS, type HelpersActivity, type StopHelperOutcome } from "@shared/bridge-types";
+import { useBridge } from "@renderer/shared/bridge/useBridge";
 import { type HelperPartition, partitionHelpers } from "./format";
 import { HelpersFooter } from "./components/HelpersFooter";
 import { HelperList } from "./components/HelperList";
@@ -28,18 +29,49 @@ function pickDefaultTaskId(partition: HelperPartition): string | undefined {
 }
 
 /**
+ * The statuses gentle-pi's `cancel_subagent` documents as stoppable
+ * (`docs/desktop-rpc.md` "cancel_subagent"): a queued task stops
+ * synchronously, a running one asynchronously. A waiting helper is not a
+ * documented stop target, and a terminal one is already finished — both
+ * keep Stop disabled with their reason.
+ */
+const CANCELLABLE_HELPER_STATUSES: ReadonlySet<string> = new Set([HELPER_STATUS.QUEUED, HELPER_STATUS.RUNNING]);
+
+const STOP_NOTE_REQUESTED = "Stop requested — the helper stops asynchronously; this list updates when gentle-shell confirms it exited.";
+const STOP_NOTE_NOT_TRACKED = "This helper is no longer tracked — it already finished or belongs to another chat.";
+const STOP_NOTE_UNAVAILABLE = "Could not stop the helper — the control channel did not answer.";
+const STOP_NOTE_NO_CHANNEL = "Waiting for this chat's control channel to become ready…";
+const STOP_NOTE_NOT_CANCELLABLE = "Only queued or running helpers can be stopped.";
+
+function stopNoteFor(outcome: StopHelperOutcome): string {
+  switch (outcome) {
+    case "requested":
+      return STOP_NOTE_REQUESTED;
+    case "not_tracked":
+      return STOP_NOTE_NOT_TRACKED;
+    default:
+      return STOP_NOTE_UNAVAILABLE;
+  }
+}
+
+/**
  * Owns the Helpers pane's own local view state (selected helper, Follow
- * live, Show tool details) — no bridge calls: the data is
- * ChatState.helpers, already pushed into ConversationContainer. Left
- * pane: this chat's helper list (never a global list — see
+ * live, Show tool details, the latest Stop outcome note). The data is
+ * ChatState.helpers, already pushed into ConversationContainer — with one
+ * exception: the Stop control (desktop-rpc T6) is an ACTION, so it goes
+ * out through the bridge (`stopHelper`), exactly like the composer's send
+ * and abort; it never reaches the child directly from the renderer.
+ * Left pane: this chat's helper list (never a global list — see
  * odd/tasks/desktop-m2-helpers.md's Objective). Right pane: the selected
  * helper's thread plus the footer.
  */
 export function HelpersContainer({ activity, onBackToChat, openedAt }: HelpersContainerProps) {
+  const bridge = useBridge();
   const partition = partitionHelpers(activity.tasks, openedAt);
   const [selectedTaskId, setSelectedTaskId] = useState<string | undefined>(() => pickDefaultTaskId(partition));
   const [followLive, setFollowLive] = useState(true);
   const [showToolDetails, setShowToolDetails] = useState(false);
+  const [stopNote, setStopNote] = useState<string | undefined>(undefined);
 
   // Keeps the current selection while its task is still present (even
   // once it finishes); re-picks a default — preferring a running task —
@@ -52,7 +84,34 @@ export function HelpersContainer({ activity, onBackToChat, openedAt }: HelpersCo
     });
   }, [activity.tasks, openedAt]);
 
+  // The Stop note describes the previous selection's request; switching
+  // helpers starts a clean slate.
+  useEffect(() => {
+    setStopNote(undefined);
+  }, [selectedTaskId]);
+
   const selectedTask = activity.tasks.find((task) => task.id === selectedTaskId);
+
+  // Stop gating (desktop-rpc T6): the control channel must be adopted AND
+  // have advertised `cancel_subagent` (activity.stopChannel, set by main
+  // from the capabilities probe), and the selected helper must be in a
+  // cancellable state. Every disabled state names its honest reason.
+  const stopDisabledReason = !stopChannelReady(activity)
+    ? (activity.stopChannel?.reason ?? STOP_NOTE_NO_CHANNEL)
+    : !selectedTask
+      ? "Select a helper to stop it."
+      : !CANCELLABLE_HELPER_STATUSES.has(selectedTask.status)
+        ? STOP_NOTE_NOT_CANCELLABLE
+        : undefined;
+
+  const handleStop = (): void => {
+    if (!selectedTask || stopDisabledReason !== undefined) return;
+    setStopNote(undefined);
+    bridge
+      .stopHelper?.(selectedTask.id)
+      .then((outcome) => setStopNote(stopNoteFor(outcome)))
+      .catch(() => setStopNote(STOP_NOTE_UNAVAILABLE));
+  };
 
   return (
     <div className="gc-helpers">
@@ -79,8 +138,16 @@ export function HelpersContainer({ activity, onBackToChat, openedAt }: HelpersCo
           onToggleFollowLive={setFollowLive}
           onToggleShowToolDetails={setShowToolDetails}
           onBackToChat={onBackToChat}
+          stopDisabledReason={stopDisabledReason}
+          stopNote={stopNote}
+          onStop={handleStop}
         />
       </div>
     </div>
   );
+}
+
+/** The channel state is only meaningful once main attached it: unprobed chats have no entry, and `available: false` carries the honest reason. */
+function stopChannelReady(activity: HelpersActivity): boolean {
+  return activity.stopChannel?.available === true;
 }

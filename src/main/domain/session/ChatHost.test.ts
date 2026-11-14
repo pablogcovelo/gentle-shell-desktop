@@ -371,4 +371,80 @@ describe("ChatHost", () => {
     // including the one the queued newChat produced.
     expect(events).toEqual(["spawn:0", "endStdin:0", "spawn:1", "endStdin:1"]);
   });
+it("stopHelper routes through the current session's cancel path (desktop-rpc T6)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { spawner, handles } = createFakeSpawner();
+      const store = fakeSessionStore([session({ id: "sess-1", path: "/home/sessions/proj/sess-1.jsonl" })]);
+      const host = new ChatHost({ spawner, locator: fakeLocator, sessionStore: store, env: {} });
+
+      // No chat open yet: the helper stop reports the bridge's own error,
+      // like every other requireCurrent() call.
+      await expect(host.stopHelper("m3a1-worker")).rejects.toThrow(/no chat is open/i);
+
+      const openPromise = host.openChat("sess-1");
+      await respondToHistoryRequest(handles, 0);
+      await openPromise;
+
+      // The history response triggers the capabilities probe; adopt the
+      // channel with the subagents methods advertised, then stop a helper.
+      const handle = handles[0];
+      if (!handle) throw new Error("no spawned handle");
+      const probeWrite = handle.writes.find((write) => write.includes("capabilities"));
+      if (!probeWrite) throw new Error("expected a capabilities probe write");
+      const probeRequest = JSON.parse((JSON.parse(probeWrite) as { message: string }).message.slice("/gentle:desktop ".length)) as { requestId: string };
+      handle.emitStdout(
+        JSON.stringify({
+          type: "extension_ui_request",
+          id: "ui-capabilities",
+          method: "setWidget",
+          widgetKey: "gentle-desktop-rpc",
+          widgetLines: [
+            JSON.stringify({
+              schema: "gentle-shell.desktop-rpc/v1",
+              kind: "response",
+              requestId: probeRequest.requestId,
+              ok: true,
+              data: {
+                schema: "gentle-shell.desktop-rpc/v1",
+                command: "gentle:desktop",
+                widget: "gentle-desktop-rpc",
+                methods: ["capabilities", "list_subagents", "cancel_subagent"],
+                events: ["agents_update"],
+              },
+            }),
+          ],
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+
+      const pending = host.stopHelper("m3a1-worker");
+      await vi.advanceTimersByTimeAsync(0);
+      const cancelWrite = handle.writes.find((write) => write.includes("cancel_subagent"));
+      if (!cancelWrite) throw new Error("expected a cancel_subagent write");
+      const cancelRequest = JSON.parse((JSON.parse(cancelWrite) as { message: string }).message.slice("/gentle:desktop ".length)) as { requestId: string; params: { id: string } };
+      expect(cancelRequest.params.id).toBe("m3a1-worker");
+      handle.emitStdout(
+        JSON.stringify({
+          type: "extension_ui_request",
+          id: "ui-cancel",
+          method: "setWidget",
+          widgetKey: "gentle-desktop-rpc",
+          widgetLines: [
+            JSON.stringify({
+              schema: "gentle-shell.desktop-rpc/v1",
+              kind: "response",
+              requestId: cancelRequest.requestId,
+              ok: true,
+              data: { agent: { id: "m3a1-worker", agent: "worker", status: "running" } },
+            }),
+          ],
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(pending).resolves.toBe("requested");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

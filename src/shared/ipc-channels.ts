@@ -12,6 +12,9 @@ export const IPC_CHANNELS = {
   SEND_MESSAGE: "chat.send",
   ABORT: "chat.abort",
   ANSWER_DIALOG: "dialog.answer",
+  /** Asks the child to stop one helper (desktop-rpc T6): resolve with a
+   * StopHelperOutcome; the real transition arrives via the state push. */
+  STOP_HELPER: "helpers.stop",
   /** webContents.send push: the current chat's ChatState changed. */
   STATE_PUSH: "chat.state",
   /** webContents.send push: an error was surfaced for the current chat. */

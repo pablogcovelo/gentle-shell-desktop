@@ -345,7 +345,7 @@ function retainDroppedTask(task: HelperTask, now: string | undefined): HelperTas
 }
 
 /** running, then waiting, then queued, then finished (done/failed/cancelled) sorted by `endedAt` desc. */
-function orderHelperTasks(tasks: readonly HelperTask[]): HelperTask[] {
+export function orderHelperTasks(tasks: readonly HelperTask[]): HelperTask[] {
   const running: HelperTask[] = [];
   const waiting: HelperTask[] = [];
   const queued: HelperTask[] = [];

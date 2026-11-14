@@ -1,12 +1,17 @@
+import { MESSAGE_ROLE, type ChatMessage } from "@shared/bridge-types";
 import {
-  MESSAGE_ROLE,
-  type ChatMessage,
+  STOP_HELPER_OUTCOME,
   type ChatState,
   type DialogAnswer,
+  type HelperAgentState,
+  type HelpersActivity,
   type PromptResult,
+  type StopChannelState,
+  type StopHelperOutcome,
 } from "@shared/bridge-types";
 import { INITIAL_CHAT_STATE, reduceChat } from "../rpc/chatReducer";
 import { decodeLine, encodeCommand } from "../rpc/codec";
+import { applyAgentState, mergeAgentEntry, parseAgentEntry, parseAgentList } from "../rpc/agents";
 import { DESKTOP_RPC_WIDGET_KEY, DesktopRpcClient, parseDesktopRpcWidget } from "../rpc/desktopRpc";
 import { mergeUsageProviders, parseRateLimitEvent, parseSubscriptionUsage } from "../rpc/usage";
 import { extractHistoryMessages, historyToMessages } from "../rpc/history";
@@ -117,6 +122,16 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
    * prompt (a model call and transcript pollution). Failed stays failed
    * for the child's lifetime; no re-probe, no timer. */
   private probeState: "idle" | "pending" | "ok" | "failed" = "idle";
+  /** The methods the child advertised on the successful capabilities
+   * probe (desktop-rpc T6). The probe answer is the authority on what
+   * this child supports — never a hardcoded list (the list has grown
+   * before). Undefined until adoption. */
+  private advertisedMethods: ReadonlySet<string> | undefined;
+  /** Whether an `agents_update` event has already been folded for this
+   * child (desktop-rpc T6). The one `list_subagents` snapshot is the
+   * INITIAL state; once an event has arrived, events own the truth and a
+   * late snapshot must not regress it. */
+  private agentsEventSeen = false;
   /** Set right after a `get_messages` history request is sent (reopening a
    * session with a `sessionPath`); cleared once its matching response
    * arrives. Lets `applyHistoryResponse` correlate the response by `id`
@@ -289,11 +304,16 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
       // using: never fold state for it.
       if (this.rpcClient !== rpc) return;
       if (capabilities) {
+        this.advertisedMethods = new Set(capabilities.methods);
         this.probeState = "ok";
+        this.state = this.attachStopChannel(this.state);
+        this.emit("state", this.state);
         this.requestUsage();
+        this.requestAgentSnapshot();
       } else {
         this.probeState = "failed";
         this.state = { ...this.state, usageChannelUnavailable: true };
+        this.state = this.attachStopChannel(this.state);
         this.emit("state", this.state);
       }
     });
@@ -339,6 +359,139 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
       this.state = { ...this.state, usage };
       this.emit("state", this.state);
     });
+  }
+
+  /**
+   * The Stop control's channel state for the chat's live child
+   * (desktop-rpc T6), derived from the same capabilities gate as every
+   * other control write (S10: the probe is the only support probe):
+   *
+   *   - unprobed → `undefined`: the renderer keeps Stop disabled without
+   *     claiming anything about a channel that has not been checked yet.
+   *   - probe failed → unavailable with the honest reason, the same
+   *     pattern as the usage surface's channel-unavailable note.
+   *   - probe ok → available only while the child actually advertised
+   *     `cancel_subagent`; a channel without the method cannot stop a
+   *     helper and says so instead of pretending otherwise.
+   */
+  private stopChannelState(): StopChannelState | undefined {
+    if (this.probeState === "failed") {
+      return { available: false, reason: "Channel unavailable — this child has no desktop control channel, so helpers cannot be stopped." };
+    }
+    if (this.probeState === "ok") {
+      return this.advertisedMethods?.has("cancel_subagent")
+        ? { available: true }
+        : { available: false, reason: "gentle-shell does not advertise cancel_subagent on this child's control channel, so helpers cannot be stopped from here." };
+    }
+    return undefined;
+  }
+
+  /** Attaches the current Stop channel state to the helpers slice when it
+   * differs from what is already there (the chat reducer's setWidget arm
+   * rebuilds the helpers object without it, so every fold re-attaches). */
+  private attachStopChannel(state: ChatState): ChatState {
+    const stopChannel = this.stopChannelState();
+    if (!stopChannel) return state;
+    const current = state.helpers.stopChannel;
+    if (current?.available === stopChannel.available && current?.reason === stopChannel.reason) return state;
+    return { ...state, helpers: { ...state.helpers, stopChannel } };
+  }
+
+  /**
+   * Re-applies the authoritative subagents projection and the Stop
+   * channel state onto the helpers slice after a fold. The chat reducer's
+   * setWidget arm replaces the helpers object wholesale from the activity
+   * frame (the narrative publisher), which would drop both the projection
+   * and the channel state — the projection (helpers.agents) is
+   * re-overlaid onto the fresh tasks so an activity frame can never
+   * regress the structured state an `agents_update` already reported
+   * (desktop-rpc T6: the RPC slice owns state, the activity path
+   * narrates).
+   */
+  private settleHelpers(state: ChatState, now: string): ChatState {
+    const helpers = state.helpers;
+    let nextHelpers: HelpersActivity = helpers.agents ? applyAgentState(helpers, helpers.agents, now) : helpers;
+    const stopChannel = this.stopChannelState();
+    if (stopChannel) {
+      const current = nextHelpers.stopChannel;
+      if (current?.available !== stopChannel.available || current?.reason !== stopChannel.reason) {
+        nextHelpers = { ...nextHelpers, stopChannel };
+      }
+    }
+    if (nextHelpers === helpers) return state;
+    return { ...state, helpers: nextHelpers };
+  }
+
+  /**
+   * Asks the child for its live subagent list ONCE (`list_subagents`,
+   * gentle-pi docs/desktop-rpc.md) right after the capabilities probe
+   * adopts the channel (desktop-rpc T6), and folds the validated answer
+   * into `state.helpers` — the authoritative initial state for helpers
+   * that ran before this chat was opened or before any activity frame
+   * arrived. Gated on the probe AND on the child advertising the method;
+   * a late answer after an `agents_update` event already folded is
+   * dropped (events own the truth from then on), and a failed or
+   * malformed reply keeps the previous state.
+   */
+  private requestAgentSnapshot(): void {
+    const rpc = this.rpcClient;
+    if (!rpc || this.probeState !== "ok" || !this.advertisedMethods?.has("list_subagents")) return;
+    void rpc.request("list_subagents", {}).then((reply) => {
+      if (this.rpcClient !== rpc || this.agentsEventSeen) return;
+      if (!reply.ok) return;
+      const agents = parseAgentList(reply.data);
+      if (!agents) return;
+      this.foldAgentList(agents);
+    });
+  }
+
+  /** Folds a full projection list (snapshot or event) into the helpers slice. */
+  private foldAgentList(agents: HelperAgentState[]): void {
+    const now = new Date().toISOString();
+    this.state = { ...this.state, helpers: applyAgentState(this.state.helpers, agents, now) };
+    this.emit("state", this.state);
+  }
+
+  /** Folds one post-action `cancel_subagent` entry: merged into the authoritative projection list by id, then overlaid onto the tasks. */
+  private foldAgentEntry(agent: HelperAgentState): void {
+    const now = new Date().toISOString();
+    this.state = {
+      ...this.state,
+      helpers: applyAgentState(this.state.helpers, mergeAgentEntry(this.state.helpers.agents, agent), now),
+    };
+    this.emit("state", this.state);
+  }
+
+  /**
+   * Asks the child to stop one helper through gentle-pi's desktop-rpc
+   * `cancel_subagent` — the owner's own stop path, never a request to the
+   * model (desktop-rpc T6). Gated on the adopted channel and the child
+   * advertising the method.
+   *
+   * Cancellation is ASYNCHRONOUS: the response is the owner's
+   * post-action re-read, so for a running helper it reports the
+   * still-running state and the real transition arrives later as an
+   * `agents_update` event — the response is folded (it is the owner's
+   * truth) but never interpreted as "stopped". An unknown or foreign id
+   * is the wire's typed `not_found` and resolves `not_tracked` without
+   * surfacing an error the user cannot act on; every other failure
+   * resolves `unavailable`. Never throws.
+   */
+  async cancelHelper(id: string): Promise<StopHelperOutcome> {
+    const rpc = this.rpcClient;
+    if (!rpc || this.probeState !== "ok" || !this.advertisedMethods?.has("cancel_subagent")) {
+      return STOP_HELPER_OUTCOME.UNAVAILABLE;
+    }
+    const reply = await rpc.request("cancel_subagent", { id });
+    if (this.rpcClient !== rpc) return STOP_HELPER_OUTCOME.UNAVAILABLE;
+    if (!reply.ok) {
+      return reply.error.kind === "server_error" && reply.error.code === "not_found"
+        ? STOP_HELPER_OUTCOME.NOT_TRACKED
+        : STOP_HELPER_OUTCOME.UNAVAILABLE;
+    }
+    const agent = parseAgentEntry(reply.data);
+    if (agent) this.foldAgentEntry(agent);
+    return STOP_HELPER_OUTCOME.REQUESTED;
   }
 
   getState(): ChatState {
@@ -417,6 +570,19 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
         // session is still live (a frame that arrives after exit belongs
         // to a chat nobody is looking at).
         const frame = parseDesktopRpcWidget(decoded.widgetKey, widgetLines);
+        // The `agents_update` event is the subagents slice's LIVE update
+        // path (desktop-rpc T6, docs/desktop-rpc.md "agents_update"): the
+        // full bounded projection of the active session's helpers, emitted
+        // for every real TaskStore transition — not only Desktop-initiated
+        // ones. It carries no requestId (events never settle requests) and
+        // folds into the helpers slice like the snapshot does.
+        if (frame?.kind === "event" && frame.event === "agents_update" && this.rpcClient) {
+          const agents = parseAgentList(frame.data);
+          if (agents) {
+            this.agentsEventSeen = true;
+            this.foldAgentList(agents);
+          }
+        }
         if (frame?.kind === "event" && frame.event === "rate_limit" && this.rpcClient) {
           const event = parseRateLimitEvent(frame.data);
           if (event) {
@@ -430,9 +596,11 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
       }
 
       // `now` feeds reduceChat's setWidget helpers-retention fallback
-      // (endedAt for a task gentle-pi drops after it finishes); PiSession
-      // is the impure boundary, reduceChat itself stays pure.
-      this.state = reduceChat(this.state, decoded, new Date().toISOString());
+      // (endedAt for a task gentle-pi drops after it finishes) and the
+      // subagents overlay's terminal-time fill; PiSession is the impure
+      // boundary, reduceChat itself stays pure.
+      const now = new Date().toISOString();
+      this.state = reduceChat(this.state, decoded, now);
       // desktop-rpc T3 (correction): a settled turn is a refresh trigger
       // for BOTH chat kinds — but only the probe has adopted the channel;
       // otherwise the FIRST settled turn carries the one capabilities
@@ -441,6 +609,11 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
         if (this.probeState === "ok") this.requestUsage();
         else this.probeChannel();
       }
+      // The activity path narrates but must never regress the structured
+      // state the subagents projection already reported, and the Stop
+      // channel state must survive the reducer's wholesale helpers
+      // replacement (desktop-rpc T6, see settleHelpers).
+      this.state = this.settleHelpers(this.state, now);
       // reduceChat has no case for "response" (its default arm returns
       // state unchanged), so folding the get_messages history response in
       // here, right after, never fights it.

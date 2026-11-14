@@ -1,4 +1,4 @@
-import type { ChatState, ChatSummary, DialogAnswer, PromptResult } from "@shared/bridge-types";
+import type { ChatState, ChatSummary, DialogAnswer, PromptResult, StopHelperOutcome } from "@shared/bridge-types";
 import { boundedStop } from "../lifecycle/boundedStop";
 import type { RpcEvent } from "../rpc/types";
 import type { HomeSettings, LauncherLocator, ProcessSpawner, SessionStore } from "../../ports";
@@ -122,6 +122,14 @@ export class ChatHost {
 
   async abort(): Promise<void> {
     this.requireCurrent().abort();
+  }
+
+  /** Stops one helper through the current session's desktop-rpc
+   * `cancel_subagent` path (desktop-rpc T6). The outcome classification
+   * (requested / not_tracked / unavailable) is PiSession's; the helper's
+   * real transition arrives later as an `agents_update` state push. */
+  async stopHelper(id: string): Promise<StopHelperOutcome> {
+    return this.requireCurrent().cancelHelper(id);
   }
 
   async answerDialog(id: string, answer: DialogAnswer): Promise<void> {

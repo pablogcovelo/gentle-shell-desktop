@@ -83,6 +83,20 @@ describe("createBridge", () => {
     expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.ANSWER_DIALOG, "dlg-1", { value: "A" });
   });
 
+  it("stopHelper invokes helpers.stop with the helper id (desktop-rpc T6)", async () => {
+    const { ipc, invoke } = createFakeIpc();
+    invoke.mockResolvedValue("requested");
+    const bridge = createBridge(ipc);
+
+    // stopHelper is optional on the interface (both real bridges implement
+    // it); guard the optional call instead of asserting non-null.
+    const stop = bridge.stopHelper?.bind(bridge);
+    if (!stop) throw new Error("createBridge did not implement stopHelper");
+
+    await expect(stop("m3a1-worker")).resolves.toBe("requested");
+    expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.STOP_HELPER, "m3a1-worker");
+  });
+
   it("onState subscribes to the state push channel and forwards pushed state", () => {
     const { ipc, listeners } = createFakeIpc();
     const bridge = createBridge(ipc);

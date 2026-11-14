@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
-import type { HelperTask, HelpersActivity } from "@shared/bridge-types";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { GentleBridge, HelperTask, HelpersActivity } from "@shared/bridge-types";
 import { HelpersContainer } from "./HelpersContainer";
 
 const OPENED_AT = "2026-09-22T10:00:00.000Z";
@@ -21,7 +21,7 @@ function task(overrides: Partial<HelperTask> = {}): HelperTask {
   };
 }
 
-function activity(tasks: HelperTask[]): HelpersActivity {
+function activity(tasks: HelperTask[], overrides: Partial<HelpersActivity> = {}): HelpersActivity {
   return {
     summary: {
       running: tasks.filter((t) => t.status === "running").length,
@@ -30,8 +30,19 @@ function activity(tasks: HelperTask[]): HelpersActivity {
       finished: tasks.filter((t) => t.status === "done" || t.status === "failed" || t.status === "cancelled").length,
     },
     tasks,
+    ...overrides,
   };
 }
+
+/** A fake window.gentle whose stopHelper is observable — the same pattern
+ * the conversation/first-run tests use for bridge-backed actions. */
+function useFakeBridge(stopHelper: ReturnType<typeof vi.fn> = vi.fn().mockResolvedValue("requested")): void {
+  window.gentle = { stopHelper } as unknown as GentleBridge;
+}
+
+afterEach(() => {
+  Reflect.deleteProperty(window, "gentle");
+});
 
 describe("HelpersContainer", () => {
   it("selects the first running task by default", () => {
@@ -40,6 +51,7 @@ describe("HelpersContainer", () => {
       task({ id: "2", label: "Running task", status: "running", startedAt: "2026-09-22T10:00:00.000Z" }),
     ];
     render(<HelpersContainer activity={activity(tasks)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+
 
     expect(screen.getByRole("heading", { name: "Running task" })).toBeInTheDocument();
   });
@@ -121,13 +133,152 @@ describe("HelpersContainer", () => {
     expect(screen.getByText(/the output/)).toBeInTheDocument();
   });
 
-  it("the Stop button is disabled with an explanatory title", () => {
-    const tasks = [task({ id: "1", label: "First" })];
+  it("Stop stays disabled while the control channel has not been adopted, and says why", () => {
+    const tasks = [task({ id: "1", label: "First", status: "running", startedAt: OPENED_AT })];
     render(<HelpersContainer activity={activity(tasks)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
 
     const stopButton = screen.getByRole("button", { name: "Stop" });
     expect(stopButton).toBeDisabled();
-    expect(stopButton).toHaveAttribute("title", "Stopping helpers is not available yet");
+    expect(stopButton).toHaveAttribute("title", "Waiting for this chat's control channel to become ready\u2026");
+  });
+
+  it("Stop stays disabled with the channel's honest reason when the probe failed", () => {
+    const tasks = [task({ id: "1", label: "First", status: "running", startedAt: OPENED_AT })];
+    render(
+      <HelpersContainer
+        activity={activity(tasks, { stopChannel: { available: false, reason: "Channel unavailable \u2014 this child has no desktop control channel, so helpers cannot be stopped." } })}
+        onBackToChat={() => {}}
+        openedAt={OPENED_AT}
+      />,
+    );
+
+    const stopButton = screen.getByRole("button", { name: "Stop" });
+    expect(stopButton).toBeDisabled();
+    expect(stopButton).toHaveAttribute(
+      "title",
+      "Channel unavailable \u2014 this child has no desktop control channel, so helpers cannot be stopped.",
+    );
+  });
+
+  it("Stop stays disabled with the channel's reason when cancel_subagent is not advertised", () => {
+    const tasks = [task({ id: "1", label: "First", status: "running", startedAt: OPENED_AT })];
+    render(
+      <HelpersContainer
+        activity={activity(tasks, { stopChannel: { available: false, reason: "gentle-shell does not advertise cancel_subagent on this child's control channel, so helpers cannot be stopped from here." } })}
+        onBackToChat={() => {}}
+        openedAt={OPENED_AT}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
+  });
+
+  it("enables Stop once the channel is adopted, for a cancellable helper only, and issues the cancel for THAT helper's id and no other", async () => {
+    const stopHelper = vi.fn().mockResolvedValue("requested");
+    useFakeBridge(stopHelper);
+    const tasks = [
+      task({ id: "helper-a", label: "Running task", status: "running", startedAt: OPENED_AT }),
+      task({ id: "helper-b", label: "Queued task", status: "queued" }),
+    ];
+    render(<HelpersContainer activity={activity(tasks, { stopChannel: { available: true } })} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+
+    const stopButton = screen.getByRole("button", { name: "Stop" });
+    expect(stopButton).toBeEnabled();
+
+    // The default selection is the running helper: stopping issues the
+    // cancel for helper-a and never for helper-b.
+    fireEvent.click(stopButton);
+    await waitFor(() => expect(stopHelper).toHaveBeenCalledTimes(1));
+    expect(stopHelper).toHaveBeenCalledWith("helper-a");
+    expect(stopHelper).not.toHaveBeenCalledWith("helper-b");
+  });
+
+  it("Stop is disabled for a helper that already finished, with its reason", () => {
+    const tasks = [task({ id: "1", label: "First", status: "done", startedAt: OPENED_AT, endedAt: OPENED_AT })];
+    render(<HelpersContainer activity={activity(tasks, { stopChannel: { available: true } })} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+
+    const stopButton = screen.getByRole("button", { name: "Stop" });
+    expect(stopButton).toBeDisabled();
+    expect(stopButton).toHaveAttribute("title", "Only queued or running helpers can be stopped.");
+  });
+
+  it("Stop is disabled for a waiting helper", () => {
+    const tasks = [task({ id: "1", label: "First", status: "waiting", startedAt: OPENED_AT })];
+    render(<HelpersContainer activity={activity(tasks, { stopChannel: { available: true } })} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+
+    expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
+  });
+
+  it("a requested stop does not mark the helper stopped on its own \u2014 the row stays running until a state push flips it", async () => {
+    const stopHelper = vi.fn().mockResolvedValue("requested");
+    useFakeBridge(stopHelper);
+    const tasks = [task({ id: "1", label: "Running task", status: "running", startedAt: OPENED_AT })];
+    const { rerender } = render(
+      <HelpersContainer activity={activity(tasks, { stopChannel: { available: true } })} onBackToChat={() => {}} openedAt={OPENED_AT} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(stopHelper).toHaveBeenCalled());
+
+    // The outcome note explains the asynchronous stop; the helper is
+    // still rendered as running.
+    expect(await screen.findByText(/Stop requested \u2014 the helper stops asynchronously/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Running task" })).toBeInTheDocument();
+
+    // The real transition arrives as a pushed state (agents_update):
+    // only then does the row render stopped.
+    rerender(
+      <HelpersContainer
+        activity={activity([task({ id: "1", label: "Running task", status: "cancelled", startedAt: OPENED_AT, endedAt: OPENED_AT })], {
+          stopChannel: { available: true },
+        })}
+        onBackToChat={() => {}}
+        openedAt={OPENED_AT}
+      />,
+    );
+    expect(screen.getByText("Cancelled")).toBeInTheDocument();
+  });
+
+  it("a not_tracked stop outcome renders a note the user can act on, never an error surface", async () => {
+    const stopHelper = vi.fn().mockResolvedValue("not_tracked");
+    useFakeBridge(stopHelper);
+    const tasks = [task({ id: "1", label: "Running task", status: "running", startedAt: OPENED_AT })];
+    render(<HelpersContainer activity={activity(tasks, { stopChannel: { available: true } })} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+
+    expect(await screen.findByText(/no longer tracked \u2014 it already finished/)).toBeInTheDocument();
+  });
+
+  it("an unavailable stop outcome renders its note too", async () => {
+    const stopHelper = vi.fn().mockResolvedValue("unavailable");
+    useFakeBridge(stopHelper);
+    const tasks = [task({ id: "1", label: "Running task", status: "running", startedAt: OPENED_AT })];
+    render(<HelpersContainer activity={activity(tasks, { stopChannel: { available: true } })} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+
+    expect(await screen.findByText(/Could not stop the helper/)).toBeInTheDocument();
+  });
+
+  it("a helper that appears in both sources renders once once merged (single id, single row)", () => {
+    const merged = task({
+      id: "m3a1-worker",
+      label: "Audit the loaders",
+      status: "done",
+      model: "anthropic/claude-sonnet-4",
+      usage: { total: 15234, cost: 0.0421 },
+    });
+    render(
+      <HelpersContainer activity={activity([merged], { stopChannel: { available: true }, agents: [{ id: "m3a1-worker", agent: "worker", status: "completed" }] })} onBackToChat={() => {}} openedAt={OPENED_AT} />,
+    );
+
+    // One identity, one row: the list carries exactly ONE row for the
+    // merged id (the thread pane's heading is the selected task's own
+    // title, not a second list entry).
+    const list = document.querySelector("ul.gc-helper-list");
+    expect(list?.querySelectorAll("li")).toHaveLength(1);
+    expect(screen.getAllByRole("heading", { name: "Audit the loaders" })).toHaveLength(1);
   });
 
   describe("the Earlier group", () => {

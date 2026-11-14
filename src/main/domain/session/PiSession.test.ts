@@ -1332,3 +1332,354 @@ describe("PiSession: desktop-rpc control plane (U1, desktop-rpc T2)", () => {
     expect(session.getState().usage).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Subagents (desktop-rpc T6): the authoritative helper state arrives as a
+// `list_subagents` snapshot after the capabilities probe and as
+// `agents_update` events, merged into the SAME task identity the
+// `gentle-agents.activity/v1` activity path narrates; Stop goes out as
+// `cancel_subagent` through the adopted channel, and the helper's real
+// transition arrives with the event — never from the response alone.
+// ---------------------------------------------------------------------------
+
+describe("subagents (desktop-rpc T6)", () => {
+  const AGENT_CAPABILITIES = {
+    schema: "gentle-shell.desktop-rpc/v1",
+    command: "gentle:desktop",
+    widget: "gentle-desktop-rpc",
+    methods: ["capabilities", "get_subscription_usage", "list_subagents", "cancel_subagent"],
+    events: ["agents_update", "rate_limit"],
+  };
+  const PROJECTION_RUNNING = {
+    id: "m3a1-worker",
+    agent: "worker",
+    status: "running",
+    model: "anthropic/claude-sonnet-4",
+    lastStep: "running",
+    usage: { total: 900, cost: 0.002 },
+  };
+  const PROJECTION_COMPLETED = {
+    id: "m3a1-worker",
+    agent: "worker",
+    status: "completed",
+    model: "anthropic/claude-sonnet-4",
+    lastStep: "answered",
+    usage: { total: 15234, cost: 0.0421, input: 12000, output: 3234, cache: 5000, reasoning: 4000 },
+  };
+
+  function activityFrame(tasks: unknown[]): string {
+    return JSON.stringify({
+      type: "extension_ui_request",
+      id: "ui-helpers",
+      method: "setWidget",
+      widgetKey: "gentle-agents",
+      widgetLines: [
+        JSON.stringify({
+          schema: "gentle-agents.activity/v1",
+          summary: {
+            running: tasks.length,
+            queued: 0,
+            waiting: 0,
+            finished: 0,
+          },
+          tasks: tasks.map((task) => ({
+            summary: {
+              id: (task as { id: string }).id,
+              agent: "worker",
+              label: "Audit the loaders",
+              prompt: "Find every config reader.",
+              status: "running",
+              createdAt: "2026-09-23T09:00:00.000Z",
+              startedAt: "2026-09-23T09:00:05.000Z",
+              lastStep: "running",
+              turns: 3,
+              toolCalls: 5,
+            },
+            thread: { version: 1, dropped: 0, items: [{ kind: "text", text: "Working on it." }] },
+          })),
+        }),
+      ],
+    });
+  }
+
+  function agentsUpdateEvent(data: unknown): string {
+    return JSON.stringify({
+      type: "extension_ui_request",
+      id: "ui-agents-event",
+      method: "setWidget",
+      widgetKey: "gentle-desktop-rpc",
+      widgetLines: [
+        JSON.stringify({ schema: "gentle-shell.desktop-rpc/v1", kind: "event", seq: 1, event: "agents_update", data }),
+      ],
+    });
+  }
+
+  function desktopWidgetFrame(requestId: string, data: unknown): string {
+    return JSON.stringify({
+      type: "extension_ui_request",
+      id: "ui-desktop",
+      method: "setWidget",
+      widgetKey: "gentle-desktop-rpc",
+      widgetLines: [JSON.stringify({ schema: "gentle-shell.desktop-rpc/v1", kind: "response", requestId, data })],
+    });
+  }
+
+  function desktopErrorWidgetFrame(requestId: string, code: string): string {
+    return JSON.stringify({
+      type: "extension_ui_request",
+      id: "ui-desktop-error",
+      method: "setWidget",
+      widgetKey: "gentle-desktop-rpc",
+      widgetLines: [
+        JSON.stringify({
+          schema: "gentle-shell.desktop-rpc/v1",
+          kind: "response",
+          requestId,
+          ok: false,
+          error: { code, message: `the server said ${code}` },
+        }),
+      ],
+    });
+  }
+
+  function controlRequestId(write: string): string {
+    const prompt = JSON.parse(write) as { type: string; message: string };
+    if (prompt.type !== "prompt" || !prompt.message.startsWith("/gentle:desktop ")) {
+      throw new Error(`expected a /gentle:desktop prompt command, got: ${write}`);
+    }
+    return (JSON.parse(prompt.message.slice("/gentle:desktop ".length)) as { requestId: string }).requestId;
+  }
+
+  async function flushReplies(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  async function adoptAgentsChannel(handle: FakeProcessHandle, capabilities: unknown = AGENT_CAPABILITIES): Promise<void> {
+    const probeWrite = handle.writes.find((write) => write.includes("capabilities"));
+    if (!probeWrite) throw new Error("expected a capabilities probe write");
+    handle.emitStdout(desktopWidgetFrame(controlRequestId(probeWrite), capabilities));
+    await flushReplies();
+  }
+
+  it("after adoption the child receives exactly ONE list_subagents snapshot, and it merges into the SAME identity the activity path narrates", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    // The activity path narrates the helper first: thread, prompt, label,
+    // counters. The RPC projection must merge into this same id, never
+    // duplicate it.
+    handle.emitStdout(activityFrame([{ id: "m3a1-worker" }]));
+    expect(session.getState().helpers.tasks).toHaveLength(1);
+    expect(session.getState().helpers.tasks[0]).toMatchObject({ label: "Audit the loaders", status: "running" });
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptAgentsChannel(handle);
+
+    // Exactly one snapshot request went out (never a timer, never a re-probe).
+    const snapshotWrites = handle.writes.filter((write) => write.includes("list_subagents"));
+    expect(snapshotWrites).toHaveLength(1);
+    handle.emitStdout(desktopWidgetFrame(controlRequestId(snapshotWrites[0] ?? ""), { agents: [PROJECTION_COMPLETED] }));
+    await flushReplies();
+
+    const helpers = session.getState().helpers;
+    expect(helpers.tasks).toHaveLength(1);
+    expect(helpers.tasks[0]).toMatchObject({
+      id: "m3a1-worker",
+      // Narrative fields stay with the activity path...
+      label: "Audit the loaders",
+      prompt: "Find every config reader.",
+      turns: 3,
+      toolCalls: 5,
+      thread: { version: 1, dropped: 0, items: [{ kind: "text", text: "Working on it." }] },
+      // ...structured state comes from the projection.
+      status: "done",
+      model: "anthropic/claude-sonnet-4",
+      usage: { total: 15234, cost: 0.0421 },
+    });
+    expect(helpers.agents).toEqual([PROJECTION_COMPLETED]);
+    expect(helpers.stopChannel).toEqual({ available: true });
+    expect(helpers.summary).toEqual({ running: 0, queued: 0, waiting: 0, finished: 1 });
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("an agents_update event folds the authoritative list into the same identity and reports the real transition", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(activityFrame([{ id: "m3a1-worker" }]));
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptAgentsChannel(handle);
+    handle.emitStdout(desktopWidgetFrame(controlRequestId(handle.writes[handle.writes.length - 1] ?? ""), { agents: [PROJECTION_RUNNING] }));
+    await flushReplies();
+    expect(session.getState().helpers.tasks[0]?.status).toBe("running");
+
+    handle.emitStdout(agentsUpdateEvent({ agents: [PROJECTION_COMPLETED] }));
+    await flushReplies();
+
+    const helpers = session.getState().helpers;
+    expect(helpers.tasks).toHaveLength(1);
+    expect(helpers.tasks[0]).toMatchObject({ status: "done", usage: { total: 15234, cost: 0.0421 } });
+    expect(helpers.agents).toEqual([PROJECTION_COMPLETED]);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("cancelHelper before the channel is adopted resolves unavailable and writes nothing", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    await expect(session.cancelHelper("m3a1-worker")).resolves.toBe("unavailable");
+    expect(handle.writes).toEqual([]);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("cancelHelper resolves unavailable without writing when the child does not advertise cancel_subagent", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptAgentsChannel(handle, { ...AGENT_CAPABILITIES, methods: ["capabilities", "list_subagents"] });
+    const writesBefore = handle.writes.length;
+
+    await expect(session.cancelHelper("m3a1-worker")).resolves.toBe("unavailable");
+    expect(handle.writes).toHaveLength(writesBefore);
+    expect(session.getState().helpers.stopChannel?.available).toBe(false);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("Stop sends exactly one cancel_subagent prompt for THAT helper's id and no other; the still-running response does not mark it stopped — the following agents_update does", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(activityFrame([{ id: "m3a1-a" }, { id: "m3a1-b" }]));
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptAgentsChannel(handle);
+
+    // The cancel request pends until its correlated reply lands, so the
+    // reply is emitted before the outcome is awaited.
+    const pending = session.cancelHelper("m3a1-a");
+    await flushReplies();
+
+    const cancelWrites = handle.writes.filter((write) => write.includes("cancel_subagent"));
+    expect(cancelWrites).toHaveLength(1);
+    // The serialized id is JSON-escaped in the raw stdin line, so the
+    // assertions match the id itself: helper A's id goes out, never B's.
+    expect(cancelWrites[0]).toContain("m3a1-a");
+    expect(cancelWrites[0]).not.toContain("m3a1-b");
+
+    // The response is the owner's post-action re-read: for a running
+    // helper it reports the STILL-RUNNING state, so the row stays
+    // non-terminal — never flipped to stopped by the response alone.
+    handle.emitStdout(
+      desktopWidgetFrame(controlRequestId(cancelWrites[0] ?? ""), {
+        agent: { ...PROJECTION_RUNNING, id: "m3a1-a" },
+      }),
+    );
+    await flushReplies();
+    expect(await pending).toBe("requested");
+    expect(session.getState().helpers.tasks.find((task) => task.id === "m3a1-a")?.status).toBe("running");
+
+    // The real transition arrives through the normal agents_update path.
+    handle.emitStdout(
+      agentsUpdateEvent({ agents: [{ ...PROJECTION_RUNNING, id: "m3a1-a", status: "cancelled", lastStep: "cancelled" }] }),
+    );
+    await flushReplies();
+    expect(session.getState().helpers.tasks.find((task) => task.id === "m3a1-a")?.status).toBe("cancelled");
+    // The helper the user did not stop is untouched.
+    expect(session.getState().helpers.tasks.find((task) => task.id === "m3a1-b")?.status).toBe("running");
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("a cancel_subagent reply reporting the synchronous queued stop folds the owner's post-action state immediately", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(activityFrame([{ id: "m3a1-a" }]));
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptAgentsChannel(handle);
+
+    const pending = session.cancelHelper("m3a1-a");
+    await flushReplies();
+    const cancelWrite = handle.writes.find((write) => write.includes("cancel_subagent")) ?? "";
+
+    handle.emitStdout(
+      desktopWidgetFrame(controlRequestId(cancelWrite), {
+        agent: { id: "m3a1-a", agent: "worker", status: "cancelled", model: "anthropic/claude-sonnet-4", lastStep: "cancelled", usage: { total: 900, cost: 0.002 } },
+      }),
+    );
+    await flushReplies();
+
+    expect(await pending).toBe("requested");
+    const task = session.getState().helpers.tasks.find((entry) => entry.id === "m3a1-a");
+    expect(task?.status).toBe("cancelled");
+    expect(task?.endedAt).toBeDefined();
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("a not_found cancel resolves not_tracked and never surfaces an error the user cannot act on", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(activityFrame([{ id: "m3a1-a" }]));
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptAgentsChannel(handle);
+
+    const pending = session.cancelHelper("m3a1-gone");
+    await flushReplies();
+    const cancelWrite = handle.writes.find((write) => write.includes("cancel_subagent")) ?? "";
+    handle.emitStdout(desktopErrorWidgetFrame(controlRequestId(cancelWrite), "not_found"));
+    await flushReplies();
+
+    expect(await pending).toBe("not_tracked");
+    expect(session.getState().lastError).toBeUndefined();
+    expect(session.getState().helpers.tasks.find((task) => task.id === "m3a1-a")?.status).toBe("running");
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("a failed probe marks the Stop channel unavailable alongside the usage surface", async () => {
+    vi.useFakeTimers();
+    try {
+      const { spawner, handles } = createFakeSpawner();
+      const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+      session.start();
+      const handle = handles[0];
+      if (!handle) throw new Error("no spawned handle");
+
+      handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+      await vi.advanceTimersByTimeAsync(DESKTOP_RPC_DEFAULT_TIMEOUT_MS + 1);
+
+      expect(session.getState().usageChannelUnavailable).toBe(true);
+      expect(session.getState().helpers.stopChannel?.available).toBe(false);
+      expect(typeof session.getState().helpers.stopChannel?.reason).toBe("string");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

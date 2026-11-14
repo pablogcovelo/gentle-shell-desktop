@@ -283,6 +283,74 @@ export const HELPER_STATUS = {
 /** A subagent's lifecycle status, as reported by gentle-agents' `gentle-agents.activity/v1` widget payload. */
 export type HelperStatus = (typeof HELPER_STATUS)[keyof typeof HELPER_STATUS];
 
+/**
+ * The closed status set gentle-pi's desktop-rpc subagents projection
+ * documents (`docs/desktop-rpc.md` "list_subagents" field table), shared
+ * with the renderer for the same Scope-Rule reason as HelperStatus. It
+ * differs from the activity vocabulary on two terminal statuses
+ * (`completed`/`timed_out`); src/main/domain/rpc/agents.ts maps it onto
+ * HelperStatus with a documented, never-guessed mapping.
+ */
+export const AGENT_STATUS = {
+  QUEUED: "queued",
+  RUNNING: "running",
+  WAITING: "waiting",
+  COMPLETED: "completed",
+  FAILED: "failed",
+  CANCELLED: "cancelled",
+  TIMED_OUT: "timed_out",
+} as const;
+
+export type AgentStatus = (typeof AGENT_STATUS)[keyof typeof AGENT_STATUS];
+
+/**
+ * One helper's accumulated usage, exactly the projection the subagents
+ * contract documents: `total` tokens, `cost`, and — once the run settled
+ * — the final-assistant `input`, `output`, `cache` (read + write) and
+ * `reasoning` breakdown. The breakdown fields are absent for an in-flight
+ * task and for a restored finished task whose run never recorded one.
+ */
+export interface HelperAgentUsage {
+  readonly total: number;
+  readonly cost: number;
+  readonly input?: number;
+  readonly output?: number;
+  readonly cache?: number;
+  readonly reasoning?: number;
+}
+
+/**
+ * One entry of gentle-pi's whitelisted subagents projection
+ * (`list_subagents` snapshot, `cancel_subagent` post-action reply,
+ * `agents_update` event) — the authoritative structured state of a helper
+ * (status, model, usage). Lives here because main decodes it and the
+ * renderer reads it back out of ChatState.helpers.
+ */
+export interface HelperAgentState {
+  readonly id: string;
+  readonly agent: string;
+  readonly status: AgentStatus;
+  readonly model?: string;
+  readonly modelSource?: string;
+  readonly fallbackFrom?: string;
+  readonly thinking?: string;
+  readonly lastStep?: string;
+  readonly usage?: HelperAgentUsage;
+}
+
+/**
+ * The desktop control channel's Stop availability for the chat's live
+ * child, attached by main to the helpers slice (the Helpers tab is its
+ * only consumer and ChatState.helpers is that tab's only data path).
+ * `available: false` always carries `reason` — the honest note the Stop
+ * control renders when it stays disabled, in the same spirit as the usage
+ * surface's channel-unavailable note.
+ */
+export interface StopChannelState {
+  readonly available: boolean;
+  readonly reason?: string;
+}
+
 export interface HelperThreadTextItem {
   readonly kind: "text";
   readonly text: string;
@@ -344,6 +412,14 @@ export interface HelperTask {
   readonly toolCalls: number;
   readonly error?: string;
   readonly thread: HelperThread;
+  /** Structured state from the desktop-rpc subagents projection
+   * (desktop-rpc T6): the routed model, thinking level and accumulated
+   * usage the projection reports. The activity path never sets them; the
+   * overlay in src/main/domain/rpc/agents.ts fills them from the
+   * projection, which owns this state. */
+  readonly model?: string;
+  readonly thinking?: string;
+  readonly usage?: HelperAgentUsage;
 }
 
 export interface HelpersSummary {
@@ -365,7 +441,39 @@ export interface HelpersSummary {
 export interface HelpersActivity {
   readonly summary: HelpersSummary;
   readonly tasks: readonly HelperTask[];
+  /** The latest authoritative subagents projection from the desktop-rpc
+   * channel (desktop-rpc T6): the full bounded list from a
+   * `list_subagents` snapshot or an `agents_update` event, merged
+   * entry-wise by `cancel_subagent` replies. The pure overlay
+   * (src/main/domain/rpc/agents.ts) re-applies it onto `tasks` whenever
+   * the activity path folds a frame, so the activity narrative never
+   * regresses the structured state. Optional: absent until the channel is
+   * adopted and answers. */
+  readonly agents?: readonly HelperAgentState[];
+  /** The Stop control's channel state for the chat's live child (see
+   * StopChannelState). Set by main from the `capabilities` probe — not by
+   * the gentle-agents widget, which is why the activity parser never
+   * produces it. Attached to this slice because the Helpers tab is the
+   * Stop control's only consumer and this object is its only data path. */
+  readonly stopChannel?: StopChannelState;
 }
+
+/** Outcome of GentleBridge.stopHelper (desktop-rpc T6). `requested` means
+ * the child accepted the stop — the helper stops ASYNCHRONOUSLY, so the UI
+ * must never flip to "stopped" on this outcome alone; the row updates when
+ * the following `agents_update` event reports the real transition.
+ * `not_tracked` is the wire's typed `not_found` (unknown or already-terminal
+ * helper, or one owned by another session): nothing was stopped and no
+ * actionable error exists. `unavailable` covers every other failure —
+ * unadopted channel, missing `cancel_subagent` method, timeout, or a
+ * server error such as `agents_unavailable`. */
+export const STOP_HELPER_OUTCOME = {
+  REQUESTED: "requested",
+  NOT_TRACKED: "not_tracked",
+  UNAVAILABLE: "unavailable",
+} as const;
+
+export type StopHelperOutcome = (typeof STOP_HELPER_OUTCOME)[keyof typeof STOP_HELPER_OUTCOME];
 
 /**
  * Whether the desktop app links to an existing plain pi CLI install
@@ -435,6 +543,14 @@ export interface GentleBridge {
   /** Persists the chosen home mode; the next spawned session and the
    * session list use it. */
   chooseHome(mode: HomeMode): Promise<void>;
+  /** Asks the child to stop one helper through gentle-pi's desktop-rpc
+   * `cancel_subagent` (desktop-rpc T6). Resolves with a StopHelperOutcome
+   * instead of rejecting for every expectable case; the helper's real
+   * transition arrives later as an `agents_update` state push, never from
+   * this call's response alone. Optional: both real bridges implement it
+   * (src/preload/bridge.ts, the mock bridge), and the Helpers tab treats a
+   * bridge without it as the `unavailable` outcome. */
+  stopHelper?(id: string): Promise<StopHelperOutcome>;
 }
 
 declare global {
