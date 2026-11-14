@@ -32,6 +32,7 @@ S10. Channel facts that bind the client (all verified against gentle-pi `docs/de
  - When the channel is disabled the extension is silent while the prompt still reports `disposition: "handled"`, so success must never be inferred from the prompt response; correlate by `requestId` and time out (`tests/desktop-rpc.test.ts:240-252`).
  - Schema is `gentle-shell.desktop-rpc/v1`; unknown schema is `invalid_request`, unknown method is `unsupported_method`, `capabilities` is the only support probe (`lib/desktop-rpc.ts:1,69,151-155`).
  - Requests are not queued; outcomes settle independently; one response per request (`docs/desktop-rpc.md:1071`).
+ - Mid-turn dispatch is proven, not assumed: registered extension commands are handled before the streaming guard in both resolved builds (`rpc-mode.js`/`agent-session.js`, comment "Handle extension commands first (execute immediately, even during streaming)"), so a `/gentle:desktop` request is answered while the assistant streams, whereas a plain prompt without `streamingBehavior` is rejected. A request landing inside the `agent_settled` emission window is deferred rather than dropped, and the client must read a latency spike as deferred, never as lost.
 
 S11. Control traffic is separated from user prompts, and its replies are intercepted before the chat reducer. `ChatState` must not receive `gentle-desktop-rpc` widget frames or the generic `setStatus` frames it currently drops (`chatReducer.ts:206-207`); `setStatus` is instead passed through so an installed MCP or future health publisher can surface real state without a second RPC method.
 
@@ -47,7 +48,7 @@ S15. High-risk items are declared per task below and each affected unit gets its
 
 | ID | Specs | Route | Risk | Commit |
 | --- | --- | --- | --- | --- |
-| T0 | S10 | inline probe — does pi accept a `/gentle:desktop` prompt while the assistant is mid-stream? Bounded, against a real child, before any client code | item 6 (an unverified transport assumption would invalidate T1-T7) | pending |
+| T0 | S10 | done — answered from both resolved builds' dispatch code plus a live child probe (L6); no client code written | item 6 (an unverified transport assumption would have invalidated T1-T7) | evidence only, no code |
 | T1 | S10, S11 | delegated writer — `src/main/domain/rpc/desktopRpc.ts`: envelope build/parse, `requestId`, correlation map with timeout, `capabilities` gate, `unsupported_method`/`invalid_request` handling, JSONL fixtures beside the existing ones | none (no data, no contracts beyond the new module) | pending |
 | T2 | S11 | inline — intercept `setWidget` for `gentle-desktop-rpc` before the reducer; pass `setStatus` through to state | item 3 (changes what existing chat rendering sees) | pending |
 | T3 | S12 | delegated writer — `get_subscription_usage` + `rate_limit` event into the Usage section meters; header-only providers stay `pending` and say so | item 6 (meters are the feature's only proof) | pending |
@@ -61,7 +62,7 @@ S15. High-risk items are declared per task below and each affected unit gets its
 
 ## Slices
 
-Slice 1 (documentation, this commit): the feature document, the gentle-pi companion document, `README.md` Stop limitation, `types.ts` protocol routes. No application source, no tests.
+Slice 1 (documentation, `98c7348` plus its evidence update): the feature document, the gentle-pi companion document, `README.md` Stop limitation, `types.ts` protocol routes. No application source, no tests.
 
 Slice 2 (T0, T1, T2) is the base: a client that can prove the channel works before any feature depends on it.
 
@@ -102,3 +103,5 @@ L3. Authorization (verbatim): "Si tenemos todo bien definido y acotado generamos
 L4. Evidence gathered before this document (read-only): the desktop channel exists in gentle-pi and no app source references it; the app's gate variable is already set; `types.ts` points at monorepo paths that do not exist in this checkout; the README Stop claim contradicts `lib/desktop-rpc-agents.ts:280-284`; `pi.getMcpStatus()` is absent from both resolvable pi builds; `lib/shell-changes.ts` separates gathering from rendering.
 
 L5. Open risk carried into T0: whether pi accepts a `/gentle:desktop` prompt while the assistant is streaming is unverified. Usage and Stop matter precisely during a run, so this decides whether the control plane needs a queue, a second child, or a gentle-pi-side change.
+
+L6. T0 closed, no client code written. Code: the stdin loop dispatches each line fire-and-forget and keeps draining during a turn; `prompt` handling reaches the agent session, where registered extension commands run *before* the `isStreaming` guard in both resolved builds (pi-coding-agent 0.85.1 and the build under gentle-pi), so a `/gentle:desktop` request is answered mid-turn while a plain prompt without `streamingBehavior` gets "Agent is already processing". A prompt arriving during the `agent_settled` emission window is deferred, not dropped (newer build only). Live child probe: a real `gentle-shell --mode rpc` child with `GENTLE_SHELL_INTERACTIVE_HOST=1` answered `capabilities` in 1-2 ms with `schema: gentle-shell.desktop-rpc/v1`, 13 methods and `disposition: "handled"`; two requests sent back to back each produced their own correlated `setWidget` reply on `gentle-desktop-rpc`, confirming the no-queue/correlation rule. Consequence for the plan: T1 keeps a plain timeout, no queue and no second child for control traffic; a slow reply is deferred, not lost. Not proven live: a request during an actual model-streamed turn, because that needs one provider call and no authorization for it exists; the dispatch path is identical, so this is a confirmation gap, not a design risk.
