@@ -1,0 +1,30 @@
+/* Composed footer (desktop-rpc T8): one quiet line, wrapping only when it must,
+ * with the same tokens and separators as the rest of the conversation chrome. */
+
+.gc-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  padding: 6px 32px 10px;
+  border-top: 1px solid var(--gc-line, #2a1720);
+  font-family: var(--gc-mono, "SFMono-Regular", Consolas, monospace);
+  font-size: 11px;
+  color: var(--gc-text-2, #d2cbd0);
+}
+
+.gc-footer__field {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.gc-footer__label {
+  color: var(--gc-muted, #a78e9b);
+  font-size: 10px;
+}
+
+.gc-footer__value {
+  overflow-wrap: anywhere;
+}

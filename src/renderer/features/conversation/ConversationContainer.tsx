@@ -4,6 +4,7 @@ import { useBridge } from "@renderer/shared/bridge/useBridge";
 import { HelpersContainer } from "@renderer/features/helpers/HelpersContainer";
 import { Composer } from "./components/Composer";
 import { ActionRows } from "./components/ActionRows";
+import { Footer } from "./components/Footer";
 import { CONVERSATION_PANE, ConversationHeader, type ConversationPane } from "./components/ConversationHeader";
 import { HelpersStrip } from "./components/HelpersStrip";
 import { MessageThread } from "./components/MessageThread";
@@ -138,6 +139,7 @@ export function ConversationContainer({ activeChat }: ConversationContainerProps
         notifications={chatState.notifications}
         session={chatState.session}
       />
+      <Footer workspace={chatState.workspace} session={chatState.session} />
       {pane === CONVERSATION_PANE.HELPERS ? (
         <HelpersContainer
           activity={chatState.helpers}

@@ -188,6 +188,19 @@ function emptyState(): ChatState {
         { category: "rdd", glyph: "🌹", patterns: ["gentle_review*"], heading: "rdd" },
       ],
     },
+    // desktop-rpc T8 demo workspace facts: a session-effective profile label
+    // and an MCP inventory. `health` never renders: the footer says what is
+    // configured, never that a server is connected.
+    workspace: {
+      profile: { label: "opensourcing", active: "opensourcing" },
+      mcp: {
+        health: "unknown",
+        configuredStatus: "present",
+        configuredNames: ["github", "linear"],
+        registered: [],
+        namespaces: ["mcp__github__search", "mcp__linear__issues"],
+      },
+    },
   };
 }
 

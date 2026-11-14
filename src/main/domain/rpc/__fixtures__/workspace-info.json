@@ -1,0 +1,13 @@
+{
+  "worktree": {
+    "root": "/home/pablo/Projects/GentlemanProgramming/gentle-shell-desktop",
+    "model": { "files": [], "added": 0, "deleted": 0, "digest": "811c9dc51f2be47c" }
+  },
+  "mcp": {
+    "health": "unknown",
+    "configured": { "status": "absent", "names": [] },
+    "registered": [],
+    "namespaces": []
+  },
+  "profile": { "label": "opensourcing", "active": "opensourcing" }
+}

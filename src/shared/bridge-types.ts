@@ -285,6 +285,45 @@ export interface ToolVocabulary {
   readonly entries: readonly ToolVocabularyEntry[];
 }
 
+/** The worktree state gentle-pi computes for a root (desktop-rpc T8).
+ * `countsUnavailable` is carried because a root it could not read must render
+ * as "unavailable", never as zero files and zero lines. */
+export interface WorktreeChanges {
+  readonly root: string;
+  readonly branch?: string;
+  readonly files: readonly string[];
+  readonly added: number;
+  readonly deleted: number;
+  readonly countsUnavailable?: boolean;
+}
+
+/** MCP inventory, never health: `health` is always "unknown" because pi does
+ * not expose connection state. The footer may show what is configured and
+ * which tool namespaces exist; it may never claim "connected". */
+export interface McpStatus {
+  readonly health: "unknown";
+  readonly configuredStatus: string;
+  readonly configuredNames: readonly string[];
+  readonly registered: readonly string[];
+  readonly namespaces: readonly string[];
+}
+
+/** The session-effective agent-model profile the terminal footer shows. Not a
+ * user identity: `label` is what this session resolved, which can differ from
+ * the globally active profile when one is bound. */
+export interface ActiveProfile {
+  readonly label: string;
+  readonly active?: string;
+}
+
+/** The three desktop-rpc reads behind the composed footer, each absent until
+ * its own answer arrives and each independent of the others. */
+export interface WorkspaceInfo {
+  readonly worktree?: WorktreeChanges;
+  readonly mcp?: McpStatus;
+  readonly profile?: ActiveProfile;
+}
+
 export interface ChatState {
   readonly messages: readonly ChatMessage[];
   readonly working: boolean;
@@ -300,6 +339,9 @@ export interface ChatState {
    * until it answers `tool_vocabulary`; the renderer falls back to raw tool
    * names, never to invented categories. */
   readonly toolVocabulary?: ToolVocabulary;
+  /** Worktree, MCP inventory and the active profile (desktop-rpc T8). Each
+   * field is optional on its own: the footer renders only what arrived. */
+  readonly workspace?: WorkspaceInfo;
   readonly helpers: HelpersActivity;
   /** Status entries published through pi RPC's fire-and-forget `setStatus`
    * method, keyed by the wire's `statusKey`: a frame carrying `statusText`

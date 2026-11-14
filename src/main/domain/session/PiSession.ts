@@ -15,6 +15,7 @@ import { applyAgentState, mergeAgentEntry, parseAgentEntry, parseAgentList } fro
 import { DESKTOP_RPC_WIDGET_KEY, DesktopRpcClient, parseDesktopRpcWidget } from "../rpc/desktopRpc";
 import { parseSessionState, parseSessionStats } from "../rpc/sessionStats";
 import { parseToolVocabulary } from "../rpc/toolVocabulary";
+import { parseActiveProfile, parseMcpStatus } from "../rpc/workspaceInfo";
 import { mergeUsageProviders, parseRateLimitEvent, parseSubscriptionUsage } from "../rpc/usage";
 import { extractHistoryMessages, historyToMessages } from "../rpc/history";
 import { extractTodoPanel } from "../rpc/todoPanel";
@@ -322,6 +323,7 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
         // control write, the ordering the T3 pins observe.
         this.requestIdentity();
         this.requestVocabulary();
+        this.requestWorkspace();
         this.requestUsage();
         this.requestAgentSnapshot();
       } else {
@@ -405,6 +407,49 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
       // process (advisory R3-002).
       () => undefined,
     );
+  }
+
+  /**
+   * Reads the footer's workspace facts (desktop-rpc T8): the MCP inventory and
+   * the session-effective profile label. Both are parameterless; the worktree
+   * group is NOT requested here because it needs the workspace root, which the
+   * app does not track yet — that belongs to the workspaces unit (U6a), and
+   * guessing a root would report someone else's tree.
+   *
+   * Each answer folds independently, so a missing MCP read never costs the
+   * profile or the other way round. A failed or rejected read leaves that
+   * field absent, and the footer renders nothing for it.
+   */
+  private requestWorkspace(): void {
+    const rpc = this.rpcClient;
+    if (!rpc || this.probeState !== "ok") return;
+    const adopt = (method: "mcp_status" | "get_active_profile"): void => {
+      if (!this.advertisedMethods?.has(method)) return;
+      void rpc.request(method).then(
+        (reply) => {
+          if (this.rpcClient !== rpc || !reply.ok) return;
+          const current = this.state.workspace ?? {};
+          const next =
+            method === "mcp_status"
+              ? (() => {
+                  const mcp = parseMcpStatus(reply.data);
+                  return mcp ? { ...current, mcp } : undefined;
+                })()
+              : (() => {
+                  const profile = parseActiveProfile(reply.data);
+                  return profile ? { ...current, profile } : undefined;
+                })();
+          if (!next) return;
+          this.state = { ...this.state, workspace: next };
+          this.emit("state", this.state);
+        },
+        // A transport rejection degrades to "not supplied", never to an
+        // unhandled rejection in the main process.
+        () => undefined,
+      );
+    };
+    adopt("mcp_status");
+    adopt("get_active_profile");
   }
 
   /**
