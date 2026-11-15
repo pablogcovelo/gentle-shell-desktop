@@ -3,6 +3,7 @@ import {
   HELPER_STATUS,
   MESSAGE_ROLE,
   NOTIFICATION_SEVERITY,
+  type AppInfo,
   type ChatMessage,
   type ChatNotification,
   type ChatState,
@@ -622,6 +623,21 @@ async function stopHelper(hostId: string, id: string): Promise<StopHelperOutcome
 
 const CANCELLABLE_MOCK_STATUSES: ReadonlySet<string> = new Set([HELPER_STATUS.QUEUED, HELPER_STATUS.RUNNING]);
 
+/** What the preview claims to be. The real bridge asks the packaged app. */
+const MOCK_APP_VERSION = "0.1.0";
+/** The demo attachment the preview inserts — a path, never a file read. */
+const DEMO_ATTACHMENT_PATH = "/home/dev/gentle-shell-desktop/package.json";
+/** Test/deep-link override for the mock file picker (null = cancelled). */
+let filePick: string | null | undefined;
+/** Frameless-window state the mock can toggle; there is no OS window here. */
+let maximized = false;
+
+/** Overrides what the mock's chooseFile() answers next (tests only;
+ * undefined restores the demo path, null simulates a cancelled pick). */
+export function setMockFilePick(pick: string | null | undefined): void {
+  filePick = pick;
+}
+
 export const mockBridge: GentleBridge = {
   async listChats(): Promise<ChatSummary[]> {
     return EXAMPLE_CHATS;
@@ -785,6 +801,26 @@ export const mockBridge: GentleBridge = {
 
   async chooseHome(mode: HomeMode): Promise<void> {
     homeChoice = mode;
+  },
+
+  // The shell's own chrome in the browser preview: the facts the footer and
+  // settings dialog show, window controls that can only flip a local flag
+  // (there is no OS window here), and a file picker answering the demo path.
+  async appInfo(): Promise<AppInfo> {
+    return { version: MOCK_APP_VERSION };
+  },
+
+  async minimizeWindow(): Promise<void> {},
+
+  async toggleMaximizeWindow(): Promise<boolean> {
+    maximized = !maximized;
+    return maximized;
+  },
+
+  async closeWindow(): Promise<void> {},
+
+  async chooseFile(): Promise<string | null> {
+    return filePick === undefined ? DEMO_ATTACHMENT_PATH : filePick;
   },
 
   stopHelper,
