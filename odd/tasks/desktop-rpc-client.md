@@ -79,6 +79,17 @@ Slice 5 (T8, T9) completes the artboard's presentation on top of verified data.
 
 Delivery: local work-unit commits on a feature branch; push, PR and merge remain the owner's decisions.
 
+### T5 slices (independent workspaces, U6a)
+
+T5 is the largest remaining unit and the only one with concurrency risk, so it is cut into four reviewable slices that each leave the app working. The authority stays `odd/plans/desktop-ade-app-units.md`, "U6a — Independent live workspaces"; this list only orders the delivery and names the acceptance evidence per slice.
+
+- **T5a — one host per workspace, no behaviour change in the UI.** Extract the process ownership that `PiSession` and the bridge hold today into a per-workspace host keyed by process/session identity, with a registry that can hold more than one. Acceptance: two hosts in one process, each with its own child and its own event stream; the existing single-workspace tests keep passing untouched.
+- **T5b — routing by identity.** Every request, dialog answer, abort and pushed state resolves through the host that owns it instead of through window focus or cwd. Acceptance: two sessions in the same project never cross, no answer reaches an unrelated child, and a dialog survives a focus change.
+- **T5c — focus and background discipline.** Only the focused workspace renders at full rate; background workspaces keep consuming and accumulating state and refresh on focus. Acceptance: background accumulation is observable on focus, an unfocused child keeps running, and a child failure stays local to its workspace.
+- **T5d — lifecycle.** Close stops only its own child; quit handles every child including starts in flight; no arbitrary workspace-count cap; an already open session is reused instead of duplicated. Acceptance: the U6a test list plus a real two-workspace check in isolated session state.
+
+Every slice declares risk item 4 (concurrency) in its own commit, and the unit as a whole requires independent verification before delivery, unlike the presentation work above. T8b (footer worktree group) unblocks at T5a, as soon as a workspace root exists.
+
 ## Verification
 
 Per task, the checks the implementation session must run — these are the contracts, not yet evidence:
