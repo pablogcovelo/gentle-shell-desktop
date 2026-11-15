@@ -64,3 +64,38 @@ Work-unit commits on `feat/desktop-workspace-shell` (branched from `develop`), i
 Slice sizes in changed lines: app 408, chats 114, inspector 643, conversation 419. The branch reports 60 commits ahead of `origin/main` because it is based on `develop`; the delivery strategy for this feature is one PR on top of `develop`, so the pre-existing develop history is not part of this slice.
 
 Verification: `pnpm test` 685 passed (52 files), `pnpm typecheck` clean, and the rendered result was compared against the artboard at 1440×900 and 1000×780.
+
+## Specs (second increment, 2026-11-15)
+
+- **S8** The sidebar SHOWS chats as workspaces: the artboard's directory-panel anatomy with the bridge's real entity. Decided by the owner: "Sé que el bridge no tiene workspaces sino chats, pero en la GUI quiero que se muestren como workspaces".
+- **S9** The footer is the design's footer, group for group: workspace path, changes (files / +lines / -lines), capabilities, session identity (model · reasoning · profile), context meter, app version. Implemented by the owner: "Implementa el footer tal cual está en el diseño".
+- **S10** S9 supersedes the earlier "one home per datum" split: model, thinking level, context and cost move OUT of the status line INTO the footer. `StatusLine` keeps errors, keyed statuses and transient notifications only.
+- **S11** A capability group renders only members the wire can prove. `skills` and `extensions` are not in `ChatState`, so they render only once a bridge field supplies them; no sample count is ever printed.
+- **S12** The chrome is real: the window's own minimize / maximize / close, a working search that filters the chat list, composer tools that do something, and two dialogs with real content. The window becomes frameless so its controls have a surface.
+- **S13** The microphone is the one composer tool with no pipeline behind it. It renders disabled with the reason in its accessible name — never an enabled control that pretends to record.
+- **S14** Attachments insert the chosen absolute path into the draft. Nothing is read, copied or uploaded; the composer stays plain text.
+
+## Tasks (second increment)
+
+| ID | Specs | Route | Outcome |
+| --- | --- | --- | --- |
+| T6 | S8 | worker | Sidebar renders chats as workspaces (folder mark, name, directory, branch when known) with "Workspaces." heading. |
+| T7 | S9, S10, S11 | inline | Footer rebuilt to the design's groups; session identity and context move out of `StatusLine`; app version through a new `app.info` channel. |
+| T8 | S12 | inline | Frameless window + `window.minimize`/`window.toggleMaximize`/`window.close`; top-bar search filtering the sidebar; draggable chrome. |
+| T9 | S12, S13, S14 | worker | Composer tools: emoji picker, attachment picker (`composer.chooseFile`), disabled microphone. |
+| T10 | S12 | inline | Settings dialog (environment facts: version, home mode, pi detection) and shortcut dialog (the app's real shortcuts). |
+
+### L6 (delivery, second increment, 2026-11-15)
+
+Owner's second round (verbatim): "Sé que el bridge no tiene workspaces sino chats, pero en la GUI quiero que se muestren como workspaces / Implementa el footer tal cual está en el diseño / Implementa window controls, search, emoji/attachment/mic, settings/shortcut dialogs / Explicame el 'Superseded contract'".
+
+Work-unit commits, in dependency order:
+1. `feat(shell)`: frameless window + `app.info` / `window.minimize` / `window.toggleMaximize` / `window.close` / `composer.chooseFile` over injected `ShellPorts` (main never imports Electron values into `registerHandlers`, so node tests still load it).
+2. `feat(sidebar)`: chats rendered as the artboard's workspace rows + the `query` filter prop.
+3. `feat(footer)`: the design's footer groups; session identity and the context meter move out of `StatusLine` into the footer (S10), plus `app.info` version wiring.
+4. `feat(chrome)`: top-bar search (⌘K), settings + shortcut dialogs with real content, window controls drawn only where the bridge offers them.
+5. `feat(composer)`: emoji panel, attachment through `composer.chooseFile`, disabled microphone with its reason (S13).
+
+Honest limits, unchanged by the request:
+- `skills` and `extensions` have no field in `ChatState`, so the capabilities group renders MCP only (S11). Printing sample counts was the model's alternative and was rejected as invented data.
+- The microphone has no capture pipeline in the bridge; it renders disabled and says why (S13).

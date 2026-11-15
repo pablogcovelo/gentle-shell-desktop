@@ -693,6 +693,12 @@ export interface SetupStatus {
   readonly detection: PiDetection;
 }
 
+/** The app's own facts (app.info): the version the package actually ships.
+ * The renderer never guesses it, and the mock bridge reports its own. */
+export interface AppInfo {
+  readonly version: string;
+}
+
 /**
  * Surface exposed on `window.gentle` by the preload script. T1 typed the
  * listChats/sendMessage skeleton; T3 finalizes the full shape and wires it
@@ -756,6 +762,25 @@ export interface GentleBridge {
   /** Persists the chosen home mode; the next spawned session and the
    * session list use it. */
   chooseHome(mode: HomeMode): Promise<void>;
+  /** The app's own facts the footer and the settings dialog show. Optional:
+   * both real bridges implement it (src/preload/bridge.ts, the mock bridge);
+   * a bridge without it makes the footer omit the version instead of
+   * guessing one. */
+  appInfo?(): Promise<AppInfo>;
+  /** Frameless-window controls: the renderer's chrome buttons act on the
+   * BrowserWindow that hosts this renderer, nothing else. Optional: absent
+   * outside Electron (the browser preview), where the chrome hides them. */
+  minimizeWindow?(): Promise<void>;
+  /** Toggles maximize and answers the resulting state, so the button can
+   * report whether the window is maximized now. Optional with the other
+   * window controls. */
+  toggleMaximizeWindow?(): Promise<boolean>;
+  closeWindow?(): Promise<void>;
+  /** Opens Electron's native FILE picker and answers the chosen absolute
+   * path, or null when the user cancelled. The composer inserts that path
+   * into the draft — nothing is read, copied or uploaded. Optional: a
+   * bridge without it hides the attachment action. */
+  chooseFile?(): Promise<string | null>;
   /** Asks the child to stop one helper through gentle-pi's desktop-rpc
    * `cancel_subagent` (desktop-rpc T6). Resolves with a StopHelperOutcome
    * instead of rejecting for every expectable case; the helper's real

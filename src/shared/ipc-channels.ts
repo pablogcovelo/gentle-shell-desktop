@@ -57,6 +57,17 @@ export const IPC_CHANNELS = {
   SETUP_STATUS: "setup.status",
   /** Persists the chosen home mode (T5). */
   CHOOSE_HOME: "setup.chooseHome",
+  /** Answers the app's own facts the footer and settings dialog show. */
+  APP_INFO: "app.info",
+  /** Frameless-window controls: the renderer's chrome acts on its own
+   * BrowserWindow (minimize, toggle maximize, close). */
+  WINDOW_MINIMIZE: "window.minimize",
+  WINDOW_TOGGLE_MAXIMIZE: "window.toggleMaximize",
+  WINDOW_CLOSE: "window.close",
+  /** Opens Electron's native FILE picker from the main process and answers
+   * the chosen absolute path, or null when the user cancelled. The composer
+   * inserts that path into the draft; nothing is read or uploaded. */
+  COMPOSER_CHOOSE_FILE: "composer.chooseFile",
 } as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];

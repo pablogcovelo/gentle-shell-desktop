@@ -1,4 +1,5 @@
 import type {
+  AppInfo,
   ChatState,
   ChatSummary,
   DialogAnswer,
@@ -62,6 +63,14 @@ export function createBridge(ipc: RendererIpc): GentleBridge {
     createWorkspace: (directory: string) => ipc.invoke(IPC_CHANNELS.WORKSPACE_CREATE, directory) as Promise<OpenChatResult>,
     setupStatus: () => ipc.invoke(IPC_CHANNELS.SETUP_STATUS) as Promise<SetupStatus>,
     chooseHome: (mode: HomeMode) => ipc.invoke(IPC_CHANNELS.CHOOSE_HOME, mode) as Promise<void>,
+    // The shell's own chrome: real window controls and app facts, never
+    // guessed in the renderer.
+    appInfo: () => ipc.invoke(IPC_CHANNELS.APP_INFO) as Promise<AppInfo>,
+    minimizeWindow: () => ipc.invoke(IPC_CHANNELS.WINDOW_MINIMIZE) as Promise<void>,
+    toggleMaximizeWindow: () => ipc.invoke(IPC_CHANNELS.WINDOW_TOGGLE_MAXIMIZE) as Promise<boolean>,
+    closeWindow: () => ipc.invoke(IPC_CHANNELS.WINDOW_CLOSE) as Promise<void>,
+    // A null answer is a cancelled pick: the composer must change nothing.
+    chooseFile: () => ipc.invoke(IPC_CHANNELS.COMPOSER_CHOOSE_FILE) as Promise<string | null>,
 
     onState(callback: (state: ChatState) => void): () => void {
       const listener = (_event: unknown, state: unknown): void => callback(state as ChatState);

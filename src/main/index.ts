@@ -111,6 +111,11 @@ function createWindow(): void {
     title: "gentle shell",
     backgroundColor: "#060407",
     show: false,
+    // The app draws its own chrome (design/slack-gentle/01-workspace.html):
+    // the top bar carries the window's minimize / maximize / close, so the
+    // native frame is gone and the bar is the drag region (CSS
+    // -webkit-app-region: drag). Resizing still works through the edges.
+    frame: false,
     webPreferences: {
       preload: path.join(moduleDir, "../preload/index.mjs"),
       contextIsolation: true,
@@ -119,7 +124,28 @@ function createWindow(): void {
     },
   });
 
-  const unregisterHandlers = registerHandlers(hostRouter, setupService, window.webContents, ipcMain);
+  // The shell ports: the renderer never sees Electron, so everything the
+  // chrome needs from this window is answered here. `chooseFile` opens the
+  // native FILE picker; its null answer is a cancelled pick.
+  const unregisterHandlers = registerHandlers(hostRouter, setupService, window.webContents, ipcMain, {
+    appInfo: () => ({ version: app.getVersion() }),
+    windowControls: {
+      minimize: () => window.minimize(),
+      toggleMaximize: () => {
+        if (window.isMaximized()) {
+          window.unmaximize();
+          return false;
+        }
+        window.maximize();
+        return true;
+      },
+      close: () => window.close(),
+    },
+    chooseFile: async () => {
+      const picked = await dialog.showOpenDialog(window, { properties: ["openFile"] });
+      return picked.canceled || picked.filePaths.length === 0 ? null : picked.filePaths[0]!;
+    },
+  });
   window.on("closed", unregisterHandlers);
 
   // Assistant replies now render Markdown links (Markdown.tsx forces

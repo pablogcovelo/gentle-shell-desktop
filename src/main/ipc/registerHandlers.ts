@@ -2,6 +2,7 @@ import { access, constants, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import type { IpcMain, WebContents } from "electron";
 import type {
+  AppInfo,
   ChatState,
   ChatSummary,
   DialogAnswer,
@@ -75,7 +76,7 @@ function withHostId(state: ChatState, hostId: string, workspacePath?: string): C
 export async function validateWorkspaceDirectory(directory: string): Promise<void> {
   if (directory.length === 0) throw new Error("Choose a directory for the workspace (none was given)");
   if (!isAbsolute(directory)) throw new Error(`"${directory}" is not an absolute path — choose the directory through the picker`);
-  let info;
+  let info: Awaited<ReturnType<typeof stat>>;
   try {
     info = await stat(directory);
   } catch {
@@ -460,7 +461,32 @@ export class WorkspaceHostRouter {
  * an unsubscribe. The router itself is created once per app (in
  * src/main/index.ts) and shared across windows — hosts outlive windows.
  */
-export function registerHandlers(router: WorkspaceHostRouter, setup: SetupService, webContents: WebContents, ipc: IpcMain): () => void {
+/**
+ * Everything the shell's own chrome needs from the process that owns it,
+ * injected instead of imported: window controls, the app's version and the
+ * native file picker all sit behind Electron values this module must never
+ * load at import time (node tests import it directly).
+ */
+export interface ShellPorts {
+  readonly windowControls?: WindowControlsPort;
+  readonly appInfo?: () => AppInfo;
+  readonly chooseFile?: () => Promise<string | null>;
+}
+
+/** The BrowserWindow actions the frameless chrome performs. */
+export interface WindowControlsPort {
+  minimize(): void;
+  toggleMaximize(): boolean;
+  close(): void;
+}
+
+export function registerHandlers(
+  router: WorkspaceHostRouter,
+  setup: SetupService,
+  webContents: WebContents,
+  ipc: IpcMain,
+  ports: ShellPorts = {},
+): () => void {
   registerRequestHandler(ipc, IPC_CHANNELS.LIST_CHATS, () => router.listChats());
   registerRequestHandler(ipc, IPC_CHANNELS.OPEN_CHAT, (_event, chatId: string) => router.openChat(chatId));
   registerRequestHandler(ipc, IPC_CHANNELS.NEW_CHAT, () => router.newChat());
@@ -487,6 +513,23 @@ export function registerHandlers(router: WorkspaceHostRouter, setup: SetupServic
   registerRequestHandler(ipc, IPC_CHANNELS.WORKSPACE_CREATE, (_event, directory: string) => router.createWorkspace(directory));
   registerRequestHandler(ipc, IPC_CHANNELS.SETUP_STATUS, () => setup.status());
   registerRequestHandler(ipc, IPC_CHANNELS.CHOOSE_HOME, (_event, mode: HomeMode) => setup.chooseHome(mode));
+  // The shell's own chrome (second increment): app facts, the frameless
+  // window's controls and the native FILE picker. Each one refuses clearly
+  // when its port is absent instead of silently answering nothing, and the
+  // picker's null answer is a cancellation the caller must treat as "change
+  // nothing" — exactly like the directory picker.
+  registerRequestHandler(ipc, IPC_CHANNELS.APP_INFO, () => {
+    if (!ports.appInfo) throw new Error("The app's version is unavailable in this build.");
+    return ports.appInfo();
+  });
+  registerRequestHandler(ipc, IPC_CHANNELS.WINDOW_MINIMIZE, () => {
+    requireWindowControls(ports).minimize();
+  });
+  registerRequestHandler(ipc, IPC_CHANNELS.WINDOW_TOGGLE_MAXIMIZE, () => requireWindowControls(ports).toggleMaximize());
+  registerRequestHandler(ipc, IPC_CHANNELS.WINDOW_CLOSE, () => {
+    requireWindowControls(ports).close();
+  });
+  registerRequestHandler(ipc, IPC_CHANNELS.COMPOSER_CHOOSE_FILE, () => ports.chooseFile?.() ?? Promise.resolve(null));
 
   // Pushes fan out from EVERY live host (including hosts created after
   // this registration, through the router's own subscription). The state
@@ -507,6 +550,13 @@ export function registerHandlers(router: WorkspaceHostRouter, setup: SetupServic
 }
 
 type IpcHandleListener = Parameters<IpcMain["handle"]>[1];
+
+/** One refusal message for every window channel, so a build without a
+ * window (a headless test, a second registration) cannot pretend to act. */
+function requireWindowControls(ports: ShellPorts): WindowControlsPort {
+  if (!ports.windowControls) throw new Error("Window controls are unavailable in this build.");
+  return ports.windowControls;
+}
 
 function registerRequestHandler(ipc: IpcMain, channel: string, listener: IpcHandleListener): void {
   ipc.removeHandler(channel);
