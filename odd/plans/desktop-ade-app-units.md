@@ -8,7 +8,7 @@ Plan only: implement capability parity with gentle-shell through a desktop GUI, 
 - Keep the existing provisional placement. The TUI is a placement reference until a desktop design exists, not a constraint on desktop interaction.
 - No dictation, app-control CLI, cloud/mobile, emulator, or plugin marketplace in this plan.
 - Host contracts are now in scope and specified in gentle-pi's `odd/tasks/desktop-rpc-client-gaps.md`; gaps that still have no contract go to [the deferred contract backlog](desktop-ade-deferred-contracts.md), not an app workaround. The app never substitutes app-owned policy for a missing host capability. This supersedes the earlier "contract documented but addressed later" decision (Decision 6).
-- Preserve M3 and its per-chat todo/helpers boundaries. ODD phase remains deferred; do not infer it from transcript text.
+- Preserve M3 and its per-chat todo/helpers boundaries. ODD phase entered v1 on 2026-11-15 (owner decision): the host publishes it as `oddPhase` inside `session_state_changed` (`gentle-pi` `odd/tasks/desktop-gui-parity.md` S7/T2) and the app consumes it; never infer it from transcript text. The live queue is [`pending-work.md`](pending-work.md).
 - Work stays in the fork. Preserve `main`; publishing remains a separate decision (M3 Log L12).
 
 ## Execution order
@@ -27,7 +27,7 @@ Each row is a behavior unit with its own tests and documentation, not a mandate 
 
 Recommended sequence: U1 → U2 → U3 → U4 → U5 → U6a → U6b. These are sequencing recommendations, not claims that all are equally small. U6 is concurrency-sensitive and is deliberately split; do not label it a trivial quick win.
 
-Prerequisite: U1, U2-read, U3 and the workspace unit consume the desktop RPC client base (`../tasks/desktop-rpc-client.md` T1/T2), so the client base lands before them; the recommended U1 → U6b sequence is unchanged for capability order. Delivery specs: U1 → `desktop-rpc-client.md` T2 (delivered there in full); U2 → the read half in T4, with selection still open here; U3 → T3/T4; U6a → the process-model authority referenced by T5. U4, U5 and U6b have no delivery spec and remain unscheduled.
+Prerequisite: U1, U2-read, U3 and the workspace unit consume the desktop RPC client base (`../tasks/desktop-rpc-client.md` T1/T2), so the client base lands before them; the recommended U1 → U6b sequence is unchanged for capability order. Delivery specs: U1 → `desktop-rpc-client.md` T2 (delivered there in full); U2 → the read half in T4, with selection still open here; U3 → T3/T4; U6a → the process-model authority referenced by T5. U5 and U6b have no delivery spec and remain unscheduled. U4's discovery question is answered: pi's RPC mode answers `get_commands`, so the `/` menu is app-side work (`pending-work.md` P6) and only its extension-command coverage needs a read-only host probe (`desktop-gui-parity` T4).
 
 Paths in the table are relative to `src/main/domain/` unless they name the bridge/UI. They are starting points, not finalized worker edit permissions.
 
@@ -137,3 +137,5 @@ Viewer deliberately integrates the gentle-shell host; that discipline is not an 
 ## Next step
 
 U1 remains the first capability unit when implementation is authorized. It now ships with the desktop RPC client base (`../tasks/desktop-rpc-client.md` T1/T2) and that task's adoption of U1 (T2), with C5 (helper stop) moving into that program via its T6. This planning delivery does not begin U1 or change M3's completed status.
+
+**Status, 2026-11-15 (later than the delivery above):** U1, U2 (read half), U3 and U6a are delivered; U4's contract question is answered by the host; C5 is delivered. The current ordered queue, including the workspace-lifetime items this plan never carried, is [`pending-work.md`](pending-work.md).
