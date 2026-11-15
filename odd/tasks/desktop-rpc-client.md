@@ -216,3 +216,14 @@ L30. T11 delivered, delegated and verified by the parent. Add workspace is now a
 Two things to keep in view. The worker recorded an honest process gap: the router/validator tests were written in the same batch as their implementation, so that batch had no isolated RED; it was closed afterwards by running the new tests against a pristine copy of the base commit, where all ten fail while the twenty pre-existing tests in the file behave identically — a real differential, reported instead of papered over. And a pre-existing gap remains untouched: for a chat reopened from the sidebar, the child still spawns in Electron's launch directory, so only a *created* workspace has a spawn directory the user chose; binding `chat.open` to the chat's own cwd belongs to the workspace-model slices, not T11. A mock-bridge defect was caught at GREEN and fixed: `??` swallowed the picker's cancelled `null` and would have created a workspace from a cancelled dialog.
 
 Checks: `pnpm vitest run src/main src/renderer src/preload` 49 files / 631 tests, `pnpm test` 50 files / 637 tests, `pnpm typecheck` clean. The worker's base-copy scratch directory was removed by the parent.
+
+### T8b — worktree group in the footer (unblocked by T11)
+
+T8b was parked because `get_worktree_changes` takes `{ root }` and the app had no root. T11 gives it one: the created workspace's directory, or an existing chat's pi-reported `cwd`.
+
+Acceptance:
+- The child is asked for `get_worktree_changes` with that root, behind the same capabilities gate as every other control write, at the same triggers the other stats use (a created/opened chat and `agent_settled`).
+- The footer renders the branch when the child supplies one, the changed-file count and the added/deleted line counts — all from the child, never derived.
+- `countsUnavailable`, an unborn root, an unreadable root or a failed answer render as unavailable, never as zero files and zero lines.
+- No root known means no worktree group at all: an empty chat shows the path (`~/` when none) and nothing else invented.
+- A late answer for a previous chat must not overwrite the current one's footer.
