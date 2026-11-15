@@ -118,4 +118,21 @@ describe("Footer (desktop-rpc T8, T11 path)", () => {
     expect(within(footer).queryByText("changes")).not.toBeInTheDocument();
   });
 
+
+it("never prints zero counts when the child supplied no numbers", () => {
+  // A worktree with files but without tallies must read as unavailable, not as
+  // "0 files · +0/-0": a number the child did not send cannot be invented.
+  render(
+    <Footer
+      workspace={{
+        ...WORKTREE,
+        worktree: { root: "/repo", files: ["a.ts"] },
+      }}
+      workspacePath="/repo"
+    />,
+  );
+
+  expect(screen.queryByText(/\+0\/-0/)).not.toBeInTheDocument();
+  expect(screen.getByText(/unavailable/i)).toBeInTheDocument();
+});
 });

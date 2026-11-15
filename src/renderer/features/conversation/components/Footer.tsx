@@ -59,8 +59,12 @@ export function Footer({ workspace, workspacePath }: FooterProps) {
  * a partial count (an unmeasured untracked file), and none of those may
  * render as zero files and zero lines. */
 function describeWorktree(worktree: WorktreeChanges): string {
-  if (worktree.countsUnavailable) return "unavailable";
-  return `${worktree.files.length} files · +${worktree.added ?? 0}/-${worktree.deleted ?? 0}`;
+  // Absent tallies are as honest as the explicit flag: printing "0 files ·
+  // +0/-0" would invent numbers the child never sent.
+  if (worktree.countsUnavailable || worktree.added === undefined || worktree.deleted === undefined) {
+    return "unavailable";
+  }
+  return `${worktree.files.length} files · +${worktree.added}/-${worktree.deleted}`;
 }
 
 function Field({ label, value }: { label: string; value: string }) {
