@@ -82,4 +82,14 @@ describe("Composer", () => {
 
     expect(onSend).toHaveBeenCalled();
   });
+
+it("keeps Send disabled while the pane has no host to send to", () => {
+  render(
+    <Composer value="hi" working={false} ready={false} onChange={vi.fn()} onSend={vi.fn()} onAbort={vi.fn()} />,
+  );
+
+  // No host resolved yet means no route: offering Send would only produce a
+  // request main has to refuse.
+  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+});
 });

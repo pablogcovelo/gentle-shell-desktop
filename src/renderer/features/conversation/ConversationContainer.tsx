@@ -426,7 +426,16 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
             nothing at all when there is no usage data. Never a transcript
             entry, like TodoCard above. */}
             <UsageMeters usage={chatState.usage} channelUnavailable={chatState.usageChannelUnavailable} />
-            <Composer value={draft} working={chatState.working} onChange={setDraft} onSend={handleSend} onAbort={handleAbort} />
+            <Composer
+              value={draft}
+              working={chatState.working}
+              // Send is enabled only once this pane knows its host (T5b): a
+              // request before that would be refused by main.
+              ready={hostId !== ""}
+              onChange={setDraft}
+              onSend={handleSend}
+              onAbort={handleAbort}
+            />
           </div>
         </div>
       )}

@@ -89,8 +89,17 @@ describe("App", () => {
     await screen.findByRole("heading", { name: "Chats" });
 
     const composer = () => screen.getByPlaceholderText("Tell Gentle what you need…");
-    fireEvent.change(composer(), { target: { value: "hello first" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    // Send is disabled until the pane knows its workspace host, so waiting for
+    // it (instead of clicking into the window) removes the timing race that
+    // made this test flake under load.
+    const sendWhenReady = async (text: string): Promise<void> => {
+      fireEvent.change(composer(), { target: { value: text } });
+      const send = screen.getByRole("button", { name: "Send" });
+      await waitFor(() => expect(send).toBeEnabled());
+      fireEvent.click(send);
+    };
+
+    await sendWhenReady("hello first");
     // The send only lands when it carried the resolved host id; a stale or
     // unknown id would surface as a status error and no message.
     await screen.findByText("hello first");
@@ -98,8 +107,7 @@ describe("App", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Write the README intro/ }));
     await screen.findByRole("heading", { name: "Write the README intro" });
 
-    fireEvent.change(composer(), { target: { value: "hello second" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await sendWhenReady("hello second");
     await screen.findByText("hello second");
 
     expect(screen.queryByRole("status")).not.toBeInTheDocument();

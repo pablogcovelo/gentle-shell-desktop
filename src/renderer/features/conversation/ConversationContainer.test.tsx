@@ -1135,12 +1135,11 @@ describe("ConversationContainer", () => {
     expect(await screen.findByText("host-2 exploded")).toBeInTheDocument();
   });
 
-  it("a request made in the window between a selection change and the new host id resolution is refused, not sent with the previous host id", async () => {
+  it("does not offer a request in the window between a selection change and the new host id resolution", async () => {
     const bridge = makeBridge({
       openChat: vi.fn((id: string) =>
         id === "chat-1" ? Promise.resolve({ hostId: "host-1", state: emptyState() }) : new Promise<{ hostId: string; state: ChatState }>(() => {}),
       ),
-      sendMessage: vi.fn().mockRejectedValue(new Error('No live workspace host for id "" (unknown or already stopped)')),
     });
     window.gentle = bridge;
 
@@ -1148,20 +1147,23 @@ describe("ConversationContainer", () => {
     await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledWith("chat-1"));
     await act(async () => {}); // host-1 adopted
 
-    // The rerender and the send share one act: the click lands in the
-    // render window BEFORE the selection-change effects have run, which is
-    // exactly the window where the previously resolved host id must not be
-    // an address.
+    // In the render window right after a selection change the pane knows it
+    // has no address yet, so Send is not offered at all: the previous chat's
+    // host id must never become an address, and no request is fired into a
+    // route main would have to refuse.
     act(() => {
       rerender(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_2 }} />);
       fireEvent.change(screen.getByPlaceholderText("Tell Gentle what you need…"), { target: { value: "hello" } });
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    });
+
+    const send = screen.getByRole("button", { name: "Send" });
+    expect(send).toBeDisabled();
+    act(() => {
+      fireEvent.click(send);
     });
 
     expect(bridge.sendMessage).not.toHaveBeenCalledWith("host-1", "hello");
-    expect(bridge.sendMessage).toHaveBeenCalledWith("", "hello");
-    // The refusal is explicit, not a silent misroute.
-    expect(await screen.findByRole("status")).toHaveTextContent("No live workspace host");
+    expect(bridge.sendMessage).not.toHaveBeenCalled();
   });
 
   // T5d — lifecycle. Two contract changes land here: a failed refresh no

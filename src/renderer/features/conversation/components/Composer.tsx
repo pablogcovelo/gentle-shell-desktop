@@ -9,6 +9,10 @@ export interface ComposerProps {
   readonly onChange: (value: string) => void;
   readonly onSend: () => void;
   readonly onAbort: () => void;
+  /** Whether a request from this pane can be routed at all: false while the
+   * chat's workspace host is still unresolved. Defaults to true so a composer
+   * without a host model keeps working. */
+  readonly ready?: boolean;
 }
 
 /**
@@ -19,8 +23,10 @@ export interface ComposerProps {
  * `disabled`) while working: a disabled textarea would stop receiving the
  * Escape keydown the abort shortcut depends on.
  */
-export function Composer({ value, working, onChange, onSend, onAbort }: ComposerProps) {
-  const canSend = !working && value.trim().length > 0;
+export function Composer({ value, working, onChange, onSend, onAbort, ready = true }: ComposerProps) {
+  // A pane that does not know its host has nowhere to send: offering an enabled
+  // Send there only produces a request main must refuse, so it waits instead.
+  const canSend = ready && !working && value.trim().length > 0;
 
   const handleChange = (event: ChangeEvent<HTMLTextAreaElement>): void => {
     onChange(event.target.value);
