@@ -50,3 +50,17 @@ The task card moves out of the chat stack into the inspector's `Todo` section, s
 ### L4 (decision, 2026-11-15)
 
 The footer stays inside the conversation column instead of spanning the whole app: every fact it shows (path, branch, changes, MCP, profile) is per-chat state, and lifting it to `App` would have required hoisting the single-chat bridge state. The artboard's footer groups are kept; the artboard's `model · reasoning · context` group stays in the status line per the existing "one home per datum" rule (S7).
+
+### L5 (delivery, 2026-11-15)
+
+Work-unit commits on `feat/desktop-workspace-shell` (branched from `develop`), in dependency order:
+
+1. `dd13cc4` docs(odd) — this document.
+2. `396a74f` app shell chrome: top bar, directory rail, panel toggles, `App.css` grid.
+3. `f23c5ee` directory panel sidebar: eyebrow, heading, action row, directory meta line.
+4. `ec9f33f` inspector panel + the `panel` variants of `TodoCard`/`UsageMeters` + `todoProgress`.
+5. `b500134` conversation chrome: context bar, composer, thread, footer, session identity, inspector wiring, amended placement contract.
+
+Slice sizes in changed lines: app 408, chats 114, inspector 643, conversation 419. The branch reports 60 commits ahead of `origin/main` because it is based on `develop`; the delivery strategy for this feature is one PR on top of `develop`, so the pre-existing develop history is not part of this slice.
+
+Verification: `pnpm test` 685 passed (52 files), `pnpm typecheck` clean, and the rendered result was compared against the artboard at 1440×900 and 1000×780.
