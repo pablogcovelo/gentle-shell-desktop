@@ -201,6 +201,11 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
       {pane === CONVERSATION_PANE.HELPERS ? (
         <HelpersContainer
           activity={chatState.helpers}
+          // T5b: the Stop control routes by this chat's host id. Omitting it
+          // sent an empty address that the router rejects, so Helper Stop was
+          // broken in the real app while every unit test passed — the wiring
+          // is pinned by "addresses a helper stop from the Helpers pane".
+          hostId={hostId}
           onBackToChat={() => setPane(CONVERSATION_PANE.CHAT)}
           openedAt={helpersOpenedAt}
         />

@@ -589,6 +589,59 @@ describe("ConversationContainer", () => {
     expect(screen.getByText("Panel task only")).toBeInTheDocument();
   });
 
+  it("addresses a helper stop from the Helpers pane to the active host", async () => {
+    const stopHelper = vi.fn().mockResolvedValue({ cancelled: true });
+    let pushState: (state: ChatState) => void = () => {};
+    const bridge = makeBridge({
+      stopHelper,
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} {...({ activeHostId: "host-1" } as Record<string, unknown>)} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+    await act(async () => {}); // the host id must be in place before the stop
+
+    pushState({
+      hostId: "host-1",
+      messages: [],
+      working: false,
+      pendingDialogs: [],
+      activity: 0,
+      helpers: {
+        summary: { running: 1, queued: 0, waiting: 0, finished: 0 },
+        tasks: [
+          {
+            id: "helper-a",
+            agent: "gentle-ai-worker",
+            label: "Running task",
+            prompt: "p",
+            status: "running",
+            createdAt: "2026-09-22T10:00:00.000Z",
+            startedAt: "2026-09-22T10:00:00.000Z",
+            turns: 1,
+            toolCalls: 1,
+            thread: { version: 0, dropped: 0, items: [] },
+          },
+        ],
+        stopChannel: { available: true },
+      },
+    } as unknown as ChatState);
+    await act(async () => {});
+
+    fireEvent.click(screen.getByRole("tab", { name: "Helpers (1 running)" }));
+    // The only running helper is selected automatically, so Stop is enabled.
+    fireEvent.click(await screen.findByRole("button", { name: "Stop" }));
+    await act(async () => {});
+
+    // The stop must carry the chat's host id: an empty address is rejected by
+    // the router, which is exactly the regression this pins.
+    expect(stopHelper).toHaveBeenCalledWith("host-1", "helper-a");
+  });
+
   it("keeps the todo card out of the Helpers pane", async () => {
     let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({
