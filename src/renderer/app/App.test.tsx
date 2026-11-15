@@ -171,6 +171,29 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "New chat" })).toBeInTheDocument();
   });
 
+  it("collapses the chat directories and the plan/usage/agents panel from the top bar", async () => {
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Chats" });
+    const shell = document.querySelector(".gc-app");
+    expect(shell).not.toHaveClass("gc-app--sidebar-hidden");
+    expect(shell).not.toHaveClass("gc-app--inspector-hidden");
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide chats" }));
+
+    expect(shell).toHaveClass("gc-app--sidebar-hidden");
+    // The toggle keeps reporting the real state it just changed.
+    expect(screen.getByRole("button", { name: "Show chats" })).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide plan, usage and agents" }));
+
+    expect(shell).toHaveClass("gc-app--inspector-hidden");
+    expect(screen.getByRole("button", { name: "Show plan, usage and agents" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
   it("shows the first-run screen when setupStatus reports needsChoice (no persisted home choice yet)", async () => {
     window.history.pushState({}, "", "?firstRun=1");
 

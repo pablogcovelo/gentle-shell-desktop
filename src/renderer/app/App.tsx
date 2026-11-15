@@ -4,6 +4,8 @@ import { useBridge } from "@renderer/shared/bridge/useBridge";
 import { ChatsContainer } from "@renderer/features/chats/ChatsContainer";
 import { ConversationContainer, type ActiveChat } from "@renderer/features/conversation/ConversationContainer";
 import { FirstRunContainer } from "@renderer/features/first-run/FirstRunContainer";
+import { AppRail } from "./components/AppRail";
+import { TopBar } from "./components/TopBar";
 import "./App.css";
 
 const NEW_CHAT: ActiveChat = { kind: "new", epoch: 0 };
@@ -49,6 +51,11 @@ export function App() {
   // again, which would spawn a second child for the same workspace. Cleared
   // on every selection change so a stale creation can never adopt.
   const [createdWorkspace, setCreatedWorkspace] = useState<{ readonly chatKey: string; readonly result: OpenChatResult } | undefined>(undefined);
+  // Panel visibility (artboard "Workspace"): the chrome's two toggles collapse
+  // the directory column and the plan/usage/agents panel. Held as two booleans
+  // on the shell so the modifier classes below stay the only source of layout.
+  const [sidebarVisible, setSidebarVisible] = useState(true);
+  const [inspectorVisible, setInspectorVisible] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -92,20 +99,37 @@ export function App() {
   if (screen === SCREEN.LOADING) return <div className="gc-app-loading" />;
   if (screen === SCREEN.FIRST_RUN) return <FirstRunContainer onDone={() => setScreen(SCREEN.CHAT)} />;
 
+  const appClasses = [
+    "gc-app",
+    !sidebarVisible && "gc-app--sidebar-hidden",
+    !inspectorVisible && "gc-app--inspector-hidden",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className="gc-app">
-      <ChatsContainer
-        onSelectChat={handleSelectChat}
-        onNewChat={handleNewChat}
-        onWorkspaceCreated={handleWorkspaceCreated}
-        selectedChatId={activeChat.kind === "existing" ? activeChat.chat.id : undefined}
+    <div className={appClasses}>
+      <TopBar
+        sidebarVisible={sidebarVisible}
+        inspectorVisible={inspectorVisible}
+        onToggleSidebar={() => setSidebarVisible((visible) => !visible)}
+        onToggleInspector={() => setInspectorVisible((visible) => !visible)}
       />
-      <ConversationContainer
-        activeChat={activeChat}
-        activeHostId={activeHostId}
-        createdWorkspace={createdWorkspace}
-        onHostResolved={setActiveHostId}
-      />
+      <div className="gc-app__body">
+        <AppRail sidebarVisible={sidebarVisible} onToggleSidebar={() => setSidebarVisible((visible) => !visible)} />
+        <ChatsContainer
+          onSelectChat={handleSelectChat}
+          onNewChat={handleNewChat}
+          onWorkspaceCreated={handleWorkspaceCreated}
+          selectedChatId={activeChat.kind === "existing" ? activeChat.chat.id : undefined}
+        />
+        <ConversationContainer
+          activeChat={activeChat}
+          activeHostId={activeHostId}
+          createdWorkspace={createdWorkspace}
+          onHostResolved={setActiveHostId}
+        />
+      </div>
     </div>
   );
 }

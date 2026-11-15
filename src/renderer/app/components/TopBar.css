@@ -1,0 +1,79 @@
+/* App chrome row: one 34px line, the artboard's --chrome-height. */
+
+.gc-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.gc-topbar__brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.gc-topbar__rose {
+  display: block;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  mix-blend-mode: screen;
+}
+
+.gc-topbar__wordmark {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.gc-topbar__wordmark-suffix {
+  color: var(--accent);
+}
+
+.gc-topbar__controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.gc-topbar__toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 3px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.gc-topbar__toggle:hover {
+  background: var(--raised);
+  color: var(--text);
+}
+
+.gc-topbar__toggle[aria-expanded="true"] {
+  color: var(--accent);
+}
+
+.gc-topbar__toggle:focus-visible {
+  outline: 2px solid var(--accent-active);
+  outline-offset: 2px;
+}
