@@ -79,6 +79,12 @@ export interface Dialog {
   readonly placeholder?: string;
   /** editor only */
   readonly prefill?: string;
+  /** T5b: the id of the workspace host that asked for this dialog,
+   * attached at the push boundary (src/main/ipc/registerHandlers.ts and
+   * the mock bridge) so an answer can be addressed to THAT host without
+   * guessing. Optional because the domain (PiSession) produces dialogs
+   * before any host id exists; every Dialog in a PUSHED state carries it. */
+  readonly hostId?: string;
 }
 
 /**
@@ -106,6 +112,19 @@ export type DialogAnswer = { readonly value: string } | { readonly confirmed: bo
 export interface PromptResult {
   readonly queued: boolean;
   readonly reason?: string;
+}
+
+/**
+ * What `chat.open`/`chat.new` answer since T5b: the id of the workspace
+ * host the request was routed to (minted by the WorkspaceHostRegistry for
+ * a new host, reused for a chat whose host is already live — never "the
+ * currently bound host" the caller did not ask for) plus that host's
+ * current ChatState. Every later request for this chat is addressed to
+ * that host id.
+ */
+export interface OpenChatResult {
+  readonly hostId: string;
+  readonly state: ChatState;
 }
 
 /**
@@ -360,6 +379,13 @@ export interface ChatState {
    * session actually carries a todo state. Lives here for the same Scope
    * Rule reason as the rest of ChatState: the renderer renders it. */
   readonly todo?: TodoPanelState;
+  /** T5b: the id of the workspace host that emitted this state, attached
+   * at the push boundary (src/main/ipc/registerHandlers.ts and the mock
+   * bridge) on every `chat.state` push — the renderer ignores pushes whose
+   * host id is not the active one. Optional for the same reason as
+   * Dialog.hostId: the domain producers don't know it, the push layer
+   * attaches it. */
+  readonly hostId?: string;
   /** The chat's subscription-usage meters (desktop-rpc T3), decoded from
    * `get_subscription_usage` replies and `rate_limit` events on the
    * `gentle-desktop-rpc` widget channel — never from the conversation
@@ -665,20 +691,30 @@ export interface SetupStatus {
  */
 export interface GentleBridge {
   listChats(): Promise<ChatSummary[]>;
-  /** Opens an existing chat by id and returns its current ChatState. */
-  openChat(id: string): Promise<ChatState>;
-  /** Starts a fresh chat (no prior session file) and returns its initial ChatState. */
-  newChat(): Promise<ChatState>;
-  /** Sends a message in whichever chat is currently open. Resolves with
+  /** Opens an existing chat by id and returns which workspace host now
+   * owns it (T5b) plus its current ChatState. An already-live chat reuses
+   * its host instead of starting a second child. */
+  openChat(id: string): Promise<OpenChatResult>;
+  /** Starts a fresh chat (no prior session file) through a NEW workspace
+   * host and returns that host's id (T5b) plus its initial ChatState. */
+  newChat(): Promise<OpenChatResult>;
+  /** Sends a message to the addressed workspace host. Resolves with
    * `{ queued: false, reason }` instead of rejecting when the assistant is
-   * already working, so the caller reports it exactly once. */
-  sendMessage(text: string): Promise<PromptResult>;
-  abort(): Promise<void>;
-  answerDialog(id: string, answer: DialogAnswer): Promise<void>;
-  /** Subscribes to ChatState pushes for the currently open chat. Returns an unsubscribe function. */
+   * already working, so the caller reports it exactly once. An unknown or
+   * stopped host id is rejected by the main process — never routed to a
+   * different live host. */
+  sendMessage(hostId: string, text: string): Promise<PromptResult>;
+  abort(hostId: string): Promise<void>;
+  answerDialog(hostId: string, id: string, answer: DialogAnswer): Promise<void>;
+  /** Subscribes to ChatState pushes from every workspace host; each pushed
+   * state carries its emitting host's id (ChatState.hostId), which the
+   * renderer uses to ignore other hosts. Returns an unsubscribe function. */
   onState(callback: (state: ChatState) => void): () => void;
-  /** Subscribes to error messages surfaced by the currently open chat. Returns an unsubscribe function. */
-  onError(callback: (message: string) => void): () => void;
+  /** Subscribes to error messages surfaced by any workspace host; the
+   * second callback argument is the emitting host's id (T5b), which the
+   * renderer uses to ignore other hosts' errors. Returns an unsubscribe
+   * function. */
+  onError(callback: (message: string, hostId: string) => void): () => void;
   /** Whether to show the first-run home-choice screen, and what pi
    * detection found. */
   setupStatus(): Promise<SetupStatus>;
@@ -692,7 +728,7 @@ export interface GentleBridge {
    * this call's response alone. Optional: both real bridges implement it
    * (src/preload/bridge.ts, the mock bridge), and the Helpers tab treats a
    * bridge without it as the `unavailable` outcome. */
-  stopHelper?(id: string): Promise<StopHelperOutcome>;
+  stopHelper?(hostId: string, id: string): Promise<StopHelperOutcome>;
 }
 
 declare global {

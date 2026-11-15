@@ -26,6 +26,18 @@ export type ActiveChat =
 
 export interface ConversationContainerProps {
   readonly activeChat: ActiveChat;
+  /** T5b: the active chat's workspace host id, OWNED BY App — set from
+   * the open/new resolution (see onHostResolved) and reset on every
+   * selection change. Every request the container sends is addressed to
+   * it and pushes for other hosts are ignored. Falls back to the
+   * container's own open/new resolution when App does not supply it
+   * (bare usage/tests), and to the empty string while nothing has been
+   * resolved yet — a request sent that early is rejected by the bridge
+   * with its clear unknown-host error instead of being silently routed. */
+  readonly activeHostId?: string;
+  /** Reports the host id the open/new resolution returned, so App can
+   * keep it and pass it back down. */
+  readonly onHostResolved?: (hostId: string) => void;
 }
 
 function emptyChatState(): ChatState {
@@ -51,9 +63,15 @@ function errorText(cause: unknown): string {
  * notifications (desktop-rpc T2b) render in the same status surface for
  * the same reason: they are feedback chrome, never transcript entries.
  */
-export function ConversationContainer({ activeChat }: ConversationContainerProps) {
+export function ConversationContainer({ activeChat, activeHostId, onHostResolved }: ConversationContainerProps) {
   const bridge = useBridge();
   const [chatState, setChatState] = useState<ChatState>(emptyChatState());
+  // The host id this container resolved for the current activeChat from
+  // its own open/new call — the fallback when no activeHostId comes from
+  // above. Reset whenever the selection changes, together with App's own
+  // reset below, so a stale host id can never answer for the new chat.
+  const [resolvedHostId, setResolvedHostId] = useState<string | undefined>(undefined);
+  const hostId = activeHostId ?? resolvedHostId ?? "";
   const [bridgeError, setBridgeError] = useState<string | undefined>(undefined);
   const [draft, setDraft] = useState("");
   const [pane, setPane] = useState<ConversationPane>(CONVERSATION_PANE.CHAT);
@@ -63,16 +81,29 @@ export function ConversationContainer({ activeChat }: ConversationContainerProps
   // switch, so opening the Helpers tab later doesn't move the line.
   const [helpersOpenedAt, setHelpersOpenedAt] = useState<string>(() => new Date().toISOString());
 
-  // Subscribes once: GentleBridge pushes state/error for whichever chat is
-  // currently open, independent of which activeChat this render owns.
+  // Subscribes once per host id: pushes arrive from EVERY live host, so a
+  // push is accepted only when it carries no contradicting identity — one
+  // whose host id differs from the active host's is ignored (T5b). An
+  // unaddressed push is tolerated only while this pane has no host id yet —
+  // once it knows which host it is, an untagged push cannot be proven to be
+  // its own, and accepting it would be exactly the "whichever chat is open"
+  // routing this slice removes.
+  const isForeignPush = (pushedHostId: string | undefined): boolean =>
+    pushedHostId === undefined ? hostId !== "" : pushedHostId !== hostId;
   useEffect(() => {
-    const unsubscribeState = bridge.onState(setChatState);
-    const unsubscribeError = bridge.onError(setBridgeError);
+    const unsubscribeState = bridge.onState((state) => {
+      if (isForeignPush(state.hostId)) return;
+      setChatState(state);
+    });
+    const unsubscribeError = bridge.onError((message, errorHostId) => {
+      if (isForeignPush(errorHostId)) return;
+      setBridgeError(message);
+    });
     return () => {
       unsubscribeState();
       unsubscribeError();
     };
-  }, [bridge]);
+  }, [bridge, hostId]);
 
   // Opens (or starts) the selected chat whenever the selection changes.
   // Guarded against stale resolutions: if the selection changes again
@@ -81,9 +112,12 @@ export function ConversationContainer({ activeChat }: ConversationContainerProps
   // the newer selection.
   // Reset to the chat pane whenever the selected chat changes — a helper
   // tab left open on the previous chat must never bleed into the next one.
+  // The previous chat's host id is dropped with it (T5b): until the new
+  // open/new resolves, no request may route to the old host.
   useEffect(() => {
     setPane(CONVERSATION_PANE.CHAT);
     setHelpersOpenedAt(new Date().toISOString());
+    setResolvedHostId(undefined);
   }, [activeChat]);
 
   useEffect(() => {
@@ -91,8 +125,14 @@ export function ConversationContainer({ activeChat }: ConversationContainerProps
     let cancelled = false;
     const opening = activeChat.kind === "existing" ? bridge.openChat(activeChat.chat.id) : bridge.newChat();
     opening
-      .then((state) => {
-        if (!cancelled) setChatState(state);
+      .then((result) => {
+        if (cancelled) return;
+        // T5b: the answer names the host this chat was routed to. It is
+        // reported up (App keeps it) and kept locally for bare usage;
+        // every later request is addressed to it.
+        setResolvedHostId(result.hostId);
+        onHostResolved?.(result.hostId);
+        setChatState(result.state);
       })
       .catch((cause: unknown) => {
         if (!cancelled) setBridgeError(errorText(cause));
@@ -100,15 +140,23 @@ export function ConversationContainer({ activeChat }: ConversationContainerProps
     return () => {
       cancelled = true;
     };
+    // onHostResolved is deliberately NOT a dependency: it is a stable
+    // state setter from App, and re-running this effect on identity churn
+    // would re-open the chat on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bridge, activeChat]);
 
+  // Every request is addressed to the active chat's host (T5b). Before
+  // any open/new resolution the address is the empty string, which the
+  // bridge rejects with its clear unknown-host error — visible in the
+  // status line, never silently routed to another host.
   const handleSend = (): void => {
     const text = draft.trim();
     if (text.length === 0 || chatState.working) return;
 
     setDraft("");
     bridge
-      .sendMessage(text)
+      .sendMessage(hostId, text)
       .then((result) => {
         if (!result.queued) setBridgeError(result.reason ?? "Gentle did not send the message");
       })
@@ -116,11 +164,11 @@ export function ConversationContainer({ activeChat }: ConversationContainerProps
   };
 
   const handleAbort = (): void => {
-    bridge.abort().catch((cause: unknown) => setBridgeError(errorText(cause)));
+    bridge.abort(hostId).catch((cause: unknown) => setBridgeError(errorText(cause)));
   };
 
   const handleAnswerDialog = (id: string, answer: DialogAnswer): void => {
-    bridge.answerDialog(id, answer).catch((cause: unknown) => setBridgeError(errorText(cause)));
+    bridge.answerDialog(hostId, id, answer).catch((cause: unknown) => setBridgeError(errorText(cause)));
   };
 
   const title = activeChat.kind === "existing" ? activeChat.chat.title : "New chat";

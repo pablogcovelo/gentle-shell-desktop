@@ -56,34 +56,34 @@ describe("createBridge", () => {
     expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.NEW_CHAT);
   });
 
-  it("sendMessage invokes chat.send with the text", async () => {
+  it("sendMessage invokes chat.send with the host id first and the text (T5b)", async () => {
     const { ipc, invoke } = createFakeIpc();
     const bridge = createBridge(ipc);
 
-    await bridge.sendMessage("hello");
+    await bridge.sendMessage("host-1", "hello");
 
-    expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.SEND_MESSAGE, "hello");
+    expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.SEND_MESSAGE, "host-1", "hello");
   });
 
-  it("abort invokes chat.abort with no payload", async () => {
+  it("abort invokes chat.abort with the host id (T5b)", async () => {
     const { ipc, invoke } = createFakeIpc();
     const bridge = createBridge(ipc);
 
-    await bridge.abort();
+    await bridge.abort("host-1");
 
-    expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.ABORT);
+    expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.ABORT, "host-1");
   });
 
-  it("answerDialog invokes dialog.answer with the id and the answer", async () => {
+  it("answerDialog invokes dialog.answer with the host id, the id and the answer (T5b)", async () => {
     const { ipc, invoke } = createFakeIpc();
     const bridge = createBridge(ipc);
 
-    await bridge.answerDialog("dlg-1", { value: "A" });
+    await bridge.answerDialog("host-1", "dlg-1", { value: "A" });
 
-    expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.ANSWER_DIALOG, "dlg-1", { value: "A" });
+    expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.ANSWER_DIALOG, "host-1", "dlg-1", { value: "A" });
   });
 
-  it("stopHelper invokes helpers.stop with the helper id (desktop-rpc T6)", async () => {
+  it("stopHelper invokes helpers.stop with the host id and the helper id (desktop-rpc T6, T5b)", async () => {
     const { ipc, invoke } = createFakeIpc();
     invoke.mockResolvedValue("requested");
     const bridge = createBridge(ipc);
@@ -93,8 +93,8 @@ describe("createBridge", () => {
     const stop = bridge.stopHelper?.bind(bridge);
     if (!stop) throw new Error("createBridge did not implement stopHelper");
 
-    await expect(stop("m3a1-worker")).resolves.toBe("requested");
-    expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.STOP_HELPER, "m3a1-worker");
+    await expect(stop("host-1", "m3a1-worker")).resolves.toBe("requested");
+    expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.STOP_HELPER, "host-1", "m3a1-worker");
   });
 
   it("onState subscribes to the state push channel and forwards pushed state", () => {
@@ -120,15 +120,15 @@ describe("createBridge", () => {
     expect(listeners.get(IPC_CHANNELS.STATE_PUSH)).toHaveLength(0);
   });
 
-  it("onError subscribes to the error push channel and forwards the pushed message", () => {
+  it("onError subscribes to the error push channel and forwards the pushed message with its host id (T5b)", () => {
     const { ipc, listeners } = createFakeIpc();
     const bridge = createBridge(ipc);
-    const messages: string[] = [];
+    const pushes: Array<{ message: string; hostId: string }> = [];
 
-    bridge.onError((message) => messages.push(message));
-    listeners.get(IPC_CHANNELS.ERROR_PUSH)?.[0]?.(undefined, "boom");
+    bridge.onError((message, hostId) => pushes.push({ message, hostId }));
+    listeners.get(IPC_CHANNELS.ERROR_PUSH)?.[0]?.(undefined, "boom", "host-1");
 
-    expect(messages).toEqual(["boom"]);
+    expect(pushes).toEqual([{ message: "boom", hostId: "host-1" }]);
   });
 
   it("setupStatus invokes setup.status with no payload", async () => {

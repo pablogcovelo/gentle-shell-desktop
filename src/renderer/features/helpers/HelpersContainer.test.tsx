@@ -180,17 +180,25 @@ describe("HelpersContainer", () => {
       task({ id: "helper-a", label: "Running task", status: "running", startedAt: OPENED_AT }),
       task({ id: "helper-b", label: "Queued task", status: "queued" }),
     ];
-    render(<HelpersContainer activity={activity(tasks, { stopChannel: { available: true } })} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+    render(
+      <HelpersContainer
+        activity={activity(tasks, { stopChannel: { available: true } })}
+        hostId="host-1"
+        onBackToChat={() => {}}
+        openedAt={OPENED_AT}
+      />,
+    );
 
     const stopButton = screen.getByRole("button", { name: "Stop" });
     expect(stopButton).toBeEnabled();
 
     // The default selection is the running helper: stopping issues the
-    // cancel for helper-a and never for helper-b.
+    // cancel addressed to the chat's host for helper-a and never for
+    // helper-b (T5b: the host id is the routing key).
     fireEvent.click(stopButton);
     await waitFor(() => expect(stopHelper).toHaveBeenCalledTimes(1));
-    expect(stopHelper).toHaveBeenCalledWith("helper-a");
-    expect(stopHelper).not.toHaveBeenCalledWith("helper-b");
+    expect(stopHelper).toHaveBeenCalledWith("host-1", "helper-a");
+    expect(stopHelper).not.toHaveBeenCalledWith("host-1", "helper-b");
   });
 
   it("Stop is disabled for a helper that already finished, with its reason", () => {

@@ -4,6 +4,7 @@ import type {
   DialogAnswer,
   GentleBridge,
   HomeMode,
+  OpenChatResult,
   PromptResult,
   SetupStatus,
   StopHelperOutcome,
@@ -22,19 +23,26 @@ export interface RendererIpc {
   removeListener(channel: string, listener: (event: unknown, ...args: unknown[]) => void): void;
 }
 
-/** Implements GentleBridge over ipc.invoke (request/response) and
+/**
+ * Implements GentleBridge over ipc.invoke (request/response) and
  * ipc.on/removeListener (state/error pushes). src/preload/index.ts calls
- * this with the real Electron ipcRenderer. */
+ * this with the real Electron ipcRenderer.
+ *
+ * T5b: openChat/newChat answer the routed host's id; every request
+ * channel carries that host id first, and error pushes carry it as their
+ * second argument. The state push needs no extra argument — the pushed
+ * ChatState already carries its emitting host's id.
+ */
 export function createBridge(ipc: RendererIpc): GentleBridge {
   return {
     listChats: () => ipc.invoke(IPC_CHANNELS.LIST_CHATS) as Promise<ChatSummary[]>,
-    openChat: (id: string) => ipc.invoke(IPC_CHANNELS.OPEN_CHAT, id) as Promise<ChatState>,
-    newChat: () => ipc.invoke(IPC_CHANNELS.NEW_CHAT) as Promise<ChatState>,
-    sendMessage: (text: string) => ipc.invoke(IPC_CHANNELS.SEND_MESSAGE, text) as Promise<PromptResult>,
-    abort: () => ipc.invoke(IPC_CHANNELS.ABORT) as Promise<void>,
-    answerDialog: (id: string, answer: DialogAnswer) =>
-      ipc.invoke(IPC_CHANNELS.ANSWER_DIALOG, id, answer) as Promise<void>,
-    stopHelper: (id: string) => ipc.invoke(IPC_CHANNELS.STOP_HELPER, id) as Promise<StopHelperOutcome>,
+    openChat: (id: string) => ipc.invoke(IPC_CHANNELS.OPEN_CHAT, id) as Promise<OpenChatResult>,
+    newChat: () => ipc.invoke(IPC_CHANNELS.NEW_CHAT) as Promise<OpenChatResult>,
+    sendMessage: (hostId: string, text: string) => ipc.invoke(IPC_CHANNELS.SEND_MESSAGE, hostId, text) as Promise<PromptResult>,
+    abort: (hostId: string) => ipc.invoke(IPC_CHANNELS.ABORT, hostId) as Promise<void>,
+    answerDialog: (hostId: string, id: string, answer: DialogAnswer) =>
+      ipc.invoke(IPC_CHANNELS.ANSWER_DIALOG, hostId, id, answer) as Promise<void>,
+    stopHelper: (hostId: string, id: string) => ipc.invoke(IPC_CHANNELS.STOP_HELPER, hostId, id) as Promise<StopHelperOutcome>,
     setupStatus: () => ipc.invoke(IPC_CHANNELS.SETUP_STATUS) as Promise<SetupStatus>,
     chooseHome: (mode: HomeMode) => ipc.invoke(IPC_CHANNELS.CHOOSE_HOME, mode) as Promise<void>,
 
@@ -44,8 +52,9 @@ export function createBridge(ipc: RendererIpc): GentleBridge {
       return () => ipc.removeListener(IPC_CHANNELS.STATE_PUSH, listener);
     },
 
-    onError(callback: (message: string) => void): () => void {
-      const listener = (_event: unknown, message: unknown): void => callback(message as string);
+    onError(callback: (message: string, hostId: string) => void): () => void {
+      const listener = (_event: unknown, message: unknown, hostId: unknown): void =>
+        callback(message as string, hostId as string);
       ipc.on(IPC_CHANNELS.ERROR_PUSH, listener);
       return () => ipc.removeListener(IPC_CHANNELS.ERROR_PUSH, listener);
     },

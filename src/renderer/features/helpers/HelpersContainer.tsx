@@ -10,6 +10,12 @@ import "./HelpersContainer.css";
 
 export interface HelpersContainerProps {
   readonly activity: HelpersActivity;
+  /** T5b: the active chat's workspace host id (App's answer from
+   * chat.open/chat.new), threaded into the Stop call as its routing key.
+   * Before any resolution it is the empty string, which the bridge
+   * rejects through the same `unavailable` outcome note as any other
+   * failed stop — never a fallback to another host. */
+  readonly hostId?: string;
   readonly onBackToChat: () => void;
   /**
    * ISO timestamp of the moment this chat became active in the renderer
@@ -65,7 +71,7 @@ function stopNoteFor(outcome: StopHelperOutcome): string {
  * odd/tasks/desktop-m2-helpers.md's Objective). Right pane: the selected
  * helper's thread plus the footer.
  */
-export function HelpersContainer({ activity, onBackToChat, openedAt }: HelpersContainerProps) {
+export function HelpersContainer({ activity, hostId, onBackToChat, openedAt }: HelpersContainerProps) {
   const bridge = useBridge();
   const partition = partitionHelpers(activity.tasks, openedAt);
   const [selectedTaskId, setSelectedTaskId] = useState<string | undefined>(() => pickDefaultTaskId(partition));
@@ -108,7 +114,10 @@ export function HelpersContainer({ activity, onBackToChat, openedAt }: HelpersCo
     if (!selectedTask || stopDisabledReason !== undefined) return;
     setStopNote(undefined);
     bridge
-      .stopHelper?.(selectedTask.id)
+      // T5b: the stop is addressed to the active chat's host; an
+      // unresolved address is rejected and lands in the existing
+      // unavailable note.
+      .stopHelper?.(hostId ?? "", selectedTask.id)
       .then((outcome) => setStopNote(stopNoteFor(outcome)))
       .catch(() => setStopNote(STOP_NOTE_UNAVAILABLE));
   };

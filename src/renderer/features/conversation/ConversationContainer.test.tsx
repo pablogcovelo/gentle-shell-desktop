@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { CHAT_STATE, MESSAGE_ROLE, type ChatState, type ChatSummary, type GentleBridge, type SubscriptionUsage } from "@shared/bridge-types";
+import { CHAT_STATE, MESSAGE_ROLE, type ChatState, type ChatSummary, type Dialog, type GentleBridge, type SubscriptionUsage } from "@shared/bridge-types";
 import { ConversationContainer, type ActiveChat } from "./ConversationContainer";
 import { resetWelcomeHeroIntrosForTests } from "./components/WelcomeHero";
 
@@ -45,8 +45,11 @@ function stubHeroAnimations(count: number): { animations: { finished: Promise<vo
 function makeBridge(overrides: Partial<GentleBridge> = {}): GentleBridge {
   return {
     listChats: vi.fn().mockResolvedValue([]),
-    openChat: vi.fn().mockResolvedValue(emptyState()),
-    newChat: vi.fn().mockResolvedValue(emptyState()),
+    // T5b: openChat/newChat answer which host the chat was routed to plus
+    // its state; the container reports that host id up and addresses every
+    // later request to it.
+    openChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: emptyState() }),
+    newChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: emptyState() }),
     sendMessage: vi.fn().mockResolvedValue({ queued: true }),
     abort: vi.fn().mockResolvedValue(undefined),
     answerDialog: vi.fn().mockResolvedValue(undefined),
@@ -336,17 +339,18 @@ describe("ConversationContainer", () => {
     expect(screen.queryByText("openai-codex")).not.toBeInTheDocument();
   });
 
-  it("calls bridge.sendMessage with the trimmed draft on submit", async () => {
+  it("calls bridge.sendMessage with the active host id and the trimmed draft on submit", async () => {
     const bridge = makeBridge();
     window.gentle = bridge;
 
     render(<ConversationContainer activeChat={NEW_CHAT} />);
     await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+    await act(async () => {}); // the open resolution's host id must be in place before the send
 
     fireEvent.change(screen.getByPlaceholderText("Tell Gentle what you need…"), { target: { value: "  hi Gentle  " } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
-    expect(bridge.sendMessage).toHaveBeenCalledWith("hi Gentle");
+    expect(bridge.sendMessage).toHaveBeenCalledWith("host-1", "hi Gentle");
   });
 
   it("shows an onError push in the status line without adding a message", async () => {
@@ -398,8 +402,12 @@ describe("ConversationContainer", () => {
 
     render(<ConversationContainer activeChat={NEW_CHAT} />);
     await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+    await act(async () => {}); // the open resolution's host id must be in place before the answer
 
+    // Pushes carry the host id (T5b): an unaddressed push cannot be proven to
+    // belong to this pane once it knows which host it is.
     pushState({
+      hostId: "host-1",
       messages: [],
       working: false,
       pendingDialogs: [{ id: "dlg-1", method: "confirm", title: "Delete the file?" }],
@@ -409,7 +417,7 @@ describe("ConversationContainer", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Yes" }));
 
-    expect(bridge.answerDialog).toHaveBeenCalledWith("dlg-1", { confirmed: true });
+    expect(bridge.answerDialog).toHaveBeenCalledWith("host-1", "dlg-1", { confirmed: true });
   });
 
   it("calls bridge.abort() on Escape while working", async () => {
@@ -424,29 +432,30 @@ describe("ConversationContainer", () => {
 
     render(<ConversationContainer activeChat={NEW_CHAT} />);
     await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+    await act(async () => {}); // the open resolution's host id must be in place before the abort
 
-    pushState({ messages: [], working: true, pendingDialogs: [], activity: 0, helpers: EMPTY_HELPERS });
+    pushState({ hostId: "host-1", messages: [], working: true, pendingDialogs: [], activity: 0, helpers: EMPTY_HELPERS });
 
     const textarea = screen.getByPlaceholderText("Tell Gentle what you need…");
     await vi.waitFor(() => expect(textarea).toHaveAttribute("readonly"));
     fireEvent.keyDown(textarea, { key: "Escape" });
 
-    expect(bridge.abort).toHaveBeenCalled();
+    expect(bridge.abort).toHaveBeenCalledWith("host-1");
   });
 
   it("guards the open/new effect against a stale resolution when the selection changes before it settles", async () => {
-    let resolveFirst: (state: ChatState) => void = () => {};
+    let resolveFirst: (result: { hostId: string; state: ChatState }) => void = () => {};
     const firstChat: ChatSummary = { ...EXISTING_CHAT, id: "chat-1", title: "First chat" };
     const secondChat: ChatSummary = { ...EXISTING_CHAT, id: "chat-2", title: "Second chat" };
 
     const bridge = makeBridge({
       openChat: vi.fn((id: string) => {
         if (id === "chat-1") {
-          return new Promise<ChatState>((resolve) => {
+          return new Promise<{ hostId: string; state: ChatState }>((resolve) => {
             resolveFirst = resolve;
           });
         }
-        return Promise.resolve(emptyState());
+        return Promise.resolve({ hostId: "host-2", state: emptyState() });
       }),
     });
     window.gentle = bridge;
@@ -460,11 +469,14 @@ describe("ConversationContainer", () => {
     // The stale first request resolves after the second one was already
     // requested; its state must never overwrite what belongs to chat-2.
     resolveFirst({
-      messages: [{ id: "stale", role: MESSAGE_ROLE.ASSISTANT, text: "stale reply", streaming: false }],
-      working: false,
-      pendingDialogs: [],
-      activity: 0,
-      helpers: EMPTY_HELPERS,
+      hostId: "host-1",
+      state: {
+        messages: [{ id: "stale", role: MESSAGE_ROLE.ASSISTANT, text: "stale reply", streaming: false }],
+        working: false,
+        pendingDialogs: [],
+        activity: 0,
+        helpers: EMPTY_HELPERS,
+      },
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -718,5 +730,122 @@ describe("ConversationContainer", () => {
     // The card must come BEFORE the composer in document order: gentle-pi's
     // bottom widget renders above the prompt, never below it (S5).
     expect(card.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  // T5b — routing by workspace-host identity. The `as` casts and the
+  // Record spread below exist ONLY so these tests compile before the
+  // hostId contract exists (RED) and are removed once the contract lands.
+  const stateForHost = (hostId: string, patch: Partial<ChatState> = {}): ChatState =>
+    ({ ...emptyState(), ...patch, hostId }) as ChatState;
+
+  it("ignores a pushed state and a pushed error for a host other than the active one", async () => {
+    let pushState: (state: ChatState) => void = () => {};
+    let pushError: (message: string, hostId: string) => void = () => {};
+    const bridge = makeBridge({
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+      onError: vi.fn((callback: (message: string, hostId: string) => void) => {
+        pushError = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} {...({ activeHostId: "host-1" } as Record<string, unknown>)} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+    await act(async () => {}); // let the open/new resolution settle before any push
+
+    // A state and an error emitted by another live host must never replace
+    // the open chat's state or surface in its status line.
+    pushState(stateForHost("host-2", { messages: [{ id: "m2", role: MESSAGE_ROLE.ASSISTANT, text: "from host-2", streaming: false }] }));
+    await act(async () => {});
+    expect(screen.queryByText("from host-2")).not.toBeInTheDocument();
+    pushError("error from host-2", "host-2");
+    await act(async () => {});
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    // The active host's own state and error still land.
+    pushState(stateForHost("host-1", { messages: [{ id: "m1", role: MESSAGE_ROLE.ASSISTANT, text: "from host-1", streaming: false }] }));
+    expect(await screen.findByText("from host-1")).toBeInTheDocument();
+    pushError("error from host-1", "host-1");
+    expect(await screen.findByRole("status")).toHaveTextContent("error from host-1");
+  });
+
+  it("ignores an unaddressed push once it knows which host it is", async () => {
+    let pushState: (state: ChatState) => void = () => {};
+    let pushError: (message: string, hostId: string) => void = () => {};
+    const bridge = makeBridge({
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+      onError: vi.fn((callback: (message: string, hostId: string) => void) => {
+        pushError = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} {...({ activeHostId: "host-1" } as Record<string, unknown>)} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+    await act(async () => {}); // let the open/new resolution settle before any push
+
+    // Once the pane knows its host, a push with no host id cannot be proven
+    // to be its own, so it must not replace the open chat's state.
+    const untagged = stateForHost("host-1", {
+      messages: [{ id: "m9", role: MESSAGE_ROLE.ASSISTANT, text: "unaddressed", streaming: false }],
+    });
+    delete (untagged as { hostId?: string }).hostId;
+    pushState(untagged);
+    await act(async () => {});
+    expect(screen.queryByText("unaddressed")).not.toBeInTheDocument();
+
+    pushError("unaddressed error", undefined as unknown as string);
+    await act(async () => {});
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("carries the active host id on every request it sends", async () => {
+    let pushState: (state: ChatState) => void = () => {};
+    const bridge = makeBridge({
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} {...({ activeHostId: "host-1" } as Record<string, unknown>)} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByPlaceholderText("Tell Gentle what you need…"), { target: { value: "hi" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(bridge.sendMessage).toHaveBeenCalledWith("host-1", "hi");
+
+    pushState(stateForHost("host-1", { pendingDialogs: [{ id: "dlg-1", method: "confirm", title: "Delete the file?" } as Dialog] }));
+    fireEvent.click(await screen.findByRole("button", { name: "Yes" }));
+    expect(bridge.answerDialog).toHaveBeenCalledWith("host-1", "dlg-1", { confirmed: true });
+
+    pushState(stateForHost("host-1", { working: true }));
+    const textarea = screen.getByPlaceholderText("Tell Gentle what you need…");
+    await vi.waitFor(() => expect(textarea).toHaveAttribute("readonly"));
+    fireEvent.keyDown(textarea, { key: "Escape" });
+    expect(bridge.abort).toHaveBeenCalledWith("host-1");
+  });
+
+  it("resolves and reports the host id from open/new when no activeHostId is supplied, and uses it for its requests", async () => {
+    const onHostResolved = vi.fn();
+    const bridge = makeBridge();
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} {...({ onHostResolved } as Record<string, unknown>)} />);
+    await vi.waitFor(() => expect(onHostResolved).toHaveBeenCalledWith("host-1"));
+    await act(async () => {});
+
+    fireEvent.change(screen.getByPlaceholderText("Tell Gentle what you need…"), { target: { value: "hi" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await vi.waitFor(() => expect(bridge.sendMessage).toHaveBeenCalledWith("host-1", "hi"));
   });
 });

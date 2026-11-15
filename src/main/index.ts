@@ -11,7 +11,7 @@ import {
 import { boundedStop } from "./domain/lifecycle/boundedStop";
 import { homeDirFor, resolveHomeMode } from "./domain/home/home";
 import { WorkspaceHostRegistry } from "./domain/session/WorkspaceHostRegistry";
-import { registerHandlers } from "./ipc/registerHandlers";
+import { WorkspaceHostRouter, registerHandlers } from "./ipc/registerHandlers";
 
 // `import.meta.dirname` directly (not a manually computed
 // `path.dirname(fileURLToPath(import.meta.url))` `__dirname`), and under
@@ -61,11 +61,18 @@ const setupService = createSetupService(configStore);
 // T5a: hosts are created through the WorkspaceHostRegistry instead of
 // constructed directly, so the main process can hold more than one live
 // workspace host (each with its own `gentle-shell --mode rpc` child). The
-// registry mints the opaque host id; the window below is still wired to
-// exactly one host, so behaviour is unchanged. The deps factory runs once per
-// host creation, so every host gets its own adapters and its own
-// home-dependent session store — nothing is shared between hosts except this
-// closure's own configuration reads.
+// registry mints the opaque host id. The deps factory runs once per host
+// creation, so every host gets its own adapters and its own home-dependent
+// session store — nothing is shared between hosts except this closure's own
+// configuration reads.
+//
+// T5b: the window's IPC handlers no longer bind one host — they route
+// through WorkspaceHostRouter by host identity. openChat/newChat mint or
+// reuse hosts through the registry and answer the routed host's id; every
+// other request (send, abort, dialog answer, helper stop) carries a host
+// id and is delivered to that host's child only, with an unknown or
+// stopped id rejected before any child is touched. The router is created
+// once per app and shared across windows — hosts outlive windows.
 const hostRegistry = new WorkspaceHostRegistry({
   createHostDeps: () => ({
     spawner: createNodeProcessSpawner(),
@@ -76,7 +83,7 @@ const hostRegistry = new WorkspaceHostRegistry({
     log: logPiLine,
   }),
 });
-const chatHost = hostRegistry.createHost();
+const hostRouter = new WorkspaceHostRouter(hostRegistry);
 
 // M1 T1 was just the window shell; T2 added the PiSession child process;
 // T3 wires IPC handlers so the renderer can list/open/send for real; T5
@@ -98,7 +105,7 @@ function createWindow(): void {
     },
   });
 
-  const unregisterHandlers = registerHandlers(chatHost, setupService, window.webContents, ipcMain);
+  const unregisterHandlers = registerHandlers(hostRouter, setupService, window.webContents, ipcMain);
   window.on("closed", unregisterHandlers);
 
   // Assistant replies now render Markdown links (Markdown.tsx forces

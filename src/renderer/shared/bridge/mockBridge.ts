@@ -18,6 +18,7 @@ import {
   type HelpersSummary,
   type HomeMode,
   type NotificationSeverity,
+  type OpenChatResult,
   type PiDetection,
   type PromptResult,
   type SetupStatus,
@@ -222,8 +223,33 @@ let currentState: ChatState = emptyState();
 let nextMessageId = 0;
 let nextDialogId = 0;
 
+// T5b — the mock implements the same host-identity contract as the real
+// bridge: openChat/newChat mint (or reuse) a host id and answer it, every
+// request carries the host id and is rejected for an unknown or no-longer-
+// current one, and every pushed state/dialog/error carries the emitting
+// host's id. The preview simulates ONE live host at a time (its module
+// state is the open chat's state), so a host id that is not current is
+// unknown — mirroring the real router's never-fallback rule.
+let currentHostId = "";
+let nextHostNumber = 1;
+/** Chat id -> the host id that opened it: chat.open of an already-open
+ * chat reuses that host instead of minting a second one. */
+const hostIdByChat = new Map<string, string>();
+
 const stateListeners = new Set<(state: ChatState) => void>();
-const errorListeners = new Set<(message: string) => void>();
+const errorListeners = new Set<(message: string, hostId: string) => void>();
+
+function mintHostId(): string {
+  return `mock-host-${nextHostNumber++}`;
+}
+
+/** Rejects anything that is not the live host: an unknown or stopped id
+ * must never fall back to the open chat (U6a), in the mock as in main. */
+function requireHost(hostId: string): void {
+  if (hostId !== currentHostId) {
+    throw new Error(`No live workspace host for id "${hostId}" (unknown or already stopped)`);
+  }
+}
 
 /**
  * Resets every module-level mutable field mockBridge keeps (T6 follow-up).
@@ -242,6 +268,9 @@ export function resetMockBridge(): void {
   nextMessageId = 0;
   nextDialogId = 0;
   nextNotifyIndex = 0;
+  currentHostId = "";
+  nextHostNumber = 1;
+  hostIdByChat.clear();
   stateListeners.clear();
   errorListeners.clear();
 }
@@ -309,12 +338,14 @@ async function openDialog(text: string): Promise<void> {
   if (!dialog) return;
 
   await delay(STREAM_DELAY_MS);
-  setState({ ...currentState, working: true, pendingDialogs: [...currentState.pendingDialogs, dialog] });
+  // The dialog carries the host that asked it (T5b), so an answer can be
+  // addressed without guessing.
+  setState({ ...currentState, working: true, pendingDialogs: [...currentState.pendingDialogs, { ...dialog, hostId: currentHostId }] });
 }
 
 async function failReply(): Promise<void> {
   await delay(STREAM_DELAY_MS);
-  for (const listener of errorListeners) listener("Mock error: pretend this failed for the browser preview.");
+  for (const listener of errorListeners) listener("Mock error: pretend this failed for the browser preview.", currentHostId);
 }
 
 function describeAnswer(answer: DialogAnswer): string {
@@ -523,7 +554,8 @@ function startHelpersScenario(): void {
  * control is exercisable without a child). */
 const STOP_TRANSITION_DELAY_MS = 1200;
 
-async function stopHelper(id: string): Promise<StopHelperOutcome> {
+async function stopHelper(hostId: string, id: string): Promise<StopHelperOutcome> {
+  requireHost(hostId);
   const task = currentState.helpers.tasks.find((entry) => entry.id === id);
   if (!task || !CANCELLABLE_MOCK_STATUSES.has(task.status)) return "not_tracked";
 
@@ -548,20 +580,28 @@ export const mockBridge: GentleBridge = {
     return EXAMPLE_CHATS;
   },
 
-  async openChat(id: string): Promise<ChatState> {
+  async openChat(id: string): Promise<OpenChatResult> {
     helpersScenarioToken += 1; // invalidate any growth loop from a previously open chat
-    setState(emptyState());
+    // An already-open chat reuses its host instead of minting a second
+    // one, mirroring the real router's chat.open reuse rule.
+    const hostId = hostIdByChat.get(id) ?? mintHostId();
+    hostIdByChat.set(id, hostId);
+    currentHostId = hostId;
+    setState({ ...emptyState(), hostId });
     if (id === "chat-migration") startHelpersScenario();
-    return currentState;
+    return { hostId, state: currentState };
   },
 
-  async newChat(): Promise<ChatState> {
+  async newChat(): Promise<OpenChatResult> {
     helpersScenarioToken += 1;
-    setState(emptyState());
-    return currentState;
+    const hostId = mintHostId();
+    currentHostId = hostId;
+    setState({ ...emptyState(), hostId });
+    return { hostId, state: currentState };
   },
 
-  async sendMessage(text: string): Promise<PromptResult> {
+  async sendMessage(hostId: string, text: string): Promise<PromptResult> {
+    requireHost(hostId);
     // Mirrors the real ChatHost/PiSession contract (T5): a declined prompt
     // resolves { queued: false, reason } instead of notifying onError, so
     // the caller reports it exactly once.
@@ -596,11 +636,13 @@ export const mockBridge: GentleBridge = {
     return { queued: true };
   },
 
-  async abort(): Promise<void> {
+  async abort(hostId: string): Promise<void> {
+    requireHost(hostId);
     setState({ ...currentState, working: false });
   },
 
-  async answerDialog(id: string, answer: DialogAnswer): Promise<void> {
+  async answerDialog(hostId: string, id: string, answer: DialogAnswer): Promise<void> {
+    requireHost(hostId);
     const remaining = currentState.pendingDialogs.filter((dialog) => dialog.id !== id);
     const acknowledgement = makeMessage(MESSAGE_ROLE.ASSISTANT, describeAnswer(answer));
 
@@ -617,7 +659,7 @@ export const mockBridge: GentleBridge = {
     return () => stateListeners.delete(callback);
   },
 
-  onError(callback: (message: string) => void): () => void {
+  onError(callback: (message: string, hostId: string) => void): () => void {
     errorListeners.add(callback);
     return () => errorListeners.delete(callback);
   },

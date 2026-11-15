@@ -73,6 +73,32 @@ describe("App", () => {
     expect(await screen.findByRole("heading", { name: "Write the README intro" })).toBeInTheDocument();
   });
 
+  // T5b pin (app-level): App owns the active host id, resets it on every
+  // selection change, and hands it back down — so a request sent in a chat
+  // opened after a switch carries THAT chat's host id and is never
+  // rejected for a stale one (mockBridge rejects unknown host ids).
+  it("routes each chat's requests to its own host after switching chats", async () => {
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Chats" });
+
+    const composer = () => screen.getByPlaceholderText("Tell Gentle what you need…");
+    fireEvent.change(composer(), { target: { value: "hello first" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    // The send only lands when it carried the resolved host id; a stale or
+    // unknown id would surface as a status error and no message.
+    await screen.findByText("hello first");
+
+    fireEvent.click(await screen.findByRole("button", { name: /Write the README intro/ }));
+    await screen.findByRole("heading", { name: "Write the README intro" });
+
+    fireEvent.change(composer(), { target: { value: "hello second" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("hello second");
+
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
   it("shows the first-run screen when setupStatus reports needsChoice (no persisted home choice yet)", async () => {
     window.history.pushState({}, "", "?firstRun=1");
 

@@ -33,6 +33,12 @@ export function App() {
   const bridge = useBridge();
   const [screen, setScreen] = useState<Screen>(SCREEN.LOADING);
   const [activeChat, setActiveChat] = useState<ActiveChat>(NEW_CHAT);
+  // T5b: the active chat's workspace host id, as answered by chat.open/
+  // chat.new (ConversationContainer reports it up on resolution). It is
+  // reset on every selection change so the previous chat's host can never
+  // answer for the new one, and passed back down as every request's
+  // routing key.
+  const [activeHostId, setActiveHostId] = useState<string | undefined>(undefined);
   // Every "New chat" click is a distinct pane identity (its own welcome
   // intro, T9b): the counter starts after the initial chat's epoch 0 and is
   // bumped once per click, so no two unsaved chats ever share a key.
@@ -56,10 +62,12 @@ export function App() {
   }, [bridge]);
 
   const handleSelectChat = (chat: ChatSummary): void => {
+    setActiveHostId(undefined); // the old host id must not answer for the new chat (T5b)
     setActiveChat({ kind: "existing", chat });
   };
 
   const handleNewChat = (): void => {
+    setActiveHostId(undefined);
     setActiveChat({ kind: "new", epoch: nextNewChatEpoch.current++ });
   };
 
@@ -73,7 +81,7 @@ export function App() {
         onNewChat={handleNewChat}
         selectedChatId={activeChat.kind === "existing" ? activeChat.chat.id : undefined}
       />
-      <ConversationContainer activeChat={activeChat} />
+      <ConversationContainer activeChat={activeChat} activeHostId={activeHostId} onHostResolved={setActiveHostId} />
     </div>
   );
 }

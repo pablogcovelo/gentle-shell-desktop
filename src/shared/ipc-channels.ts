@@ -7,17 +7,25 @@
  */
 export const IPC_CHANNELS = {
   LIST_CHATS: "sessions.list",
+  /** Opens a chat on the workspace host that already owns it (or a newly
+   * minted one) and answers which host it was routed to (T5b). */
   OPEN_CHAT: "chat.open",
+  /** Starts a fresh chat on a newly minted workspace host (T5b). */
   NEW_CHAT: "chat.new",
+  /** Carries the host id first (T5b): the request is delivered to that
+   * host's child only; an unknown id is rejected. */
   SEND_MESSAGE: "chat.send",
   ABORT: "chat.abort",
   ANSWER_DIALOG: "dialog.answer",
-  /** Asks the child to stop one helper (desktop-rpc T6): resolve with a
-   * StopHelperOutcome; the real transition arrives via the state push. */
+  /** Asks the host addressed by the leading host id (T5b) to stop one
+   * helper (desktop-rpc T6): resolve with a StopHelperOutcome; the real
+   * transition arrives via the state push. */
   STOP_HELPER: "helpers.stop",
-  /** webContents.send push: the current chat's ChatState changed. */
+  /** webContents.send push: a workspace host's ChatState changed; the
+   * payload carries the emitting host's id (T5b). */
   STATE_PUSH: "chat.state",
-  /** webContents.send push: an error was surfaced for the current chat. */
+  /** webContents.send push: an error was surfaced for a workspace host;
+   * the second argument is that host's id (T5b). */
   ERROR_PUSH: "chat.error",
   /** First-run status (T5): whether to show the home-choice screen. */
   SETUP_STATUS: "setup.status",

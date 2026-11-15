@@ -45,8 +45,9 @@ describe("mockBridge", () => {
 
   it('opens a select dialog for a message containing "?"', async () => {
     const { states } = collectStates();
+    const { hostId } = await mockBridge.newChat();
 
-    await mockBridge.sendMessage("Which branch?");
+    await mockBridge.sendMessage(hostId, "Which branch?");
 
     const withDialog = states.find((state) => state.pendingDialogs.length > 0);
     expect(withDialog?.pendingDialogs[0]).toMatchObject({ method: "select" });
@@ -55,8 +56,9 @@ describe("mockBridge", () => {
 
   it('opens a confirm dialog for a message containing "delete"', async () => {
     const { states } = collectStates();
+    const { hostId } = await mockBridge.newChat();
 
-    await mockBridge.sendMessage("please delete the branch");
+    await mockBridge.sendMessage(hostId, "please delete the branch");
 
     const withDialog = states.find((state) => state.pendingDialogs.length > 0);
     expect(withDialog?.pendingDialogs[0]).toMatchObject({ method: "confirm" });
@@ -64,8 +66,9 @@ describe("mockBridge", () => {
 
   it('opens an input dialog for a message containing "name"', async () => {
     const { states } = collectStates();
+    const { hostId } = await mockBridge.newChat();
 
-    await mockBridge.sendMessage("what is your name");
+    await mockBridge.sendMessage(hostId, "what is your name");
 
     const withDialog = states.find((state) => state.pendingDialogs.length > 0);
     expect(withDialog?.pendingDialogs[0]).toMatchObject({ method: "input" });
@@ -73,8 +76,9 @@ describe("mockBridge", () => {
 
   it('surfaces an error through onError for a message containing "fail"', async () => {
     const { states, errors } = collectStates();
+    const { hostId } = await mockBridge.newChat();
 
-    await mockBridge.sendMessage("make this fail please");
+    await mockBridge.sendMessage(hostId, "make this fail please");
 
     expect(errors).toHaveLength(1);
     expect(states.every((state) => state.pendingDialogs.length === 0)).toBe(true);
@@ -82,12 +86,13 @@ describe("mockBridge", () => {
 
   it("answering a dialog clears it and resolves back to not working", async () => {
     const { states } = collectStates();
+    const { hostId } = await mockBridge.newChat();
 
-    await mockBridge.sendMessage("Which branch?");
+    await mockBridge.sendMessage(hostId, "Which branch?");
     const dialog = states.find((state) => state.pendingDialogs.length > 0)?.pendingDialogs[0];
     expect(dialog).toBeDefined();
 
-    await mockBridge.answerDialog(dialog!.id, { value: "main" });
+    await mockBridge.answerDialog(hostId, dialog!.id, { value: "main" });
 
     const final = states.at(-1);
     expect(final?.pendingDialogs).toHaveLength(0);
@@ -96,9 +101,10 @@ describe("mockBridge", () => {
 
   it('resolves { queued: false, reason } instead of notifying onError while already working (report once)', async () => {
     const { errors } = collectStates();
+    const { hostId } = await mockBridge.newChat();
 
-    await mockBridge.sendMessage("Which branch?"); // opens a dialog, leaves working: true
-    const result = await mockBridge.sendMessage("another message");
+    await mockBridge.sendMessage(hostId, "Which branch?"); // opens a dialog, leaves working: true
+    const result = await mockBridge.sendMessage(hostId, "another message");
 
     expect(result).toEqual({ queued: false, reason: "Gentle is still working" });
     expect(errors).toHaveLength(0);
@@ -106,11 +112,58 @@ describe("mockBridge", () => {
 
   it("streams a plain reply word by word for an ordinary message", async () => {
     const { states } = collectStates();
+    const { hostId } = await mockBridge.newChat();
 
-    await mockBridge.sendMessage("hello Gentle");
+    await mockBridge.sendMessage(hostId, "hello Gentle");
     await vi.waitFor(() => expect(states.at(-1)?.working).toBe(false));
 
     expect(states.at(-1)?.messages.at(-1)?.text).toContain("hello Gentle");
+  });
+
+  it("openChat reuses the host id of an already-open chat; newChat mints a distinct one", async () => {
+    const first = await mockBridge.openChat("chat-readme");
+    const again = await mockBridge.openChat("chat-readme");
+    const other = await mockBridge.newChat();
+
+    expect(first.hostId).toMatch(/^mock-host-/);
+    expect(again.hostId).toBe(first.hostId);
+    expect(other.hostId).toMatch(/^mock-host-/);
+    expect(other.hostId).not.toBe(first.hostId);
+  });
+
+  it("rejects a request whose host id is unknown or no longer current, and mutates no state", async () => {
+    const { states } = collectStates();
+
+    await expect(mockBridge.sendMessage("mock-host-999", "hello")).rejects.toThrow(/No live workspace host/);
+    await expect(mockBridge.abort("mock-host-999")).rejects.toThrow(/No live workspace host/);
+    await expect(mockBridge.answerDialog("mock-host-999", "dlg-1", { confirmed: true })).rejects.toThrow(/No live workspace host/);
+    await expect(mockBridge.stopHelper?.("mock-host-999", "helper-1")).rejects.toThrow(/No live workspace host/);
+
+    // Nothing was routed to the one live host either: no state change, no
+    // fallback to whichever chat is open.
+    expect(states).toHaveLength(0);
+  });
+
+  it("tags every pushed state, every dialog and every error push with the emitting host id", async () => {
+    const states: ChatState[] = [];
+    const errorPushes: Array<{ message: string; hostId: string }> = [];
+    mockBridge.onState((state) => states.push(state));
+    mockBridge.onError((message, hostId) => errorPushes.push({ message, hostId }));
+    const { hostId } = await mockBridge.newChat();
+
+    expect(hostId).toMatch(/^mock-host-/);
+
+    await mockBridge.sendMessage(hostId, "Which branch?");
+    const withDialog = states.find((state) => state.pendingDialogs.length > 0);
+    expect(withDialog?.hostId).toBe(hostId);
+    expect(withDialog?.pendingDialogs[0]?.hostId).toBe(hostId);
+
+    // The pending dialog keeps that host "working", so the fail-path send
+    // runs on a freshly opened chat — whose error push must carry ITS host
+    // id, not the previous one's.
+    const { hostId: failHostId } = await mockBridge.openChat("chat-readme");
+    await mockBridge.sendMessage(failHostId, "make this fail please");
+    expect(errorPushes.at(-1)).toEqual({ message: expect.stringContaining("Mock error"), hostId: failHostId });
   });
 
   // D4: the "Migrate the config schema" working chat (chat-migration) seeds
@@ -120,7 +173,7 @@ describe("mockBridge", () => {
   // something to show in the preview.
   describe("helpers scenario (chat-migration)", () => {
     it("seeds five helper tasks (running, waiting, done, and two earlier-finished) with a matching summary when opened", async () => {
-      const state = await mockBridge.openChat("chat-migration");
+      const { state } = await mockBridge.openChat("chat-migration");
 
       expect(state.helpers.tasks).toHaveLength(5);
       expect(state.helpers.tasks.map((task) => task.status).sort()).toEqual(["done", "done", "failed", "running", "waiting"]);
@@ -128,7 +181,7 @@ describe("mockBridge", () => {
     });
 
     it("leaves helpers empty for any other chat", async () => {
-      const state = await mockBridge.openChat("chat-readme");
+      const { state } = await mockBridge.openChat("chat-readme");
       expect(state.helpers).toEqual({ summary: { running: 0, queued: 0, waiting: 0, finished: 0 }, tasks: [] });
     });
 
