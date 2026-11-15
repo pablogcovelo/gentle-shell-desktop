@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { IpcMain, WebContents } from "electron";
 import type { ChatState } from "@shared/bridge-types";
 import { IPC_CHANNELS } from "@shared/ipc-channels";
@@ -6,11 +9,12 @@ import { ChatHost } from "../domain/session/ChatHost";
 import type { LauncherLocator, ProcessSpawner, SessionInfoLike, SessionStore, SpawnedProcess } from "../ports";
 import type { SetupService } from "../ports";
 import { WorkspaceHostRegistry } from "../domain/session/WorkspaceHostRegistry";
-import { WorkspaceHostRouter, registerHandlers, type WorkspaceHostSource } from "./registerHandlers";
+import { WorkspaceHostRouter, registerHandlers, validateWorkspaceDirectory, type WorkspaceHostSource, type WorkspaceRouterDeps } from "./registerHandlers";
 
 function fakeHost(overrides: Partial<ChatHost> = {}): ChatHost {
   return {
     hostId: "host-1",
+    cwd: undefined,
     listChats: vi.fn(),
     openChat: vi.fn(),
     newChat: vi.fn(),
@@ -33,11 +37,12 @@ function fakeHostSource(...hosts: ChatHost[]): WorkspaceHostSource {
   let nextNumber = hosts.length + 1;
   return {
     get: (hostId: string) => byId.get(hostId),
-    createHost: () => {
-      const host = fakeHost({ hostId: `host-${nextNumber++}` });
+    createHost: (cwd?: string) => {
+      const host = fakeHost({ hostId: `host-${nextNumber++}`, cwd });
       byId.set(host.hostId, host);
       return host;
     },
+    findByDirectory: (directory: string) => [...byId.values()].find((host) => host.cwd === directory),
     list: () => [...byId.values()],
   };
 }
@@ -52,11 +57,12 @@ function realHostSource(
   let nextNumber = 1;
   return {
     get: (hostId: string) => byId.get(hostId),
-    createHost: () => {
-      const host = new ChatHost({ ...makeDeps(), hostId: `host-${nextNumber++}` });
+    createHost: (cwd?: string) => {
+      const host = new ChatHost({ ...makeDeps(), hostId: `host-${nextNumber++}`, cwd });
       byId.set(host.hostId, host);
       return host;
     },
+    findByDirectory: (directory: string) => [...byId.values()].find((host) => host.cwd === directory),
     list: () => [...byId.values()],
     // Mirrors WorkspaceHostRegistry.stopHost exactly: stop exactly this
     // host's child, forget the host, and refuse an id no live host owns.
@@ -104,11 +110,12 @@ describe("WorkspaceHostRouter close cleanup", () => {
     const openChat = vi.fn(async () => ({ messages: [], working: false, pendingDialogs: [], activity: 0, helpers: emptyHelpers() }) as ChatState);
     const source: WorkspaceHostSource = {
       get: (hostId) => byId.get(hostId),
-      createHost: () => {
-        const host = fakeHost({ hostId: `host-${nextNumber++}`, openChat });
+      createHost: (cwd?: string) => {
+        const host = fakeHost({ hostId: `host-${nextNumber++}`, openChat, cwd });
         byId.set(host.hostId, host);
         return host;
       },
+      findByDirectory: (directory: string) => [...byId.values()].find((host) => host.cwd === directory),
       list: () => [...byId.values()],
       stopHost: async (hostId: string) => {
         const host = byId.get(hostId);
@@ -136,6 +143,164 @@ describe("WorkspaceHostRouter close cleanup", () => {
     stopRejects = false;
     const reopened = await router.openChat("chat-1");
     expect(reopened.hostId).toBe("host-2");
+  });
+});
+
+// T11 — Add workspace: a native directory picker answered by main, a
+// directory validated BEFORE anything is created, one host per directory
+// whose child is spawned with that directory as cwd, and the chosen
+// directory attached to the host's states (the footer's path).
+describe("workspace.create (T11)", () => {
+  // Same shape as the T5b describe's setup, declared locally there; this
+  // describe adds the workspace router deps the T11 channels need.
+  function setup(overrides: { routerDeps?: WorkspaceRouterDeps } = {}): {
+    ipc: IpcMain;
+    webContents: WebContents;
+    send: ReturnType<typeof vi.fn>;
+    handles: FakeProcessHandle[];
+    events: string[];
+  } {
+    const { spawner, handles, events } = createFakeSpawner();
+    const store = fakeSessionStore([session({ id: "sess-1", path: "/home/sessions/proj/sess-1.jsonl" })]);
+    const ipc = fakeIpcMain();
+    const { webContents, send } = fakeWebContents();
+    const router = new WorkspaceHostRouter(
+      realHostSource(() => ({ spawner, locator: fakeLocator, sessionStore: store, env: {} })),
+      overrides.routerDeps,
+    );
+    registerHandlers(router, fakeSetup(), webContents, ipc);
+    return { ipc, webContents, send, handles, events };
+  }
+
+  it("creates one host for a valid directory and spawns its child with that directory as cwd (assert the spawn options)", async () => {
+    const { ipc, handles, send } = setup({ routerDeps: { validateDirectory: vi.fn().mockResolvedValue(undefined) } });
+
+    const created = (await registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_CREATE)({}, "/tmp/ws-demo")) as {
+      hostId: string;
+      state: ChatState;
+    };
+
+    // Exactly one host, minted for THIS directory.
+    expect(created.hostId).toBe("host-1");
+    expect(handles).toHaveLength(1);
+    // The spawn OPTIONS carry the directory — the whole point of T11 — and
+    // the fake records what it was asked to spawn, not a real process.
+    expect(handles[0]!.cwd).toBe("/tmp/ws-demo");
+    // The answer's state carries the directory, so the footer can show it.
+    expect(created.state.workspacePath).toBe("/tmp/ws-demo");
+    expect(send).not.toHaveBeenCalled(); // the answer is returned, not pushed
+  });
+
+  it("choosing a directory that is already open selects the existing host instead of spawning a second child", async () => {
+    const { ipc, handles } = setup({ routerDeps: { validateDirectory: vi.fn().mockResolvedValue(undefined) } });
+
+    const first = (await registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_CREATE)({}, "/tmp/ws-demo")) as { hostId: string };
+    const second = (await registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_CREATE)({}, "/tmp/ws-demo")) as { hostId: string };
+
+    expect(second.hostId).toBe(first.hostId);
+    expect(handles).toHaveLength(1); // no second child was ever spawned
+  });
+
+  it("refuses an invalid directory with a clear message and leaves no host, no chat and no state behind", async () => {
+    const { ipc, handles, send } = setup({
+      routerDeps: { validateDirectory: vi.fn().mockRejectedValue(new Error('"relative/path" is not an absolute path')) },
+    });
+
+    await expect(registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_CREATE)({}, "relative/path")).rejects.toThrow(
+      /not an absolute path/,
+    );
+
+    // Nothing was created: no host, no child, no chat state anywhere.
+    expect(handles).toHaveLength(0);
+    expect(send).not.toHaveBeenCalled();
+    // And the router is not wedged: a later valid create still mints a host.
+    const { ipc: ipc2, handles: handles2 } = setup({ routerDeps: { validateDirectory: vi.fn().mockResolvedValue(undefined) } });
+    const created = (await registeredHandler(ipc2, IPC_CHANNELS.WORKSPACE_CREATE)({}, "/tmp/after-refusal")) as { hostId: string };
+    expect(created.hostId).toBe("host-1");
+    expect(handles2).toHaveLength(1);
+  });
+
+  it("a workspace host's pushed states carry its directory, and a host without one carries none", async () => {
+    const { ipc, webContents, handles } = setup({ routerDeps: { validateDirectory: vi.fn().mockResolvedValue(undefined) } });
+
+    await registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_CREATE)({}, "/tmp/ws-demo");
+    handles[0]!.emitStdout(JSON.stringify({ type: "agent_start" }));
+    await vi.waitFor(() => expect(statePushes(webContents).length).toBeGreaterThan(0));
+    expect(statePushes(webContents).every((state) => state.workspacePath === "/tmp/ws-demo")).toBe(true);
+
+    // A host minted by chat.new carries no directory: the footer falls back
+    // to `~/` instead of inventing a path.
+    const fresh = (await registeredHandler(ipc, IPC_CHANNELS.NEW_CHAT)({})) as { hostId: string; state: ChatState };
+    expect(fresh.hostId).toBe("host-2");
+    expect(fresh.state.workspacePath).toBeUndefined();
+  });
+
+  it("workspace.chooseDirectory answers the picker's choice, and null on a cancelled pick, creating nothing", async () => {
+    // A cancelled pick: the answer is null and NOTHING is created.
+    const cancelled = setup({ routerDeps: { chooseDirectory: vi.fn().mockResolvedValue(null) } });
+    await expect(registeredHandler(cancelled.ipc, IPC_CHANNELS.WORKSPACE_CHOOSE_DIRECTORY)({})).resolves.toBeNull();
+    expect(cancelled.handles).toHaveLength(0);
+
+    // A real pick passes the chosen absolute path through unchanged.
+    const picked = setup({ routerDeps: { chooseDirectory: vi.fn().mockResolvedValue("/tmp/chosen") } });
+    await expect(registeredHandler(picked.ipc, IPC_CHANNELS.WORKSPACE_CHOOSE_DIRECTORY)({})).resolves.toBe("/tmp/chosen");
+    expect(picked.handles).toHaveLength(0); // choosing alone starts no child
+  });
+});
+
+// T11 — the concrete validator over node:fs, exercised against a REAL
+// scratch directory outside the repository (created and removed by the
+// test): these are the refusals the spec names — relative path, missing
+// path, a file, an unreadable directory — each with its clear message.
+describe("validateWorkspaceDirectory (T11)", () => {
+  let scratch: string | undefined;
+
+  function createScratchDirectory(): string {
+    return mkdtempSync(join(tmpdir(), "gentle-ws-validate-"));
+  }
+
+  afterEach(() => {
+    if (scratch === undefined) return;
+    // Make sure the directory is removable even after the unreadable case.
+    try {
+      chmodSync(scratch, 0o700);
+    } catch {
+      // already gone
+    }
+    rmSync(scratch, { recursive: true, force: true });
+    scratch = undefined;
+  });
+
+  it("accepts a readable directory", async () => {
+    scratch = createScratchDirectory();
+    await expect(validateWorkspaceDirectory(scratch)).resolves.toBeUndefined();
+  });
+
+  it("refuses a relative path", async () => {
+    await expect(validateWorkspaceDirectory("relative/path")).rejects.toThrow(/not an absolute path/);
+  });
+
+  it("refuses a path that does not exist", async () => {
+    await expect(validateWorkspaceDirectory(join(tmpdir(), "gentle-ws-does-not-exist"))).rejects.toThrow(
+      /does not exist or cannot be read/,
+    );
+  });
+
+  it("refuses a file that is not a directory", async () => {
+    scratch = createScratchDirectory();
+    const filePath = join(scratch, "a-file.txt");
+    writeFileSync(filePath, "not a directory");
+    await expect(validateWorkspaceDirectory(filePath)).rejects.toThrow(/is not a directory/);
+  });
+
+  it("refuses an unreadable directory", async () => {
+    scratch = createScratchDirectory();
+    chmodSync(scratch, 0o000);
+    try {
+      await expect(validateWorkspaceDirectory(scratch)).rejects.toThrow(/is not readable/);
+    } finally {
+      chmodSync(scratch, 0o700); // so afterEach can remove it
+    }
   });
 });
 
@@ -248,6 +413,9 @@ function registeredHandler(ipc: IpcMain, channel: string): (...args: unknown[]) 
 
 interface FakeProcessHandle {
   readonly args: readonly string[];
+  /** The cwd the spawn was asked for (T11): the workspace directory the
+   * child must run in, recorded from the spawner's fourth argument. */
+  readonly cwd: string | undefined;
   readonly writes: string[];
   emitStdout(line: string): void;
   resolveExited(result: { code: number | null; signal: NodeJS.Signals | null; error?: Error }): void;
@@ -258,7 +426,7 @@ function createFakeSpawner(): { spawner: ProcessSpawner; handles: FakeProcessHan
   const events: string[] = [];
 
   const spawner: ProcessSpawner = {
-    spawn(_command, args): SpawnedProcess {
+    spawn(_command, args, _env, cwd): SpawnedProcess {
       const index = handles.length;
       events.push(`spawn:${index}`);
 
@@ -271,6 +439,7 @@ function createFakeSpawner(): { spawner: ProcessSpawner; handles: FakeProcessHan
 
       const handle: FakeProcessHandle = {
         args: [...args],
+        cwd,
         writes,
         emitStdout(line) {
           for (const handler of stdoutHandlers) handler(line);
@@ -337,7 +506,7 @@ function statePushes(webContents: WebContents): ChatState[] {
 }
 
 describe("workspace host routing (T5b)", () => {
-  function setup(overrides: { sessions?: readonly SessionInfoLike[] } = {}): {
+  function setup(overrides: { sessions?: readonly SessionInfoLike[]; routerDeps?: WorkspaceRouterDeps } = {}): {
     ipc: IpcMain;
     webContents: WebContents;
     send: ReturnType<typeof vi.fn>;
@@ -350,6 +519,7 @@ describe("workspace host routing (T5b)", () => {
     const { webContents, send } = fakeWebContents();
     const router = new WorkspaceHostRouter(
       realHostSource(() => ({ spawner, locator: fakeLocator, sessionStore: store, env: {} })),
+      overrides.routerDeps,
     );
     registerHandlers(router, fakeSetup(), webContents, ipc);
     return { ipc, webContents, send, handles, events };
@@ -520,9 +690,10 @@ describe("workspace host routing (T5b)", () => {
     let nextNumber = 1;
     const source: WorkspaceHostSource = {
       get: (hostId) => byId.get(hostId),
-      createHost: () => {
+      createHost: (cwd?: string) => {
         const created = fakeHost({
           hostId: `host-${nextNumber++}`,
+          cwd,
           openChat: vi.fn().mockRejectedValue(new Error("spawn failed")),
           onState: vi.fn((listener: (state: ChatState, hostId: string) => void) => {
             emitState = listener;
@@ -536,6 +707,7 @@ describe("workspace host routing (T5b)", () => {
         byId.set(created.hostId, created);
         return created;
       },
+      findByDirectory: (directory: string) => [...byId.values()].find((host) => host.cwd === directory),
       list: () => [...byId.values()],
       stopHost,
     };
@@ -573,9 +745,10 @@ describe("workspace host routing (T5b)", () => {
     let nextNumber = 1;
     const source: WorkspaceHostSource = {
       get: (hostId) => byId.get(hostId),
-      createHost: () => {
+      createHost: (cwd?: string) => {
         const created = fakeHost({
           hostId: `host-${nextNumber++}`,
+          cwd,
           newChat: vi.fn().mockRejectedValue(new Error("spawn failed")),
           onState: vi.fn((listener: (state: ChatState, hostId: string) => void) => {
             emitState = listener;
@@ -585,6 +758,7 @@ describe("workspace host routing (T5b)", () => {
         byId.set(created.hostId, created);
         return created;
       },
+      findByDirectory: (directory: string) => [...byId.values()].find((host) => host.cwd === directory),
       list: () => [...byId.values()],
     };
 

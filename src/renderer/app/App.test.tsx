@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { App } from "./App";
 import { resetWelcomeHeroIntrosForTests } from "../features/conversation/components/WelcomeHero";
 import { resetWorkspaceSnapshotsForTests } from "../features/conversation/ConversationContainer";
+import { mockBridge, setMockDirectoryPick } from "../shared/bridge/mockBridge";
 
 // `?firstRun=0` forces mockBridge.setupStatus() to needsChoice: false (see
 // mockBridge's firstRunOverride), so these tests exercise the normal chat
@@ -102,6 +103,64 @@ describe("App", () => {
     await screen.findByText("hello second");
 
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  // T11 — Add workspace: the sidebar action runs the native picker through
+  // the bridge; a cancelled pick changes nothing at all, and a chosen
+  // directory opens the created workspace's pane (adopted directly, never
+  // resolved through a second newChat that would spawn a second child).
+  it("cancelling the directory picker creates nothing (no host, no chat, no state change)", async () => {
+    setMockDirectoryPick(null);
+    const createWorkspace = vi.spyOn(mockBridge, "createWorkspace");
+    try {
+      render(<App />);
+
+      await screen.findByRole("heading", { name: "Chats" });
+      fireEvent.click(screen.getByRole("button", { name: "Add workspace" }));
+
+      // The cancelled pick must have run the picker and NOTHING else: no
+      // create request, no chat, no state, no refusal surfaced.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 60));
+      });
+      expect(createWorkspace).not.toHaveBeenCalled();
+      expect(screen.getByRole("heading", { name: "New chat" })).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    } finally {
+      createWorkspace.mockRestore();
+      setMockDirectoryPick(undefined);
+    }
+  });
+
+  it("Add workspace opens the created workspace's pane with its directory in the footer, without a second child", async () => {
+    setMockDirectoryPick("/tmp/app-demo-workspace");
+    const createWorkspace = vi.spyOn(mockBridge, "createWorkspace");
+    const newChat = vi.spyOn(mockBridge, "newChat");
+    try {
+      render(<App />);
+
+      await screen.findByRole("heading", { name: "Chats" });
+      fireEvent.click(screen.getByRole("button", { name: "Add workspace" }));
+
+      // The chosen directory is what main receives — verbatim.
+      await vi.waitFor(() => expect(createWorkspace).toHaveBeenCalledWith("/tmp/app-demo-workspace"));
+      // The created pane is adopted directly: no second newChat resolution
+      // may spawn another child for the same workspace. The initial pane's
+      // single resolution is the only one.
+      await vi.waitFor(() => expect(screen.getByLabelText("Session footer")).toHaveTextContent("/tmp/app-demo-workspace"));
+      expect(newChat).toHaveBeenCalledTimes(1);
+    } finally {
+      createWorkspace.mockRestore();
+      newChat.mockRestore();
+      setMockDirectoryPick(undefined);
+    }
+  });
+
+  it("the sidebar offers Add workspace beside New chat (T11)", async () => {
+    render(<App />);
+
+    expect(await screen.findByRole("button", { name: "Add workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New chat" })).toBeInTheDocument();
   });
 
   it("shows the first-run screen when setupStatus reports needsChoice (no persisted home choice yet)", async () => {

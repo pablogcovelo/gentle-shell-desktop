@@ -40,6 +40,19 @@ export const IPC_CHANNELS = {
    * is the closed host's id, so the renderer can forget that host's
    * snapshot and chat→host mapping. */
   CLOSED_PUSH: "chat.closed",
+  /** Opens Electron's native directory picker from the main process (T11)
+   * and answers the chosen absolute directory path, or null when the user
+   * cancelled. Choosing alone creates nothing — workspace.create is the
+   * request that does. */
+  WORKSPACE_CHOOSE_DIRECTORY: "workspace.chooseDirectory",
+  /** Creates a workspace bound to an absolute directory (T11): the
+   * directory is validated in main BEFORE anything is created (exists, is
+   * a directory, readable), an already-open directory selects its existing
+   * host instead of starting a second child for it, and a created host's
+   * child is spawned with that directory as cwd. Answers the routed host id
+   * + state like chat.open/chat.new; an invalid directory is refused with
+   * a clear message and leaves no host, no chat and no state behind. */
+  WORKSPACE_CREATE: "workspace.create",
   /** First-run status (T5): whether to show the home-choice screen. */
   SETUP_STATUS: "setup.status",
   /** Persists the chosen home mode (T5). */

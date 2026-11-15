@@ -14,6 +14,9 @@ import { ChatHost } from "./ChatHost";
  */
 interface FakeProcessHandle {
   readonly args: readonly string[];
+  /** The cwd the spawn was asked for (T11): the workspace directory the
+   * child must run in, recorded from the spawner's fourth argument. */
+  readonly cwd: string | undefined;
   readonly writes: string[];
   emitStdout(line: string): void;
   emitStderr(line: string): void;
@@ -25,7 +28,7 @@ function createFakeSpawner(): { spawner: ProcessSpawner; handles: FakeProcessHan
   const events: string[] = [];
 
   const spawner: ProcessSpawner = {
-    spawn(_command, args): SpawnedProcess {
+    spawn(_command, args, _env, cwd): SpawnedProcess {
       const index = handles.length;
       events.push(`spawn:${index}`);
 
@@ -39,6 +42,7 @@ function createFakeSpawner(): { spawner: ProcessSpawner; handles: FakeProcessHan
 
       const handle: FakeProcessHandle = {
         args: [...args],
+        cwd,
         writes,
         emitStdout(line) {
           for (const handler of stdoutHandlers) handler(line);
@@ -371,6 +375,36 @@ describe("ChatHost", () => {
     // including the one the queued newChat produced.
     expect(events).toEqual(["spawn:0", "endStdin:0", "spawn:1", "endStdin:1"]);
   });
+it("passes deps.cwd to PiSession, so the workspace's child is spawned in that directory (T11)", async () => {
+  const { spawner, handles } = createFakeSpawner();
+  const host = new ChatHost({
+    spawner,
+    locator: fakeLocator,
+    sessionStore: fakeSessionStore([]),
+    env: {},
+    cwd: "/tmp/workspace-demo",
+  });
+
+  await host.newChat();
+
+  // The spawn OPTIONS carry the directory (asserted, not a real process):
+  // this is the whole reason a workspace can say which folder it works in.
+  expect(handles[0]?.cwd).toBe("/tmp/workspace-demo");
+  // The host reports the same directory, so the push layer can attach it
+  // to every state (the footer's path) without guessing.
+  expect(host.cwd).toBe("/tmp/workspace-demo");
+});
+
+it("spawns with no cwd when the host was created without a workspace directory (chat.open/chat.new keep their behaviour)", async () => {
+  const { spawner, handles } = createFakeSpawner();
+  const host = new ChatHost({ spawner, locator: fakeLocator, sessionStore: fakeSessionStore([]), env: {} });
+
+  await host.newChat();
+
+  expect(handles[0]?.cwd).toBeUndefined();
+  expect(host.cwd).toBeUndefined();
+});
+
 it("carries its host id on its state and error events so a registry can fan out per host (T5a)", async () => {
   const { spawner, handles } = createFakeSpawner();
   const host = new ChatHost({

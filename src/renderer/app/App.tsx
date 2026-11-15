@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChatSummary } from "@shared/bridge-types";
+import type { ChatSummary, OpenChatResult } from "@shared/bridge-types";
 import { useBridge } from "@renderer/shared/bridge/useBridge";
 import { ChatsContainer } from "@renderer/features/chats/ChatsContainer";
 import { ConversationContainer, type ActiveChat } from "@renderer/features/conversation/ConversationContainer";
@@ -43,6 +43,12 @@ export function App() {
   // intro, T9b): the counter starts after the initial chat's epoch 0 and is
   // bumped once per click, so no two unsaved chats ever share a key.
   const nextNewChatEpoch = useRef(1);
+  // T11: a workspace just created through "Add workspace" — the pane key it
+  // belongs to plus the resolution main returned. ConversationContainer
+  // adopts it directly instead of resolving the pane through bridge.newChat()
+  // again, which would spawn a second child for the same workspace. Cleared
+  // on every selection change so a stale creation can never adopt.
+  const [createdWorkspace, setCreatedWorkspace] = useState<{ readonly chatKey: string; readonly result: OpenChatResult } | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
@@ -63,12 +69,24 @@ export function App() {
 
   const handleSelectChat = (chat: ChatSummary): void => {
     setActiveHostId(undefined); // the old host id must not answer for the new chat (T5b)
+    setCreatedWorkspace(undefined); // a stale creation must not adopt into this pane (T11)
     setActiveChat({ kind: "existing", chat });
   };
 
   const handleNewChat = (): void => {
     setActiveHostId(undefined);
+    setCreatedWorkspace(undefined);
     setActiveChat({ kind: "new", epoch: nextNewChatEpoch.current++ });
+  };
+
+  /** T11: opens the pane of a workspace just created through "Add
+   * workspace". Its own unsaved-pane epoch — the same identity rule as
+   * "New chat" — with the resolution handed straight down for adoption. */
+  const handleWorkspaceCreated = (result: OpenChatResult): void => {
+    const epoch = nextNewChatEpoch.current++;
+    setActiveHostId(undefined);
+    setActiveChat({ kind: "new", epoch });
+    setCreatedWorkspace({ chatKey: `new-${epoch}`, result });
   };
 
   if (screen === SCREEN.LOADING) return <div className="gc-app-loading" />;
@@ -79,9 +97,15 @@ export function App() {
       <ChatsContainer
         onSelectChat={handleSelectChat}
         onNewChat={handleNewChat}
+        onWorkspaceCreated={handleWorkspaceCreated}
         selectedChatId={activeChat.kind === "existing" ? activeChat.chat.id : undefined}
       />
-      <ConversationContainer activeChat={activeChat} activeHostId={activeHostId} onHostResolved={setActiveHostId} />
+      <ConversationContainer
+        activeChat={activeChat}
+        activeHostId={activeHostId}
+        createdWorkspace={createdWorkspace}
+        onHostResolved={setActiveHostId}
+      />
     </div>
   );
 }

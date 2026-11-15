@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ChatState, ChatSummary, DialogAnswer } from "@shared/bridge-types";
+import type { ChatState, ChatSummary, DialogAnswer, OpenChatResult } from "@shared/bridge-types";
 import { useBridge } from "@renderer/shared/bridge/useBridge";
 import { HelpersContainer } from "@renderer/features/helpers/HelpersContainer";
 import { Composer } from "./components/Composer";
@@ -41,6 +41,14 @@ export interface ConversationContainerProps {
   /** Reports the host id the open/new or refresh resolution returned, so
    * App can keep it and pass it back down. */
   readonly onHostResolved?: (hostId: string) => void;
+  /** T11: a workspace just created through "Add workspace" — the pane key
+   * it belongs to plus the open/new-shaped resolution main already
+   * returned (host id + state). When it matches the active pane, the
+   * container adopts it INSTEAD of resolving through bridge.newChat():
+   * that second resolution would start a SECOND child for the same
+   * workspace. The directory arrived validated in main; it reaches the
+   * footer through ChatState.workspacePath. */
+  readonly createdWorkspace?: { readonly chatKey: string; readonly result: OpenChatResult };
 }
 
 /**
@@ -144,7 +152,7 @@ function errorText(cause: unknown): string {
  * notifications (desktop-rpc T2b) render in the same status surface for
  * the same reason: they are feedback chrome, never transcript entries.
  */
-export function ConversationContainer({ activeChat, activeHostId, onHostResolved }: ConversationContainerProps) {
+export function ConversationContainer({ activeChat, activeHostId, onHostResolved, createdWorkspace }: ConversationContainerProps) {
   const bridge = useBridge();
   const [chatState, setChatState] = useState<ChatState>(emptyChatState());
   // The host id this container resolved for the current activeChat, kept
@@ -246,6 +254,17 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
     };
 
     const resolveThroughOpenOrNew = (): void => {
+      // T11: a pane created through "Add workspace" arrives already
+      // resolved — main minted its host, validated its directory and
+      // started its chat. Adopt that result directly; resolving this pane
+      // through bridge.newChat() would spawn a second child for the same
+      // workspace. The key guard keeps a stale creation from ever adopting
+      // into the wrong pane.
+      const creation = createdWorkspace && createdWorkspace.chatKey === currentKey ? createdWorkspace : undefined;
+      if (creation) {
+        adopt(creation.result.hostId, creation.result.state);
+        return;
+      }
       const opening = activeChat.kind === "existing" ? bridge.openChat(activeChat.chat.id) : bridge.newChat();
       opening
         .then((result) => {
@@ -309,7 +328,7 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
     // state setter from App, and re-running this effect on identity churn
     // would re-resolve the chat on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bridge, activeChat]);
+  }, [bridge, activeChat, createdWorkspace]);
 
   // Every request is addressed to the active chat's host (T5b). Before
   // any open/new resolution the address is the empty string, which the
@@ -337,6 +356,15 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   };
 
   const title = activeChat.kind === "existing" ? activeChat.chat.title : "New chat";
+  // T11: the footer's path is the open workspace's directory. Preference
+  // order: the app-validated directory the pane's host was created with
+  // (workspace.create attached it to the state at the push boundary), then
+  // the session summary's own cwd for a chat opened from the sidebar —
+  // pi's record of where that session was started. Undefined means no
+  // directory is known, and the footer shows `~/` rather than an invented
+  // path. NOT the worktree group: no worktree counts here (that is T8b).
+  const workspacePath =
+    chatState.workspacePath ?? (activeChat.kind === "existing" ? activeChat.chat.cwd : undefined);
   // One welcome intro per chat identity (T9b). An existing chat keeps its id,
   // so re-selecting the same saved chat never replays. Every unsaved chat is
   // its own pane via App's epoch counter, so two "New chat" clicks never
@@ -362,7 +390,7 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
         notifications={chatState.notifications}
         session={chatState.session}
       />
-      <Footer workspace={chatState.workspace} />
+      <Footer workspace={chatState.workspace} workspacePath={workspacePath} />
       {pane === CONVERSATION_PANE.HELPERS ? (
         <HelpersContainer
           activity={chatState.helpers}

@@ -59,6 +59,14 @@ export interface ChatHostDeps {
    * constructed bare (existing tests), and that fallback can never collide
    * with a registry-minted `host-N` id. */
   readonly hostId?: string;
+  /** T11: the absolute workspace directory this host was created for —
+   * chosen through the native picker, validated in main BEFORE the host
+   * existed (WorkspaceHostRouter.createWorkspace), and passed to every
+   * PiSession this host starts as its `cwd`, so the child actually runs in
+   * it. Undefined for hosts minted by chat.open/chat.new: those chats were
+   * not created through a directory choice, and no path may be invented
+   * for them (the footer falls back to `~/` or the session summary). */
+  readonly cwd?: string;
 }
 
 /** The value a bare-constructed ChatHost reports instead of a registry id
@@ -104,6 +112,15 @@ export class ChatHost {
    * when no registry assigned one. */
   get hostId(): string {
     return this.deps.hostId ?? NO_REGISTRY_HOST_ID;
+  }
+
+  /** T11: the absolute workspace directory this host's child runs in
+   * (read-only), or undefined when the host was created without one. The
+   * registry's findByDirectory matches on this, and the push layer attaches
+   * it to every state as `ChatState.workspacePath` — the footer's path —
+   * because the app validated and chose it, so the renderer can trust it. */
+  get cwd(): string | undefined {
+    return this.deps.cwd;
   }
 
   onState(listener: StateListener): () => void {
@@ -193,6 +210,11 @@ export class ChatHost {
       locator: this.deps.locator,
       homeArgs: (this.deps.homeSettings ?? NO_HOME_SETTINGS).homeArgs(),
       sessionPath,
+      // T11: the workspace directory. PiSession already spawns with it
+      // (its `cwd` spawn option), so the child really runs there — this is
+      // why ChatSummary.cwd and the footer's path report the directory the
+      // user chose, not Electron's launch directory.
+      cwd: this.deps.cwd,
       env: this.deps.env,
       onLog: this.deps.log,
     });

@@ -42,12 +42,34 @@ export class WorkspaceHostRegistry {
     this.deps = deps;
   }
 
-  /** Creates a new live host with a freshly minted id and stores it. */
-  createHost(): ChatHost {
+  /** Creates a new live host with a freshly minted id and stores it.
+   *
+   * T11: `cwd` is the absolute workspace directory the host's child must
+   * run in (chosen through workspace.create's validated picker flow). It
+   * is passed straight into ChatHostDeps, so every PiSession this host
+   * starts is spawned with it. Undefined for hosts minted without a
+   * directory choice (chat.open/chat.new) — those carry no workspace
+   * directory and must never be found by findByDirectory. */
+  createHost(cwd?: string): ChatHost {
     const hostId = `host-${this.nextHostNumber++}`;
-    const host = new ChatHost({ ...this.deps.createHostDeps(), hostId });
+    const host = new ChatHost({ ...this.deps.createHostDeps(), hostId, cwd });
     this.hosts.set(hostId, host);
     return host;
+  }
+
+  /** T11: the live host whose workspace directory is `directory`, or
+   * undefined — how "a directory that is already open selects the existing
+   * workspace instead of starting a second child for it" resolves. Only
+   * hosts created WITH a directory match; a stopped host is no longer in
+   * `hosts`, so its directory is free again and a later create mints a
+   * fresh child for it. Exact string match on purpose: the picker returns
+   * one canonical absolute path per directory, and any normalization here
+   * would be app-owned path policy the child does not share. */
+  findByDirectory(directory: string): ChatHost | undefined {
+    for (const host of this.hosts.values()) {
+      if (host.cwd === directory) return host;
+    }
+    return undefined;
   }
 
   /** The live host owning `hostId`, or undefined — never a fallback to an

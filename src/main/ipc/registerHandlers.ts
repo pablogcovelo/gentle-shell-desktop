@@ -1,3 +1,5 @@
+import { access, constants, stat } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 import type { IpcMain, WebContents } from "electron";
 import type {
   ChatState,
@@ -25,8 +27,15 @@ export interface WorkspaceHostSource {
    * never resolves to a different live host (U6a: never fall back to an
    * unrelated live child). */
   get(hostId: string): ChatHost | undefined;
-  /** Mints a fresh host (and its opaque `host-N` id) and registers it. */
-  createHost(): ChatHost;
+  /** Mints a fresh host (and its opaque `host-N` id) and registers it.
+   * T11: `cwd` is the absolute workspace directory the host's child must
+   * run in (workspace.create); undefined for hosts minted without a
+   * directory choice (chat.open/chat.new). */
+  createHost(cwd?: string): ChatHost;
+  /** T11: the live host whose workspace directory is `directory`, or
+   * undefined — how an already-open directory selects its existing host
+   * instead of a second child. A stopped host is never returned. */
+  findByDirectory(directory: string): ChatHost | undefined;
   /** Every live host, in creation order. */
   list(): readonly ChatHost[];
   /** Stops exactly one host's child and forgets it. Optional: only used
@@ -35,17 +44,64 @@ export interface WorkspaceHostSource {
 }
 
 /**
- * Attaches the emitting host's id to a state and to every Dialog in it,
+ * Attaches the emitting host's id — and, when the host has one, its
+ * workspace directory (T11) — to a state and to every Dialog in it,
  * exactly once, at the push boundary. The domain (PiSession/ChatHost)
  * never sees or needs the id; the renderer needs it on both so a dialog
- * answer can be addressed without guessing (T5b, S13).
+ * answer can be addressed without guessing (T5b, S13). The directory is
+ * the app-validated path the host's child runs in, so the footer can show
+ * it without inventing one; a host created without a directory choice
+ * carries none.
  */
-function withHostId(state: ChatState, hostId: string): ChatState {
+function withHostId(state: ChatState, hostId: string, workspacePath?: string): ChatState {
   return {
     ...state,
     hostId,
+    ...(workspacePath === undefined ? {} : { workspacePath }),
     pendingDialogs: state.pendingDialogs.map((dialog) => ({ ...dialog, hostId })),
   };
+}
+
+/**
+ * T11: validates a workspace directory BEFORE anything is created —
+ * absolute, exists, is a directory, readable. Each failure rejects with a
+ * clear message, and WorkspaceHostRouter.createWorkspace awaits this
+ * before minting any host, so an invalid selection leaves no host, no chat
+ * and no state behind. Concrete adapter over node:fs/promises so the
+ * refusals can be exercised against a real scratch directory; the router
+ * itself takes the validator INJECTED, so its own tests never touch the
+ * filesystem.
+ */
+export async function validateWorkspaceDirectory(directory: string): Promise<void> {
+  if (directory.length === 0) throw new Error("Choose a directory for the workspace (none was given)");
+  if (!isAbsolute(directory)) throw new Error(`"${directory}" is not an absolute path — choose the directory through the picker`);
+  let info;
+  try {
+    info = await stat(directory);
+  } catch {
+    throw new Error(`"${directory}" does not exist or cannot be read`);
+  }
+  if (!info.isDirectory()) throw new Error(`"${directory}" is not a directory`);
+  try {
+    await access(directory, constants.R_OK);
+  } catch {
+    throw new Error(`"${directory}" is not readable`);
+  }
+}
+
+/**
+ * T11 deps for the two workspace channels, injected so tests never open a
+ * real dialog nor touch the real filesystem. main wires the Electron
+ * dialog adapter and validateWorkspaceDirectory (src/main/index.ts).
+ */
+export interface WorkspaceRouterDeps {
+  /** Opens the native directory picker. Resolves the chosen absolute path,
+   * or null when the user cancelled — the caller must change nothing on
+   * null. */
+  readonly chooseDirectory?: () => Promise<string | null>;
+  /** Validates a workspace directory before workspace.create touches
+   * anything (see validateWorkspaceDirectory). */
+  readonly validateDirectory?: (directory: string) => Promise<void>;
 }
 
 /**
@@ -84,8 +140,11 @@ export class WorkspaceHostRouter {
    * pane can reconcile without restarting the child through chat.open. */
   private readonly lastStateByHost = new Map<string, ChatState>();
 
-  constructor(registry: WorkspaceHostSource) {
+  private readonly deps: WorkspaceRouterDeps;
+
+  constructor(registry: WorkspaceHostSource, deps: WorkspaceRouterDeps = {}) {
     this.registry = registry;
+    this.deps = deps;
     for (const host of registry.list()) this.wire(host);
   }
 
@@ -123,16 +182,16 @@ export class WorkspaceHostRouter {
       const host = this.registry.get(ownedHostId);
       if (host) {
         const state = await host.openChat(chatId);
-        return { hostId: ownedHostId, state: withHostId(state, ownedHostId) };
+        return { hostId: ownedHostId, state: withHostId(state, ownedHostId, host.cwd) };
       }
       this.chatHosts.delete(chatId); // stale entry: that host is no longer live
     }
     const host = this.spawnHost();
     try {
       const state = await host.openChat(chatId);
-      this.lastStateByHost.set(host.hostId, withHostId(state, host.hostId));
+      this.lastStateByHost.set(host.hostId, withHostId(state, host.hostId, host.cwd));
       this.chatHosts.set(chatId, host.hostId);
-      return { hostId: host.hostId, state: withHostId(state, host.hostId) };
+      return { hostId: host.hostId, state: withHostId(state, host.hostId, host.cwd) };
     } catch (cause) {
       // A failed open leaves the fresh host childless (or with a child it
       // failed to finish starting); forget it so failed opens never
@@ -148,15 +207,73 @@ export class WorkspaceHostRouter {
   }
 
   /** Starts a fresh chat on a newly minted host (U6a: each workspace its
-   * own independent child; chat.new never lands on someone else's host). */
+   * own independent child; chat.new never lands on someone else's host).
+   * The host carries no workspace directory: only workspace.create
+   * (T11) binds a chat to a validated directory. */
   async newChat(): Promise<OpenChatResult> {
     const host = this.spawnHost();
     try {
       const state = await host.newChat();
-      this.lastStateByHost.set(host.hostId, withHostId(state, host.hostId));
-      return { hostId: host.hostId, state: withHostId(state, host.hostId) };
+      this.lastStateByHost.set(host.hostId, withHostId(state, host.hostId, host.cwd));
+      return { hostId: host.hostId, state: withHostId(state, host.hostId, host.cwd) };
     } catch (cause) {
       this.forgetHostWiring(host.hostId); // same failed-start unwiring as openChat (T5c)
+      try {
+        await this.registry.stopHost?.(host.hostId);
+      } catch {
+        // nothing left to clean up
+      }
+      throw cause;
+    }
+  }
+
+  /** T11: opens the native directory picker and answers the chosen
+   * absolute path, or null when the user cancelled — the caller must
+   * change NOTHING on null (no host, no chat, no state). Choosing alone
+   * creates nothing; workspace.create is the request that does. */
+  async chooseDirectory(): Promise<string | null> {
+    if (!this.deps.chooseDirectory) {
+      throw new Error("WorkspaceHostRouter: no directory picker is configured");
+    }
+    return this.deps.chooseDirectory();
+  }
+
+  /** T11: creates a workspace bound to `directory` — a fresh chat whose
+   * host's child runs with that directory as cwd, so ChatSummary.cwd and
+   * the footer's path report the directory the user chose, not Electron's
+   * launch directory.
+   *
+   * Order is the safety property: the directory is validated BEFORE
+   * anything is created, so an invalid selection is refused with a clear
+   * message and leaves no host, no chat and no state behind. A directory
+   * that is already open selects its existing host instead of starting a
+   * second child for it (U6a: reuse an already open session rather than
+   * creating an accidental duplicate). A failed start cleans up exactly
+   * like newChat: unwire, forget, stop the childless host. */
+  async createWorkspace(directory: string): Promise<OpenChatResult> {
+    if (!this.deps.validateDirectory) {
+      throw new Error("WorkspaceHostRouter: no directory validator is configured");
+    }
+    await this.deps.validateDirectory(directory);
+
+    const existing = this.registry.findByDirectory(directory);
+    if (existing) {
+      const state = this.lastStateByHost.get(existing.hostId);
+      if (!state) {
+        throw new Error(
+          `Workspace "${directory}" is already open on host "${existing.hostId}", which has not reported a state yet`,
+        );
+      }
+      return { hostId: existing.hostId, state };
+    }
+
+    const host = this.spawnHost(directory);
+    try {
+      const state = await host.newChat();
+      this.lastStateByHost.set(host.hostId, withHostId(state, host.hostId, host.cwd));
+      return { hostId: host.hostId, state: withHostId(state, host.hostId, host.cwd) };
+    } catch (cause) {
+      this.forgetHostWiring(host.hostId); // same failed-start unwiring as newChat
       try {
         await this.registry.stopHost?.(host.hostId);
       } catch {
@@ -256,9 +373,11 @@ export class WorkspaceHostRouter {
   }
 
   /** Mints a host through the registry and wires its pushes into this
-   * router, so hosts created after construction are still fanned out. */
-  private spawnHost(): ChatHost {
-    const host = this.registry.createHost();
+   * router, so hosts created after construction are still fanned out.
+   * T11: `cwd` is the workspace directory for workspace.create hosts;
+   * undefined for chat.open/chat.new hosts. */
+  private spawnHost(cwd?: string): ChatHost {
+    const host = this.registry.createHost(cwd);
     this.wire(host);
     return host;
   }
@@ -271,9 +390,11 @@ export class WorkspaceHostRouter {
     this.hostUnsubscribers.get(hostId)?.();
     const unsubscribeState = host.onState((state, emittingHostId) => {
       // The record chat.refresh answers from (T5c): the latest tagged push
-      // per host, before fanning out to the router's listeners.
-      this.lastStateByHost.set(hostId, withHostId(state, emittingHostId));
-      for (const listener of this.stateListeners) listener(withHostId(state, emittingHostId), emittingHostId);
+      // per host, before fanning out to the router's listeners. The host's
+      // workspace directory rides along (T11), so every pushed state — not
+      // just the open/new answer — carries the footer's path.
+      this.lastStateByHost.set(hostId, withHostId(state, emittingHostId, host.cwd));
+      for (const listener of this.stateListeners) listener(withHostId(state, emittingHostId, host.cwd), emittingHostId);
     });
     const unsubscribeError = host.onError((message, emittingHostId) => {
       for (const listener of this.errorListeners) listener(message, emittingHostId);
@@ -338,6 +459,12 @@ export function registerHandlers(router: WorkspaceHostRouter, setup: SetupServic
     router.answerDialog(hostId, dialogId, answer),
   );
   registerRequestHandler(ipc, IPC_CHANNELS.STOP_HELPER, (_event, hostId: string, helperId: string) => router.stopHelper(hostId, helperId));
+  // T11: the native directory picker runs in main (injected adapter); a
+  // null answer is a cancellation, and the create request does the actual
+  // work — validation first, then the host whose child runs in the
+  // directory.
+  registerRequestHandler(ipc, IPC_CHANNELS.WORKSPACE_CHOOSE_DIRECTORY, () => router.chooseDirectory());
+  registerRequestHandler(ipc, IPC_CHANNELS.WORKSPACE_CREATE, (_event, directory: string) => router.createWorkspace(directory));
   registerRequestHandler(ipc, IPC_CHANNELS.SETUP_STATUS, () => setup.status());
   registerRequestHandler(ipc, IPC_CHANNELS.CHOOSE_HOME, (_event, mode: HomeMode) => setup.chooseHome(mode));
 

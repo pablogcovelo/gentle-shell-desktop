@@ -51,6 +51,15 @@ export function createBridge(ipc: RendererIpc): GentleBridge {
     // the UI — this is reachable through the bridge only); an unknown or
     // already-stopped id is rejected by main without touching any child.
     closeChat: (hostId: string) => ipc.invoke(IPC_CHANNELS.CLOSE_CHAT, hostId) as Promise<void>,
+    // T11: the native directory picker runs in the main process; the answer
+    // is the chosen absolute path, or null when the user cancelled (the
+    // caller must change nothing on null).
+    chooseDirectory: () => ipc.invoke(IPC_CHANNELS.WORKSPACE_CHOOSE_DIRECTORY) as Promise<string | null>,
+    // T11: creates a workspace bound to an absolute directory — validated
+    // in main BEFORE anything is created, an already-open directory reuses
+    // its host, and the created host's child runs with that directory as
+    // cwd. The answer routes the pane like chat.open/chat.new do.
+    createWorkspace: (directory: string) => ipc.invoke(IPC_CHANNELS.WORKSPACE_CREATE, directory) as Promise<OpenChatResult>,
     setupStatus: () => ipc.invoke(IPC_CHANNELS.SETUP_STATUS) as Promise<SetupStatus>,
     chooseHome: (mode: HomeMode) => ipc.invoke(IPC_CHANNELS.CHOOSE_HOME, mode) as Promise<void>,
 

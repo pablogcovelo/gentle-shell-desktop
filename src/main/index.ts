@@ -1,5 +1,5 @@
 import path from "node:path";
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import {
   createAppConfigStore,
   createDynamicPiSessionStore,
@@ -11,7 +11,7 @@ import {
 import { boundedStop } from "./domain/lifecycle/boundedStop";
 import { homeDirFor, resolveHomeMode } from "./domain/home/home";
 import { WorkspaceHostRegistry } from "./domain/session/WorkspaceHostRegistry";
-import { WorkspaceHostRouter, registerHandlers } from "./ipc/registerHandlers";
+import { WorkspaceHostRouter, registerHandlers, validateWorkspaceDirectory } from "./ipc/registerHandlers";
 
 // `import.meta.dirname` directly (not a manually computed
 // `path.dirname(fileURLToPath(import.meta.url))` `__dirname`), and under
@@ -83,7 +83,21 @@ const hostRegistry = new WorkspaceHostRegistry({
     log: logPiLine,
   }),
 });
-const hostRouter = new WorkspaceHostRouter(hostRegistry);
+// T11: the two workspace channels' main-side adapters, injected into the
+// router so tests never open a real dialog nor touch the filesystem.
+// chooseDirectory opens Electron's native directory picker
+// (dialog.showOpenDialog, openDirectory) and answers the chosen absolute
+// path — or null on a cancelled pick, which must change nothing;
+// validateDirectory is the exists/is-a-directory/readable check that runs
+// BEFORE workspace.create mints anything.
+const hostRouter = new WorkspaceHostRouter(hostRegistry, {
+  chooseDirectory: async () => {
+    const result = await dialog.showOpenDialog({ properties: ["openDirectory"] });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0] ?? null;
+  },
+  validateDirectory: validateWorkspaceDirectory,
+});
 
 // M1 T1 was just the window shell; T2 added the PiSession child process;
 // T3 wires IPC handlers so the renderer can list/open/send for real; T5

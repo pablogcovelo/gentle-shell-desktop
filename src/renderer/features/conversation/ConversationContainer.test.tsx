@@ -1248,3 +1248,91 @@ describe("ConversationContainer", () => {
     expect(screen.queryByText("cached reply")).not.toBeInTheDocument();
   });
 });
+
+// T11 — Add workspace: the pane created through the native directory
+// picker arrives ALREADY resolved (main minted its host and started its
+// chat, and validated the directory first), so the container adopts the
+// returned result directly instead of resolving the pane through
+// bridge.newChat() again — that second resolution would spawn a SECOND
+// child for the same workspace.
+describe("ConversationContainer created workspace (T11)", () => {
+  it("adopts a created workspace instead of resolving through bridge.newChat again", async () => {
+    const bridge = makeBridge();
+    window.gentle = bridge;
+    const onHostResolved = vi.fn();
+
+    render(
+      <ConversationContainer
+        activeChat={{ kind: "new", epoch: 7 }}
+        createdWorkspace={{
+          chatKey: "new-7",
+          result: { hostId: "host-ws", state: { ...emptyState(), workspacePath: "/tmp/ws-demo" } },
+        }}
+        onHostResolved={onHostResolved}
+      />,
+    );
+
+    await vi.waitFor(() => expect(onHostResolved).toHaveBeenCalledWith("host-ws"));
+    // No child may be started for an already-created workspace.
+    expect(bridge.newChat).not.toHaveBeenCalled();
+    expect(bridge.openChat).not.toHaveBeenCalled();
+    // The adopted state renders, and its directory reaches the footer.
+    expect(screen.getByLabelText("Session footer")).toHaveTextContent("/tmp/ws-demo");
+  });
+
+  it("ignores a created workspace whose pane key is not the active chat", async () => {
+    const bridge = makeBridge();
+    window.gentle = bridge;
+
+    render(
+      <ConversationContainer
+        activeChat={{ kind: "new", epoch: 2 }}
+        createdWorkspace={{
+          chatKey: "new-1",
+          result: { hostId: "host-stale", state: { ...emptyState(), workspacePath: "/tmp/stale" } },
+        }}
+      />,
+    );
+
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+    expect(bridge.newChat).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("Session footer")).toHaveTextContent("~/");
+  });
+
+  it("shows the open workspace's full path in the footer, and ~/ when none is known", async () => {
+    let pushState: (state: ChatState) => void = () => {};
+    const bridge = makeBridge({
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+
+    // No workspace directory is known yet for a plain new chat: `~/`, not
+    // an invented path.
+    expect(screen.getByLabelText("Session footer")).toHaveTextContent("~/");
+
+    // The validated directory rides on the pushed state (attached at the
+    // push boundary, like hostId): the footer shows it in full. The push is
+    // ADDRESSED on purpose (makeBridge's newChat resolves host-1): an
+    // unaddressed push is refused by the pane's own-host gate once a host
+    // is resolved — real pushes always carry the emitting host's id.
+    await act(async () => {});
+    pushState({ ...emptyState(), workspacePath: "/home/dev/projects/gentle", hostId: "host-1" });
+    expect(await screen.findByText("/home/dev/projects/gentle")).toBeInTheDocument();
+  });
+
+  it("shows an existing chat's own cwd as the footer path — the session summary reports it", async () => {
+    const bridge = makeBridge();
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} />);
+
+    await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledWith("chat-1"));
+    expect(screen.getByLabelText("Session footer")).toHaveTextContent("/tmp/project");
+  });
+});

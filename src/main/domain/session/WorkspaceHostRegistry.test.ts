@@ -194,6 +194,39 @@ describe("WorkspaceHostRegistry", () => {
     await expect(registry.stopHost("host-1")).rejects.toThrow(/no host for id/i);
   });
 
+  // T11 — the workspace directory: createHost takes it, the host reports
+  // it, and findByDirectory resolves the live host that owns a directory —
+  // which is how "a directory that is already open selects the existing
+  // workspace instead of starting a second child for it" resolves.
+  it("createHost accepts the workspace directory, the host reports it, and findByDirectory resolves it (T11)", () => {
+    const { registry } = createRegistry();
+
+    const a = registry.createHost("/tmp/ws-a");
+    const b = registry.createHost("/tmp/ws-b");
+    const bare = registry.createHost(); // no directory: must never match a lookup
+
+    expect(a.cwd).toBe("/tmp/ws-a");
+    expect(b.cwd).toBe("/tmp/ws-b");
+    expect(bare.cwd).toBeUndefined();
+    expect(registry.findByDirectory("/tmp/ws-a")).toBe(a);
+    expect(registry.findByDirectory("/tmp/ws-b")).toBe(b);
+    expect(registry.findByDirectory("/tmp/other")).toBeUndefined();
+  });
+
+  it("findByDirectory never returns a stopped host, so the directory is free again (T11)", async () => {
+    const { registry, hosts } = createRegistry();
+
+    const a = registry.createHost("/tmp/ws-a");
+    await a.newChat();
+    // stopHost's stop() waits for the child to exit (or its 3s grace); the
+    // fake child only exits when the test resolves it, as in the tests above.
+    const stopping = registry.stopHost(a.hostId);
+    hosts[0]?.handles[0]?.resolveExited();
+    await stopping;
+
+    expect(registry.findByDirectory("/tmp/ws-a")).toBeUndefined();
+  });
+
   it("stop-all stops every host's child and empties the registry", async () => {
     const { registry, hosts } = createRegistry();
     const a = registry.createHost();

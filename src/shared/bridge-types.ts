@@ -386,6 +386,14 @@ export interface ChatState {
    * Dialog.hostId: the domain producers don't know it, the push layer
    * attaches it. */
   readonly hostId?: string;
+  /** T11: the absolute directory this workspace's child runs in — chosen
+   * through workspace.chooseDirectory, validated in main BEFORE the host
+   * existed, and passed to the child as its cwd. Attached at the same push
+   * boundary as hostId (the domain producers don't choose directories;
+   * workspace.create does). Optional: a host created without a workspace
+   * directory (chat.open/chat.new) carries none, and the footer then falls
+   * back to the session summary's own cwd or `~/` — never an invented path. */
+  readonly workspacePath?: string;
   /** The chat's subscription-usage meters (desktop-rpc T3), decoded from
    * `get_subscription_usage` replies and `rate_limit` events on the
    * `gentle-desktop-rpc` widget channel — never from the conversation
@@ -753,6 +761,22 @@ export interface GentleBridge {
    * (src/preload/bridge.ts, the mock bridge), and the Helpers tab treats a
    * bridge without it as the `unavailable` outcome. */
   stopHelper?(hostId: string, id: string): Promise<StopHelperOutcome>;
+  /** Opens Electron's native directory picker in the main process (T11)
+   * and answers the chosen absolute directory path, or null when the user
+   * cancelled. A null answer MUST change nothing: no chat, no host, no
+   * state. Optional: both real bridges implement it (src/preload/bridge.ts,
+   * the mock bridge); older test fakes may not. */
+  chooseDirectory?(): Promise<string | null>;
+  /** Creates a workspace bound to an absolute directory (T11): validated
+   * in main BEFORE anything is created (an invalid directory is refused
+   * with a clear message and leaves no host, no chat and no state behind),
+   * an already-open directory selects its existing host instead of a
+   * second child, and the created host's child runs with that directory as
+   * cwd. Answers the routed host id + state like chat.open/chat.new, so
+   * the caller can adopt the pane directly. Optional: both real bridges
+   * implement it (src/preload/bridge.ts, the mock bridge); older test
+   * fakes may not. */
+  createWorkspace?(directory: string): Promise<OpenChatResult>;
 }
 
 declare global {

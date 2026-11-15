@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CHAT_STATE, type ChatState } from "@shared/bridge-types";
-import { mockBridge, resetMockBridge } from "./mockBridge";
+import { DEMO_WORKSPACE_DIRECTORY, mockBridge, resetMockBridge, setMockDirectoryPick } from "./mockBridge";
 
 function collectStates(): { states: ChatState[]; errors: string[] } {
   const states: ChatState[] = [];
@@ -41,6 +41,48 @@ describe("mockBridge", () => {
 
     expect(chats).toHaveLength(3);
     expect(chats.filter((chat) => chat.state === CHAT_STATE.WORKING)).toHaveLength(1);
+  });
+
+  // T11 — Add workspace in the browser preview: the mock answers the demo
+  // pick (or a cancelled pick set by a test) and binds a host to a
+  // directory exactly like the real main process does.
+  it("chooseDirectory answers the demo pick by default, and null when a test cancels it", async () => {
+    // chooseDirectory is optional on the GentleBridge interface (older test
+    // fakes may not implement it); guard the optional call like bridge.test.ts
+    // does instead of asserting non-null.
+    const pick = mockBridge.chooseDirectory?.bind(mockBridge);
+    if (!pick) throw new Error("mockBridge did not implement chooseDirectory");
+
+    await expect(pick()).resolves.toBe(DEMO_WORKSPACE_DIRECTORY);
+
+    setMockDirectoryPick(null);
+    await expect(pick()).resolves.toBeNull();
+  });
+
+  it("createWorkspace mints a host whose state carries the directory as workspacePath, and the host answers requests", async () => {
+    const { states } = collectStates();
+
+    const create = mockBridge.createWorkspace?.bind(mockBridge);
+    if (!create) throw new Error("mockBridge did not implement createWorkspace");
+    const created = await create("/tmp/mock-ws");
+
+    expect(created.state.workspacePath).toBe("/tmp/mock-ws");
+    // The created host is the live one: its requests are accepted, never
+    // refused as unknown (the requireHost contract). abort() is used
+    // instead of sendMessage on purpose: sendMessage's streamed reply is
+    // fire-and-forget and would keep pushing states after this test ends,
+    // polluting whichever test collects states next.
+    await expect(mockBridge.abort(created.hostId)).resolves.toBeUndefined();
+    expect(states.at(-1)?.workspacePath).toBe("/tmp/mock-ws");
+  });
+
+  it("createWorkspace for an already-open directory reuses its host instead of minting a second one (T11)", async () => {
+    const create = mockBridge.createWorkspace?.bind(mockBridge);
+    if (!create) throw new Error("mockBridge did not implement createWorkspace");
+    const first = await create("/tmp/mock-ws");
+    const second = await create("/tmp/mock-ws");
+
+    expect(second.hostId).toBe(first.hostId);
   });
 
   it('opens a select dialog for a message containing "?"', async () => {

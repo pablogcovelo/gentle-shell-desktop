@@ -124,6 +124,45 @@ describe("createBridge", () => {
     expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.CLOSE_CHAT, "host-1");
   });
 
+  // T11 — Add workspace: the renderer asks main to open the native picker
+  // and, with the chosen directory, to create the workspace.
+  it("chooseDirectory invokes workspace.chooseDirectory and answers the chosen path (T11)", async () => {
+    const { ipc, invoke } = createFakeIpc();
+    invoke.mockResolvedValue("/tmp/chosen");
+    const bridge = createBridge(ipc);
+
+    // chooseDirectory is optional on the interface (both real bridges
+    // implement it); guard the optional call instead of asserting non-null.
+    const pick = bridge.chooseDirectory?.bind(bridge);
+    if (!pick) throw new Error("createBridge did not implement chooseDirectory");
+
+    await expect(pick()).resolves.toBe("/tmp/chosen");
+    expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.WORKSPACE_CHOOSE_DIRECTORY);
+  });
+
+  it("chooseDirectory answers null when the user cancelled (T11)", async () => {
+    const { ipc, invoke } = createFakeIpc();
+    invoke.mockResolvedValue(null);
+    const bridge = createBridge(ipc);
+
+    const pick = bridge.chooseDirectory?.bind(bridge);
+    if (!pick) throw new Error("createBridge did not implement chooseDirectory");
+
+    await expect(pick()).resolves.toBeNull();
+  });
+
+  it("createWorkspace invokes workspace.create with the directory (T11)", async () => {
+    const { ipc, invoke } = createFakeIpc();
+    invoke.mockResolvedValue({ hostId: "host-1", state: { messages: [] } });
+    const bridge = createBridge(ipc);
+
+    const create = bridge.createWorkspace?.bind(bridge);
+    if (!create) throw new Error("createBridge did not implement createWorkspace");
+
+    await expect(create("/tmp/chosen")).resolves.toEqual({ hostId: "host-1", state: { messages: [] } });
+    expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.WORKSPACE_CREATE, "/tmp/chosen");
+  });
+
   it("onState subscribes to the state push channel and forwards pushed state", () => {
     const { ipc, listeners } = createFakeIpc();
     const bridge = createBridge(ipc);

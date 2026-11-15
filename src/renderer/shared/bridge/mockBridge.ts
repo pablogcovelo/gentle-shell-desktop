@@ -236,6 +236,27 @@ let nextHostNumber = 1;
  * chat reuses that host instead of minting a second one. */
 const hostIdByChat = new Map<string, string>();
 
+/** T11 — the directory the mock's picker answers in the browser preview:
+ * one fixed demo path so the Add-workspace flow is reachable without a
+ * real Electron dialog. Tests override it with setMockDirectoryPick. */
+export const DEMO_WORKSPACE_DIRECTORY = "/Users/dev/new-workspace";
+
+/** T11: the mock picker's next answer — a directory path, null (the user
+ * cancelled, nothing may change), or undefined (the demo default). */
+let directoryPick: string | null | undefined;
+
+/** Overrides what the mock's chooseDirectory() answers next (tests only;
+ * the preview always uses the demo pick). Call with null to simulate a
+ * cancelled pick, with a path to simulate a choice, or with undefined to
+ * restore the demo default. */
+export function setMockDirectoryPick(pick: string | null | undefined): void {
+  directoryPick = pick;
+}
+
+/** Host id -> the directory it was created for (T11): how the mock reuses
+ * an already-open workspace's host instead of minting a second one. */
+const directoryByHostId = new Map<string, string>();
+
 const stateListeners = new Set<(state: ChatState) => void>();
 const errorListeners = new Set<(message: string, hostId: string) => void>();
 /** T5d: listeners told when a host is closed, so the renderer can forget
@@ -274,6 +295,8 @@ export function resetMockBridge(): void {
   currentHostId = "";
   nextHostNumber = 1;
   hostIdByChat.clear();
+  directoryByHostId.clear();
+  directoryPick = undefined;
   stateListeners.clear();
   errorListeners.clear();
   closeListeners.clear();
@@ -681,6 +704,34 @@ export const mockBridge: GentleBridge = {
     }
     currentHostId = "";
     for (const listener of closeListeners) listener(hostId);
+  },
+
+  // T11: the mock picker answers the demo pick (or a test's override);
+  // null is a cancellation the caller must treat as "change nothing", so
+  // only an UNSET pick falls back to the demo default — `??` would swallow
+  // the null cancellation into the demo path.
+  async chooseDirectory(): Promise<string | null> {
+    return directoryPick === undefined ? DEMO_WORKSPACE_DIRECTORY : directoryPick;
+  },
+
+  // T11: binds a fresh host to a validated-by-main directory — in the
+  // mock, main is simulated, so the directory is trusted. Mirrors the real
+  // router: an already-open directory reuses its host instead of minting a
+  // second child, and the created host's state carries the directory as
+  // workspacePath (the footer's path).
+  async createWorkspace(directory: string): Promise<OpenChatResult> {
+    helpersScenarioToken += 1; // invalidate any growth loop from a previously open chat
+    const existing = [...directoryByHostId.entries()].find(([, dir]) => dir === directory)?.[0];
+    if (existing !== undefined) {
+      currentHostId = existing;
+      setState({ ...currentState, hostId: existing, workspacePath: directory });
+      return { hostId: existing, state: currentState };
+    }
+    const hostId = mintHostId();
+    directoryByHostId.set(hostId, directory);
+    currentHostId = hostId;
+    setState({ ...emptyState(), hostId, workspacePath: directory });
+    return { hostId, state: currentState };
   },
 
   onClosed(callback: (hostId: string) => void): () => void {
