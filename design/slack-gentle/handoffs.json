@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "chosen": "01-workspace.html",
+  "handoffs": {
+    "01-workspace.html": {
+      "status": "implemented",
+      "queued": false,
+      "sentAt": "2026-11-15T18:28:20.424Z",
+      "startedAt": "2026-11-15T18:36:25.412Z",
+      "implementedAt": "2026-11-15T19:15:01.861Z",
+      "note": "Segunda ronda aplicada: sidebar leída como workspaces, footer del diseño con identidad y contexto, controles de ventana reales (ventana sin marco), búsqueda en la barra superior, herramientas del compositor y los dos diálogos. 708 tests + typecheck + build en verde.",
+      "previewUrl": "http://127.0.0.1:5173/"
+    }
+  }
+}
