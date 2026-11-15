@@ -56,4 +56,29 @@ describe("ChatList", () => {
     const { container } = render(<ChatList chats={[]} onSelect={vi.fn()} now={NOW} />);
     expect(container.querySelectorAll("li")).toHaveLength(0);
   });
+
+  // S8: each row's secondary line is the chat's directory — the last path
+  // segment of its cwd, on either path separator; an empty cwd renders no
+  // directory at all (never an invented one).
+  it("shows the chat's directory and omits it for an empty cwd", () => {
+    const withDirectory = makeChat({ id: "a", title: "Alpha", cwd: "/tmp/project" });
+    const windowsPath = makeChat({ id: "b", title: "Windows", cwd: "C:\\Users\\dev\\proj" });
+    const withoutDirectory = makeChat({ id: "c", title: "Bare", cwd: "" });
+
+    render(<ChatList chats={[withDirectory, windowsPath, withoutDirectory]} onSelect={vi.fn()} now={NOW} />);
+
+    expect(screen.getByRole("button", { name: /Alpha/ })).toHaveTextContent("project");
+    expect(screen.getByRole("button", { name: /Windows/ })).toHaveTextContent("proj");
+    expect(screen.getByRole("button", { name: /Bare/ })).not.toHaveTextContent("tmp");
+    expect(screen.getByRole("button", { name: /Bare/ })).not.toHaveTextContent("proj");
+  });
+
+  it("keeps the state pill beside the directory on the meta line", () => {
+    const chat = makeChat({ id: "a", title: "Alpha", state: CHAT_STATE.NEEDS_YOU });
+
+    render(<ChatList chats={[chat]} onSelect={vi.fn()} now={NOW} />);
+
+    expect(screen.getByRole("button", { name: /Alpha/ })).toHaveTextContent("needs you");
+    expect(screen.getByRole("button", { name: /Alpha/ })).toHaveTextContent("project");
+  });
 });

@@ -55,6 +55,14 @@
   padding: 0 4px;
 }
 
+/* S8: the no-match line for the top bar's search — quiet, real text. */
+.gc-chats__empty {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+  padding: 0 4px;
+}
+
 /* Both actions share the row and keep their label on one line: a wrapped
    "Add workspace" read as two controls in the artboard's panel. */
 .gc-chats__actions .gc-button {

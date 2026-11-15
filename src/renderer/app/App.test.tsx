@@ -28,7 +28,7 @@ describe("App", () => {
   it("renders the sidebar heading and the composer placeholder", async () => {
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: "Chats" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Workspaces" })).toBeInTheDocument();
     expect(
       screen.getByPlaceholderText("Tell Gentle what you need…"),
     ).toBeInTheDocument();
@@ -53,7 +53,7 @@ describe("App", () => {
 
     render(<App />);
 
-    await screen.findByRole("heading", { name: "Chats" });
+    await screen.findByRole("heading", { name: "Workspaces" });
     const hero = () => screen.getByTestId("gc-welcome-hero");
     await waitFor(() => expect(hero()).toHaveAttribute("data-intro", "playing"));
     await act(async () => {
@@ -86,7 +86,7 @@ describe("App", () => {
   it("routes each chat's requests to its own host after switching chats", async () => {
     render(<App />);
 
-    await screen.findByRole("heading", { name: "Chats" });
+    await screen.findByRole("heading", { name: "Workspaces" });
 
     const composer = () => screen.getByPlaceholderText("Tell Gentle what you need…");
     // Send is disabled until the pane knows its workspace host, so waiting for
@@ -123,7 +123,7 @@ describe("App", () => {
     try {
       render(<App />);
 
-      await screen.findByRole("heading", { name: "Chats" });
+      await screen.findByRole("heading", { name: "Workspaces" });
       fireEvent.click(screen.getByRole("button", { name: "Add workspace" }));
 
       // The cancelled pick must have run the picker and NOTHING else: no
@@ -147,7 +147,7 @@ describe("App", () => {
     try {
       render(<App />);
 
-      await screen.findByRole("heading", { name: "Chats" });
+      await screen.findByRole("heading", { name: "Workspaces" });
       fireEvent.click(screen.getByRole("button", { name: "Add workspace" }));
 
       // The chosen directory is what main receives — verbatim.
@@ -171,10 +171,45 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "New chat" })).toBeInTheDocument();
   });
 
+  it("filters the workspace directories from the top bar search", async () => {
+    render(<App />);
+
+    expect(await screen.findByRole("button", { name: /Write the README intro/ })).toBeInTheDocument();
+    const search = screen.getByRole("searchbox", { name: "Search chats" });
+
+    fireEvent.change(search, { target: { value: "no-such-chat-anywhere" } });
+
+    expect(await screen.findByText(/No chats match/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Write the README intro/ })).not.toBeInTheDocument();
+
+    fireEvent.change(search, { target: { value: "README" } });
+
+    expect(await screen.findByRole("button", { name: /Write the README intro/ })).toBeInTheDocument();
+  });
+
+  it("opens the settings and shortcut dialogs, and draws the window controls when the bridge offers them", async () => {
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Workspaces" });
+    // The mock bridge exposes the window controls, so the chrome draws them.
+    expect(screen.getByRole("button", { name: "Minimize window" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    const settings = await screen.findByRole("dialog", { name: "Application settings" });
+    expect(settings).toHaveTextContent("version");
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open keyboard shortcuts" }));
+    const shortcuts = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
+    expect(shortcuts).toHaveTextContent("Shift+Enter");
+  });
+
   it("collapses the chat directories and the plan/usage/agents panel from the top bar", async () => {
     render(<App />);
 
-    await screen.findByRole("heading", { name: "Chats" });
+    await screen.findByRole("heading", { name: "Workspaces" });
     const shell = document.querySelector(".gc-app");
     expect(shell).not.toHaveClass("gc-app--sidebar-hidden");
     expect(shell).not.toHaveClass("gc-app--inspector-hidden");
@@ -200,7 +235,7 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: "Welcome to gentle shell" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Chats" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Workspaces" })).not.toBeInTheDocument();
   });
 
   it("choosing a home in first-run switches to the normal chat layout", async () => {
@@ -211,7 +246,7 @@ describe("App", () => {
     const button = await screen.findByRole("button", { name: "Use my pi setup" });
     button.click();
 
-    expect(await screen.findByRole("heading", { name: "Chats" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Workspaces" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Welcome to gentle shell" })).not.toBeInTheDocument();
   });
 });

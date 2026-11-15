@@ -3,6 +3,7 @@ import type { ChatSummary, OpenChatResult } from "@shared/bridge-types";
 import { useBridge } from "@renderer/shared/bridge/useBridge";
 import { Button } from "@renderer/shared/ui/atoms/Button";
 import { ChatList } from "./components/ChatList";
+import { directoryOf } from "./components/ChatListItem";
 import "./ChatsContainer.css";
 
 export interface ChatsContainerProps {
@@ -19,6 +20,9 @@ export interface ChatsContainerProps {
   readonly onWorkspaceCreated?: (result: OpenChatResult) => void;
   /** The currently open chat's id, for highlighting; undefined while a fresh chat is open. */
   readonly selectedChatId?: string;
+  /** Case-insensitive filter from the top bar's search. When undefined or
+   * blank, every chat renders. Matches the chat title or its directory. */
+  readonly query?: string;
 }
 
 /**
@@ -28,7 +32,7 @@ export interface ChatsContainerProps {
  * owns "the currently open chat" per GentleBridge's single-current-chat
  * shape, so this only reports selection intent up to App.
  */
-export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, selectedChatId }: ChatsContainerProps) {
+export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, selectedChatId, query }: ChatsContainerProps) {
   const bridge = useBridge();
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -43,6 +47,18 @@ export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, se
   // two clicks in the same tick would both pass a state-based check.
   const addingRef = useRef(false);
   const paneActions = useRef(0);
+
+  // S8/T8: the top bar's search filters this list — a pure client-side pass
+  // over the loaded chats, matching the chat title or exactly the directory
+  // the row renders (same last-path-segment rule as ChatListItem). A blank
+  // query renders every chat; no chat is ever invented to fill a match.
+  const normalizedQuery = query?.trim();
+  const visibleChats = normalizedQuery
+    ? chats.filter((chat) => {
+        const needle = normalizedQuery.toLowerCase();
+        return chat.title.toLowerCase().includes(needle) || (directoryOf(chat.cwd) ?? "").toLowerCase().includes(needle);
+      })
+    : chats;
 
   const handleSelect = (chat: ChatSummary): void => {
     paneActions.current += 1;
@@ -117,16 +133,18 @@ export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, se
     });
   };
 
+  // S8: the sidebar SHOWS chats as workspaces (the bridge serves chats, the
+  // owner's call), so the panel's heading is the artboard's "Workspaces".
   return (
     <aside className="gc-chats" id="gc-chats">
       {/* T2: the artboard's directory-panel anatomy (design/slack-gentle/
       01-workspace.html .sidebar-head): eyebrow, heading with its accent dot
       and a subtitle. The dot is aria-hidden so the heading's accessible name
-      stays exactly "Chats". */}
+      stays exactly "Workspaces". */}
       <div className="gc-chats__header">
         <p className="gc-chats__eyebrow">YOUR WORK, IN GOOD COMPANY</p>
         <h2 className="gc-chats__heading">
-          Chats<span aria-hidden="true" className="gc-chats__dot">.</span>
+          Workspaces<span aria-hidden="true" className="gc-chats__dot">.</span>
         </h2>
         <p className="gc-chats__subtitle">Your directories. One place to build.</p>
       </div>
@@ -148,7 +166,10 @@ export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, se
           Could not add the workspace: {workspaceError}
         </p>
       )}
-      <ChatList chats={chats} selectedId={selectedChatId} onSelect={handleSelect} />
+      <ChatList chats={visibleChats} selectedId={selectedChatId} onSelect={handleSelect} />
+      {normalizedQuery && visibleChats.length === 0 && (
+        <p className="gc-chats__empty">No chats match &quot;{normalizedQuery}&quot;.</p>
+      )}
     </aside>
   );
 }

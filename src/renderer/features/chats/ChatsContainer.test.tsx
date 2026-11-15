@@ -20,6 +20,27 @@ function makeBridge(overrides: Partial<GentleBridge> = {}): GentleBridge {
   };
 }
 
+function makeChat(overrides: Partial<ChatSummary> = {}): ChatSummary {
+  return {
+    id: "chat-1",
+    title: "A chat",
+    cwd: "/tmp/project",
+    updatedAt: "2026-09-21T09:00:00.000Z",
+    messageCount: 1,
+    state: CHAT_STATE.IDLE,
+    ...overrides,
+  };
+}
+
+// S8: the sidebar shows chats as workspaces, so the panel's heading is the
+// artboard's directory-panel heading — accessible name exactly "Workspaces"
+// (the accent dot stays aria-hidden).
+it("names the panel heading Workspaces", async () => {
+  window.gentle = makeBridge();
+  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} />);
+  expect(await screen.findByRole("heading", { name: "Workspaces" })).toBeInTheDocument();
+});
+
 it("shows a message when listChats rejects", async () => {
   window.gentle = makeBridge({ listChats: vi.fn().mockRejectedValue(new Error("bridge not ready")) });
   render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} />);
@@ -52,6 +73,71 @@ it("calls onSelectChat with the chat when a list item is clicked", async () => {
   (await screen.findByRole("button", { name: /Refactor the store/ })).click();
 
   expect(onSelectChat).toHaveBeenCalledWith(chat);
+});
+
+it("renders each row as glyph, title, directory and state pill", async () => {
+  const chat = makeChat({ id: "chat-1", title: "Alpha", cwd: "/tmp/project" });
+  window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([chat]) });
+
+  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} />);
+  const row = await screen.findByRole("button", { name: /Alpha/ });
+
+  expect(row).toHaveTextContent("project");
+  expect(row).toHaveTextContent("idle");
+});
+
+it("renders no directory when the chat's cwd is empty", async () => {
+  const chat = makeChat({ id: "chat-1", title: "Alpha", cwd: "" });
+  window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([chat]) });
+
+  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} />);
+  const row = await screen.findByRole("button", { name: /Alpha/ });
+
+  expect(row).not.toHaveTextContent("tmp");
+  expect(row).toHaveTextContent("idle");
+});
+
+it("filters chats by title, case-insensitively", async () => {
+  const alpha = makeChat({ id: "a", title: "Alpha chat" });
+  const beta = makeChat({ id: "b", title: "Beta chat" });
+  window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([alpha, beta]) });
+
+  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} query="ALPH" />);
+
+  expect(await screen.findByRole("button", { name: /Alpha chat/ })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Beta chat/ })).not.toBeInTheDocument();
+});
+
+it("filters chats by their directory", async () => {
+  const alpha = makeChat({ id: "a", title: "Alpha chat", cwd: "/home/dev/gentle-core" });
+  const beta = makeChat({ id: "b", title: "Beta chat", cwd: "/home/dev/shell" });
+  window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([alpha, beta]) });
+
+  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} query="gentle-core" />);
+
+  expect(await screen.findByRole("button", { name: /Alpha chat/ })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Beta chat/ })).not.toBeInTheDocument();
+});
+
+it("renders every chat for a blank query", async () => {
+  const alpha = makeChat({ id: "a", title: "Alpha chat" });
+  const beta = makeChat({ id: "b", title: "Beta chat" });
+  window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([alpha, beta]) });
+
+  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} query="   " />);
+
+  expect(await screen.findByRole("button", { name: /Alpha chat/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Beta chat/ })).toBeInTheDocument();
+});
+
+it("reports when no chat matches the query", async () => {
+  const alpha = makeChat({ id: "a", title: "Alpha chat" });
+  window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([alpha]) });
+
+  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} query="zzz" />);
+
+  expect(await screen.findByText('No chats match "zzz".')).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Alpha chat/ })).not.toBeInTheDocument();
 });
 
 const EMPTY_STATE: ChatState = {

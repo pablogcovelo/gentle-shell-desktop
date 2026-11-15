@@ -1,10 +1,10 @@
-/* T2: two-line rows, after the artboard's .workspace-item — the title (with
-   its state pill) above a muted directory line. */
+/* T2/S8: the artboard's .workspace-item — a leading folder mark beside a
+   two-line body: the title above a muted directory line that also carries
+   the state pill. */
 .gc-chat-list-item {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 4px;
+  align-items: flex-start;
+  gap: 10px;
   width: 100%;
   padding: 13px 12px;
   border-radius: 8px;
@@ -27,30 +27,55 @@
   color: var(--accent);
 }
 
-.gc-chat-list-item__row {
+/* The artboard's leading mark: muted, turning accent on the selected row. */
+.gc-chat-list-item__glyph {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.gc-chat-list-item--selected .gc-chat-list-item__glyph {
+  color: var(--accent);
+}
+
+.gc-chat-list-item__body {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  width: 100%;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
 .gc-chat-list-item__title {
-  flex: 1 1 auto;
   /* Without min-width: 0, a flex child can never shrink below its content's
-     intrinsic width, so a long title pushes the state pill onto its own
-     line instead of the title itself truncating — this is what let
-     "needs you" wrap at 250px sidebar width. */
+     intrinsic width, so a long title pushes past the panel edge instead of
+     the title itself truncating — this is what let "needs you" wrap at
+     250px sidebar width. */
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 500;
+  font-size: 13px;
 }
 
-/* The artboard's .workspace-item small/.workspace-branch line. */
+/* The artboard's meta line: the directory (its .workspace-item small) with
+   the state pill beside it. */
 .gc-chat-list-item__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.gc-chat-list-item__directory {
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

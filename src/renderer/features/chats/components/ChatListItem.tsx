@@ -24,10 +24,12 @@ export interface ChatListItemProps {
 // (through ChatList) owns the bridge call and passes ChatSummary values
 // down. A <button> (not a clickable <div>) so the list is keyboard- and
 // screen-reader-navigable without extra ARIA plumbing.
-/** T2: the artboard's .workspace-item secondary line — the chat's directory,
- * i.e. the last segment of its cwd, on either path separator. An empty or
- * missing cwd yields no second line: we never invent one (S5). */
-function directoryOf(cwd: ChatSummary["cwd"]): string | undefined {
+/** T2/S8: the artboard's .workspace-item secondary line — the chat's
+ * directory, i.e. the last segment of its cwd, on either path separator. An
+ * empty or missing cwd yields no second line: we never invent one (S5).
+ * Exported because ChatsContainer reuses it for the query filter: the list
+ * is filtered by exactly the directory that is rendered. */
+export function directoryOf(cwd: ChatSummary["cwd"]): string | undefined {
   return cwd ? cwd.split(/[\\/]/).filter(Boolean).pop() : undefined;
 }
 
@@ -43,11 +45,31 @@ export function ChatListItem({ chat, selected = false, onSelect }: ChatListItemP
         aria-current={selected || undefined}
         onClick={() => onSelect(chat)}
       >
-        <span className="gc-chat-list-item__row">
-          <span className="gc-chat-list-item__title">{chat.title}</span>
-          <Pill tone={STATE_PILL_TONE[chat.state]}>{STATE_LABEL[chat.state]}</Pill>
+        {/* S8: the artboard's .workspace-item leading folder mark; aria-hidden
+        so it never joins the button's accessible name. */}
+        <svg
+          className="gc-chat-list-item__glyph"
+          viewBox="0 0 24 24"
+          width="18"
+          height="18"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <path
+            d="M3 7a2 2 0 0 1 2-2h4.2a1 1 0 0 1 .8.4L11.3 7H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinejoin="round"
+          />
+        </svg>
+        <span className="gc-chat-list-item__body">
+          <strong className="gc-chat-list-item__title">{chat.title}</strong>
+          <span className="gc-chat-list-item__meta">
+            {directory ? <small className="gc-chat-list-item__directory">{directory}</small> : null}
+            <Pill tone={STATE_PILL_TONE[chat.state]}>{STATE_LABEL[chat.state]}</Pill>
+          </span>
         </span>
-        {directory ? <span className="gc-chat-list-item__meta">{directory}</span> : null}
       </button>
     </li>
   );
