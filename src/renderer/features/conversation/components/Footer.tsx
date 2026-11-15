@@ -1,4 +1,4 @@
-import type { McpStatus, WorktreeChanges, WorkspaceInfo } from "@shared/bridge-types";
+import type { McpStatus, SessionIdentityView, WorktreeChanges, WorkspaceInfo } from "@shared/bridge-types";
 import "./Footer.css";
 
 export interface FooterProps {
@@ -10,68 +10,120 @@ export interface FooterProps {
    * opened from the sidebar. Undefined means no workspace directory is
    * known: the footer shows `~/` and never an invented path. */
   readonly workspacePath?: string;
+  /** Session identity from pi's own RPC replies (desktop-rpc T4), moved
+   * here by desktop-workspace-shell T7: the owner's decision ("Implementa
+   * el footer tal cual está en el diseño") supersedes the old "one home per
+   * datum" split, so model, thinking level and context render in the
+   * footer's identity and context groups. Optional: absent until the first
+   * correlated reply lands, and every field inside it is optional on its
+   * own — an absent field renders nothing, never a fabricated zero. */
+  readonly session?: SessionIdentityView;
+  /** The app's own version, reported by the main process (T7's `app.info`
+   * channel). The design's last footer fact; absent means no version is
+   * rendered, never a placeholder. */
+  readonly appVersion?: string;
 }
 
 /**
- * The composed footer: the open workspace's path (T11), the
- * session-effective profile and the MCP inventory.
+ * The design's footer (`design/slack-gentle/01-workspace.html`), group for
+ * group, in the artboard's order: workspace path, changes, capabilities,
+ * session identity, context, app version (desktop-workspace-shell S9).
  *
- * It deliberately does NOT repeat the model, reasoning, context or cost: those
- * live in the status line (T4), and rendering them twice made two surfaces
- * compete for the same fact. One home per datum.
- *
- * The path (T11) is always rendered — the full directory of the open
- * workspace, or `~/` when none is open — and is never invented: it comes
- * from the validated workspace.create choice or from the session summary
- * the child itself reports. It is NOT the worktree group: no worktree
- * counts render here (that is T8b, which this unblocks).
- *
- * MCP is inventory, never health: the label says what is configured and how
- * many tool groups exist, and no wording here may ever say a server is
- * connected, because pi does not expose that.
- *
- * The worktree group (T8b) renders only when a root is known — no root, no
- * group, nothing invented — and only what the child supplied: the branch
- * when it reports one, the changed-file count and the added/deleted counts.
- * `countsUnavailable` (a failed or unborn root, a refused answer, a file
- * the child has not measured) renders as unavailable, never as zero files
- * and zero lines.
+ * Every group is honest (S11): a group renders only the members the wire
+ * can prove. The path is always rendered — the full directory of the open
+ * workspace, or `~/` when none is open, never invented and never truncated
+ * with an ellipsis. The changes group renders only when a worktree root is
+ * known, with the child's own counts or `unavailable` for a failed, refused
+ * or partially measured answer — never zeros. Capabilities are the MCP
+ * inventory, never health: pi does not expose whether a server is
+ * connected, so no wording here may ever claim it; `skills` and
+ * `extensions` are not in `ChatState`, so they render only once a bridge
+ * field supplies them (S11), never as a zero. The identity group carries
+ * the session's effective model, thinking level and profile (S10), each
+ * only when the child supplied it. The context group is a small meter plus
+ * the real `contextPercent`: absent or `null` renders nothing — never 0%.
+ * The version renders only when the app reported one.
  */
-export function Footer({ workspace, workspacePath }: FooterProps) {
-  const profile = workspace?.profile?.label;
+export function Footer({ workspace, workspacePath, session, appVersion }: FooterProps) {
   const mcp = workspace?.mcp;
-  const mcpSummary = mcp ? describeMcp(mcp) : undefined;
   const worktree = workspacePath !== undefined ? workspace?.worktree : undefined;
+
+  const profileLabel = workspace?.profile?.label;
+  const contextPercent = session?.contextPercent;
 
   return (
     <section className="gc-footer" aria-label="Session footer">
-      <Field label="path" value={workspacePath ?? "~/"} />
-      {profile ? <Field label="profile" value={profile} /> : null}
-      {mcpSummary ? <Field label="MCP" value={mcpSummary} /> : null}
-      {worktree?.branch ? <Field label="branch" value={worktree.branch} /> : null}
-      {worktree ? <Field label="changes" value={describeWorktree(worktree)} /> : null}
+      <span className="gc-footer__group gc-footer__path">{workspacePath ?? "~/"} </span>
+      {worktree ? <ChangesGroup worktree={worktree} /> : null}
+      {mcp ? <CapabilitiesGroup mcp={mcp} /> : null}
+      {session ? <IdentityGroup session={session} profileLabel={profileLabel} /> : null}
+      {contextPercent != null ? (
+        <span className="gc-footer__group gc-footer__context" aria-label="Context used">
+          <span className="gc-footer__label">context</span>
+          <span className="gc-footer__meter" aria-hidden="true">
+            <span style={{ width: `${contextPercent}%` }} />
+          </span>
+          <span className="gc-footer__context-used">{contextPercent}%</span>
+        </span>
+      ) : null}
+      {appVersion ? <span className="gc-footer__version">{appVersion}</span> : null}
     </section>
   );
 }
 
-/** The child's own counts, or the unavailable word when it supplied none:
- * `countsUnavailable` covers a failed or unborn root, a refused answer and
- * a partial count (an unmeasured untracked file), and none of those may
- * render as zero files and zero lines. */
-function describeWorktree(worktree: WorktreeChanges): string {
-  // Absent tallies are as honest as the explicit flag: printing "0 files ·
-  // +0/-0" would invent numbers the child never sent.
-  if (worktree.countsUnavailable || worktree.added === undefined || worktree.deleted === undefined) {
-    return "unavailable";
-  }
-  return `${worktree.files.length} files · +${worktree.added}/-${worktree.deleted}`;
+/**
+ * Session identity (desktop-rpc T4, moved here by S10): the design's
+ * `·`-separated facts, in the artboard's order. Each fact renders only when
+ * the child actually reported it — a fact the child did not send renders
+ * nothing, never a placeholder.
+ */
+function IdentityGroup({
+  session,
+  profileLabel,
+}: {
+  session?: SessionIdentityView;
+  profileLabel?: string;
+}) {
+  const modelLabel = session?.modelName ?? session?.modelId;
+  const thinkingLevel = session?.thinkingLevel;
+
+  if (!modelLabel && !thinkingLevel && !profileLabel) return null;
+
+  return (
+    <span className="gc-footer__group gc-footer__identity" aria-label="Session identity">
+      {modelLabel ? <span className="gc-footer__model">{modelLabel}</span> : null}
+      {modelLabel && thinkingLevel ? <DotSeparator /> : null}
+      {thinkingLevel ? <span className="gc-footer__thinking">{thinkingLevel}</span> : null}
+      {thinkingLevel && profileLabel ? <DotSeparator /> : null}
+      {profileLabel ? <span>{profileLabel}</span> : null}
+    </span>
+  );
 }
 
-function Field({ label, value }: { label: string; value: string }) {
+/**
+ * The child's own counts, or the unavailable word when it supplied none:
+ * `countsUnavailable` covers a failed or unborn root, a refused answer and
+ * a partial count (an unmeasured untracked file), and none of those may
+ * render as zero files and zero lines.
+ */
+function ChangesGroup({ worktree }: { worktree: WorktreeChanges }) {
+  // Absent tallies are as honest as the explicit flag: printing "0 files ·
+  // +0/-0" would invent numbers the child never sent.
+  const unavailable =
+    worktree.countsUnavailable || worktree.added === undefined || worktree.deleted === undefined;
+
   return (
-    <span className="gc-footer__field">
-      <span className="gc-footer__label">{label}</span>
-      <span className="gc-footer__value">{value}</span>
+    <span className="gc-footer__group" role="group" aria-label="Workspace changes">
+      <span className="gc-footer__label">changes</span>
+      {unavailable ? (
+        <span>unavailable</span>
+      ) : (
+        <>
+          <span>{worktree.files.length} files</span>
+          <span className="gc-footer__added">+{worktree.added}</span>
+          <span className="gc-footer__deleted">-{worktree.deleted}</span>
+        </>
+      )}
     </span>
   );
 }
@@ -79,8 +131,20 @@ function Field({ label, value }: { label: string; value: string }) {
 /** Inventory wording only. `health` is deliberately not rendered: it is
  * always "unknown", and printing it would invite someone to read a green dot
  * into a channel that cannot report one. */
-function describeMcp(mcp: McpStatus): string {
+function CapabilitiesGroup({ mcp }: { mcp: McpStatus }) {
   const names = mcp.configuredNames.length > 0 ? mcp.configuredNames.length : mcp.registered.length;
-  if (names === 0 && mcp.configuredStatus === "absent") return "none configured";
-  return `${names} configured · ${mcp.namespaces.length} tool groups`;
+  return (
+    <span className="gc-footer__group">
+      <span className="gc-footer__label">MCP</span>
+      <span>{names === 0 && mcp.configuredStatus === "absent" ? "none configured" : `${names} configured · ${mcp.namespaces.length} tool groups`}</span>
+    </span>
+  );
+}
+
+function DotSeparator() {
+  return (
+    <span className="gc-footer__dot" aria-hidden="true">
+      ·
+    </span>
+  );
 }

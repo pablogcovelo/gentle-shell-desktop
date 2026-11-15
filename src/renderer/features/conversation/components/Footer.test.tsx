@@ -14,125 +14,239 @@ const MCP = {
 
 afterEach(() => cleanup());
 
-describe("Footer (desktop-rpc T8, T11 path)", () => {
-  it("renders the child-supplied fields beside the workspace path", () => {
-    render(<Footer workspace={{ profile: { label: "opensourcing" } }} workspacePath="/home/dev/gentle" />);
+describe("Footer (desktop-workspace-shell T7 — the design's footer, S9/S10/S11)", () => {
+  // S10 — the owner's decision ("Implementa el footer tal cual está en el
+  // diseño") supersedes the old "one home per datum" split: the session
+  // identity facts now live HERE, in the footer, and the assertion that
+  // used to forbid `model` in the footer is rewritten accordingly. Cost is
+  // not part of the design's footer groups — its home stays the usage
+  // summary in the inspector.
+  it("renders the path, the session identity and MCP beside each other", () => {
+    render(
+      <Footer
+        workspace={{ profile: { label: "opensourcing" }, mcp: MCP }}
+        workspacePath="/home/dev/gentle"
+        session={{ modelId: "claude-sonnet-4-20250514", modelName: "Claude Sonnet 4" }}
+      />,
+    );
 
     const footer = screen.getByLabelText("Session footer");
-    expect(footer).toHaveTextContent("opensourcing");
     expect(footer).toHaveTextContent("/home/dev/gentle");
-    expect(within(footer).queryByText("MCP")).not.toBeInTheDocument();
-    expect(within(footer).queryByText("model")).not.toBeInTheDocument();
-    expect(within(footer).queryByText("cost")).not.toBeInTheDocument();
+    expect(footer).toHaveTextContent("Claude Sonnet 4");
+    expect(footer).toHaveTextContent("opensourcing");
+    expect(within(footer).getByText("MCP")).not.toBeNull();
+    // Cost keeps its single home in the inspector's usage summary.
+    expect(footer.textContent).not.toContain("$");
   });
 
-  // T11 — the footer's path is ALWAYS rendered: the full path of the open
-  // workspace when one is known, and `~/` when no workspace is open. This
-  // replaces the old "renders nothing at all when nothing was supplied"
-  // behaviour, which the owner's footer contract (T11) supersedes: the path
-  // field no longer depends on the child supplying anything.
-  it("shows the open workspace's full path (T11)", () => {
-    render(<Footer workspacePath="/home/dev/projects/gentle" />);
+  it("renders the full path and never truncates it with an ellipsis", () => {
+    render(
+      <Footer workspacePath="/home/dev/a-very-long-directory-path-that-would-otherwise-be-cut" />,
+    );
 
     const footer = screen.getByLabelText("Session footer");
-    expect(within(footer).getByText("/home/dev/projects/gentle")).toBeInTheDocument();
+    expect(
+      within(footer).getByText("/home/dev/a-very-long-directory-path-that-would-otherwise-be-cut"),
+    ).toBeInTheDocument();
+    expect(footer.innerHTML).not.toContain("…");
   });
 
-  it("shows ~/ when no workspace path is known, never an invented path (T11)", () => {
+  it("shows ~/ when no workspace path is known, never an invented path", () => {
     render(<Footer />);
 
     const footer = screen.getByLabelText("Session footer");
     expect(within(footer).getByText("~/")).toBeInTheDocument();
   });
 
-  it("describes MCP as inventory and never claims a connection", () => {
-    render(<Footer workspace={{ mcp: MCP }} />);
+  describe("changes group", () => {
+    // Every number is the child's own; nothing is derived.
+    const WORKTREE: WorktreeChanges = {
+      root: "/home/dev/gentle",
+      branch: "main",
+      files: ["src/a.ts", "src/b.ts"],
+      added: 12,
+      deleted: 3,
+    };
 
-    const footer = screen.getByLabelText("Session footer");
-    expect(footer).toHaveTextContent("2 configured");
-    expect(footer).toHaveTextContent("1 tool groups");
-    // The word the contract forbids: pi exposes no health, so none is claimed.
-    expect(footer.textContent?.toLowerCase()).not.toContain("connected");
-    // `health` is carried but never rendered.
-    expect(footer.textContent?.toLowerCase()).not.toContain("unknown");
+    it("renders the files count, +added in green and -deleted in red, from the child's own answer", () => {
+      const { container } = render(
+        <Footer workspace={{ worktree: WORKTREE }} workspacePath="/home/dev/gentle" />,
+      );
+
+      const footer = screen.getByLabelText("Session footer");
+      expect(within(footer).getByText("changes")).toBeInTheDocument();
+      expect(within(footer).getByText("2 files")).toBeInTheDocument();
+      const added = within(footer).getByText("+12");
+      expect(added).toHaveClass("gc-footer__added");
+      const deleted = within(footer).getByText("-3");
+      expect(deleted).toHaveClass("gc-footer__deleted");
+      // The design's changes group carries no branch: the path group is the
+      // only place the directory appears.
+      expect(footer.textContent).not.toContain("main");
+      expect(container.querySelector(".gc-footer__added")).not.toBeNull();
+    });
+
+    it("renders unavailable for countsUnavailable — never as zero files and zero lines", () => {
+      render(
+        <Footer
+          workspace={{ worktree: { root: "/home/dev/gentle", files: [], countsUnavailable: true } }}
+          workspacePath="/home/dev/gentle"
+        />,
+      );
+
+      const footer = screen.getByLabelText("Session footer");
+      expect(footer).toHaveTextContent("unavailable");
+      expect(footer.textContent).not.toContain("0 files");
+      expect(footer.textContent).not.toContain("+0");
+      expect(footer.textContent).not.toContain("-0");
+    });
+
+    it("renders unavailable when tallies are missing — a number the child did not send is never invented", () => {
+      render(
+        <Footer
+          workspace={{ worktree: { root: "/repo", files: ["a.ts"] } }}
+          workspacePath="/repo"
+        />,
+      );
+
+      const footer = screen.getByLabelText("Session footer");
+      expect(footer).toHaveTextContent("unavailable");
+      expect(screen.queryByText(/\+0\/-0/)).not.toBeInTheDocument();
+    });
+
+    it("renders no changes group at all when no root is known", () => {
+      render(<Footer workspace={{ worktree: WORKTREE }} />);
+
+      const footer = screen.getByLabelText("Session footer");
+      expect(within(footer).queryByText("changes")).not.toBeInTheDocument();
+      expect(within(footer).queryByText("2 files")).not.toBeInTheDocument();
+    });
   });
 
-  it("says none configured for an absent MCP inventory instead of a zero", () => {
-    render(
-      <Footer
-        workspace={{ mcp: { ...MCP, configuredStatus: "absent", configuredNames: [], namespaces: [] } }}
-      />,
-    );
+  describe("capabilities group (MCP inventory only)", () => {
+    it("describes MCP as inventory and never claims a connection", () => {
+      render(<Footer workspace={{ mcp: MCP }} />);
 
-    expect(screen.getByLabelText("Session footer")).toHaveTextContent("none configured");
+      const footer = screen.getByLabelText("Session footer");
+      expect(footer).toHaveTextContent("2 configured");
+      expect(footer).toHaveTextContent("1 tool groups");
+      // The word the contract forbids: pi exposes no health, so none is claimed.
+      expect(footer.textContent?.toLowerCase()).not.toContain("connected");
+      // `health` is carried but never rendered.
+      expect(footer.textContent?.toLowerCase()).not.toContain("unknown");
+    });
+
+    it("says none configured for an absent MCP inventory instead of a zero", () => {
+      render(
+        <Footer
+          workspace={{ mcp: { ...MCP, configuredStatus: "absent", configuredNames: [], namespaces: [] } }}
+        />,
+      );
+
+      expect(screen.getByLabelText("Session footer")).toHaveTextContent("none configured");
+    });
+
+    // S11 — `skills` and `extensions` are not in ChatState: they render only
+    // once a bridge field supplies them, never as a sample count or a zero.
+    it("never prints skills or extensions, not even as a zero", () => {
+      render(<Footer workspace={{ mcp: MCP }} />);
+
+      const footer = screen.getByLabelText("Session footer");
+      expect(footer.textContent?.toLowerCase()).not.toContain("skills");
+      expect(footer.textContent?.toLowerCase()).not.toContain("extensions");
+    });
   });
 
-  // T8b — the worktree group, fed by get_worktree_changes for the open
-  // workspace's root. Every number is the child's own; nothing is derived.
-  const WORKTREE: WorktreeChanges = {
-    root: "/home/dev/gentle",
-    branch: "main",
-    files: ["src/a.ts", "src/b.ts"],
-    added: 12,
-    deleted: 3,
-  };
+  describe("session identity group (S10 — moved out of the status line)", () => {
+    const FULL_IDENTITY = {
+      modelId: "claude-sonnet-4-20250514",
+      modelName: "Claude Sonnet 4",
+      thinkingLevel: "medium" as const,
+      contextPercent: 30,
+      sessionCost: 0.45,
+    };
 
-  it("renders the worktree group from the child's own answer when a root is known (T8b)", () => {
-    render(<Footer workspace={{ worktree: WORKTREE }} workspacePath="/home/dev/gentle" />);
+    it("renders model · thinking · profile from the session and the workspace profile", () => {
+      render(
+        <Footer
+          workspace={{ profile: { label: "opensourcing" } }}
+          session={FULL_IDENTITY}
+        />,
+      );
 
-    const footer = screen.getByLabelText("Session footer");
-    expect(within(footer).getByText("branch")).toBeInTheDocument();
-    expect(footer).toHaveTextContent("main");
-    expect(footer).toHaveTextContent("2 files");
-    expect(footer).toHaveTextContent("+12/-3");
+      const identity = screen.getByLabelText("Session identity");
+      expect(identity).toHaveTextContent("Claude Sonnet 4");
+      expect(identity).toHaveTextContent("medium");
+      expect(identity).toHaveTextContent("opensourcing");
+      // `·`-separated facts, in the design's order.
+      expect(identity.textContent).toContain("·");
+    });
+
+    it("falls back to the model id when the child supplies no display name", () => {
+      render(<Footer session={{ ...FULL_IDENTITY, modelName: undefined }} />);
+
+      expect(screen.getByLabelText("Session identity")).toHaveTextContent("claude-sonnet-4-20250514");
+    });
+
+    it("renders only the identity facts that were supplied", () => {
+      render(<Footer session={{ modelId: "gpt-6.1" }} />);
+
+      const identity = screen.getByLabelText("Session identity");
+      expect(identity).toHaveTextContent("gpt-6.1");
+      expect(identity.textContent).not.toContain("medium");
+    });
+
+    it("renders no identity group at all when no session is supplied", () => {
+      render(<Footer workspace={{ profile: { label: "opensourcing" } }} />);
+
+      expect(screen.queryByLabelText("Session identity")).not.toBeInTheDocument();
+      expect(screen.queryByText("opensourcing")).not.toBeInTheDocument();
+    });
   });
 
-  it("renders unavailable for countsUnavailable — never as zero files and zero lines (T8b)", () => {
-    render(
-      <Footer
-        workspace={{ worktree: { root: "/home/dev/gentle", files: [], countsUnavailable: true } }}
-        workspacePath="/home/dev/gentle"
-      />,
-    );
+  describe("context group", () => {
+    it("renders the context meter plus the real percent", () => {
+      render(<Footer session={{ contextPercent: 18 }} />);
 
-    const footer = screen.getByLabelText("Session footer");
-    expect(footer).toHaveTextContent("unavailable");
-    expect(footer.textContent).not.toContain("0 files");
-    expect(footer.textContent).not.toContain("+0");
-    expect(footer.textContent).not.toContain("-0");
+      const context = screen.getByLabelText("Context used");
+      expect(context).toHaveTextContent("18%");
+      const meter = context.querySelector(".gc-footer__meter");
+      expect(meter).not.toBeNull();
+      expect(meter?.querySelector("span")?.style.width).toBe("18%");
+    });
+
+    it("renders nothing for a context supplied as unknown (null right after compaction)", () => {
+      render(<Footer session={{ contextTokens: null, contextWindow: 200000, contextPercent: null }} />);
+
+      expect(screen.queryByLabelText("Context used")).not.toBeInTheDocument();
+      expect(screen.queryByText(/%$/)).not.toBeInTheDocument();
+    });
+
+    it("renders nothing when no context percent was supplied — never 0%", () => {
+      render(<Footer />);
+
+      expect(screen.queryByLabelText("Context used")).not.toBeInTheDocument();
+      expect(screen.queryByText("0%")).not.toBeInTheDocument();
+    });
   });
 
-  it("renders no worktree group at all when no root is known (T8b)", () => {
-    render(<Footer workspace={{ worktree: WORKTREE }} />);
+  describe("app version", () => {
+    it("renders the version right-aligned when supplied", () => {
+      render(<Footer appVersion="v1.2" />);
 
-    const footer = screen.getByLabelText("Session footer");
-    expect(within(footer).queryByText("branch")).not.toBeInTheDocument();
-    expect(within(footer).queryByText("changes")).not.toBeInTheDocument();
+      expect(within(screen.getByLabelText("Session footer")).getByText("v1.2")).toBeInTheDocument();
+    });
+
+    it("renders no version when none was supplied", () => {
+      render(<Footer />);
+
+      expect(screen.queryByText("v1.2")).not.toBeInTheDocument();
+    });
   });
 
-  it("renders nothing invented before the child answers (T8b)", () => {
-    render(<Footer workspacePath="/home/dev/gentle" />);
+  it("renders the aria-label the contract pins", () => {
+    render(<Footer />);
 
-    const footer = screen.getByLabelText("Session footer");
-    expect(within(footer).queryByText("branch")).not.toBeInTheDocument();
-    expect(within(footer).queryByText("changes")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Session footer")).toBeInTheDocument();
   });
-
-
-it("never prints zero counts when the child supplied no numbers", () => {
-  // A worktree with files but without tallies must read as unavailable, not as
-  // "0 files · +0/-0": a number the child did not send cannot be invented.
-  render(
-    <Footer
-      workspace={{
-        ...WORKTREE,
-        worktree: { root: "/repo", files: ["a.ts"] },
-      }}
-      workspacePath="/repo"
-    />,
-  );
-
-  expect(screen.queryByText(/\+0\/-0/)).not.toBeInTheDocument();
-  expect(screen.getByText(/unavailable/i)).toBeInTheDocument();
-});
 });

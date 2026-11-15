@@ -1,7 +1,22 @@
 // @vitest-environment jsdom
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Composer } from "./Composer";
+
+function Harness(props: { readonly initial?: string; readonly onPickFile?: () => Promise<string | null> }) {
+  const [value, setValue] = useState(props.initial ?? "");
+  return (
+    <Composer
+      value={value}
+      working={false}
+      onChange={setValue}
+      onSend={vi.fn()}
+      onAbort={vi.fn()}
+      onPickFile={props.onPickFile}
+    />
+  );
+}
 
 describe("Composer", () => {
   it("exposes the form with the accessible name 'Composer'", () => {
@@ -91,5 +106,74 @@ it("keeps Send disabled while the pane has no host to send to", () => {
   // No host resolved yet means no route: offering Send would only produce a
   // request main has to refuse.
   expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+});
+
+it("appends the picked emoji to the draft and closes the panel", async () => {
+  render(<Harness initial="hi" />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Emoji" }));
+  const panel = screen.getByRole("group", { name: "Emoji" });
+  fireEvent.click(within(panel).getByRole("button", { name: "🙂" }));
+
+  await waitFor(() => expect(screen.getByPlaceholderText("Tell Gentle what you need…")).toHaveValue("hi🙂"));
+  expect(screen.queryByRole("group", { name: "Emoji" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Emoji" })).toHaveAttribute("aria-expanded", "false");
+});
+
+it("closes the emoji panel on Escape without touching the draft", () => {
+  render(<Harness initial="hi" />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Emoji" }));
+  fireEvent.keyDown(screen.getByRole("group", { name: "Emoji" }), { key: "Escape" });
+
+  expect(screen.queryByRole("group", { name: "Emoji" })).not.toBeInTheDocument();
+  expect(screen.getByPlaceholderText("Tell Gentle what you need…")).toHaveValue("hi");
+});
+
+it("renders the tool buttons as type=button so they never submit the form", () => {
+  render(<Composer value="" working={false} onChange={vi.fn()} onSend={vi.fn()} onAbort={vi.fn()} />);
+
+  expect(screen.getByRole("button", { name: "Emoji" })).toHaveAttribute("type", "button");
+  expect(screen.getByRole("button", { name: /Microphone/ })).toHaveAttribute("type", "button");
+});
+
+it("appends the chosen absolute path to the draft without reading the file", async () => {
+  const onPickFile = vi.fn(() => Promise.resolve("/tmp/notes.md"));
+  render(<Harness initial="draft text" onPickFile={onPickFile} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Attachment" }));
+
+  await waitFor(() => expect(screen.getByPlaceholderText("Tell Gentle what you need…")).toHaveValue("draft text /tmp/notes.md"));
+  expect(onPickFile).toHaveBeenCalledTimes(1);
+});
+
+it("appends the path without a leading space when the draft is empty", async () => {
+  render(<Harness onPickFile={() => Promise.resolve("/tmp/notes.md")} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Attachment" }));
+
+  await waitFor(() => expect(screen.getByPlaceholderText("Tell Gentle what you need…")).toHaveValue("/tmp/notes.md"));
+});
+
+it("changes nothing when the picker resolves to null", async () => {
+  render(<Harness initial="kept" onPickFile={() => Promise.resolve(null)} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Attachment" }));
+
+  await waitFor(() => expect(screen.getByPlaceholderText("Tell Gentle what you need…")).toHaveValue("kept"));
+});
+
+it("does not render the attachment action without onPickFile", () => {
+  render(<Composer value="" working={false} onChange={vi.fn()} onSend={vi.fn()} onAbort={vi.fn()} />);
+
+  expect(screen.queryByRole("button", { name: "Attachment" })).not.toBeInTheDocument();
+});
+
+it("renders the microphone always but disabled, with the reason in its accessible name", () => {
+  render(<Composer value="" working={false} onChange={vi.fn()} onSend={vi.fn()} onAbort={vi.fn()} />);
+
+  const microphone = screen.getByRole("button", { name: /Microphone/ });
+  expect(microphone).toBeDisabled();
+  expect(microphone).toHaveAccessibleName(/no audio capture/);
 });
 });

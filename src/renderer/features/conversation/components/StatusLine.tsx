@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { ChatNotification, SessionIdentityView } from "@shared/bridge-types";
+import type { ChatNotification } from "@shared/bridge-types";
 import "./StatusLine.css";
 
 export interface StatusLineProps {
@@ -10,11 +10,6 @@ export interface StatusLineProps {
   /** Retained notifications from ChatState (desktop-rpc T2b). Optional for
    * the same reason as `statuses`. */
   readonly notifications?: readonly ChatNotification[];
-  /** Session identity from pi's own RPC replies (desktop-rpc T4): cost,
-   * tokens, context usage and the EFFECTIVE model/thinking level. Optional:
-   * absent until the first correlated reply lands, and every field inside it
-   * is optional on its own. */
-  readonly session?: SessionIdentityView;
 }
 
 /**
@@ -27,6 +22,12 @@ export interface StatusLineProps {
  * arrival; a later arrival restarts that window. Nothing accumulates
  * forever in the UI, and no notification ever becomes a conversation
  * message — it renders here, in the status surface, never in the thread.
+ *
+ * Session identity is NOT here anymore: the owner's footer decision
+ * (desktop-workspace-shell S9/S10) supersedes the old "one home per datum"
+ * split, and model, thinking level, context and cost moved out of this
+ * surface into the footer and the inspector's usage summary. This surface
+ * keeps errors, keyed statuses and transient notifications only.
  */
 const NOTIFICATION_VISIBLE_MS = 6000;
 
@@ -35,7 +36,7 @@ const NOTIFICATION_VISIBLE_MS = 6000;
 // keyed statuses (ChatState.statuses, replaced/cleared by the wire) and
 // transient notifications (ChatState.notifications, severity-coloured).
 // None of the three is a synthetic ChatMessage appended to the thread.
-export function StatusLine({ error, statuses, notifications, session }: StatusLineProps) {
+export function StatusLine({ error, statuses, notifications }: StatusLineProps) {
   const statusEntries = Object.entries(statuses ?? {});
   const notificationCount = notifications?.length ?? 0;
   const [notificationsVisible, setNotificationsVisible] = useState(true);
@@ -53,18 +54,7 @@ export function StatusLine({ error, statuses, notifications, session }: StatusLi
 
   const showNotifications = notificationsVisible && notificationCount > 0;
 
-  // Session identity (desktop-rpc T4). Each field renders only when the child
-  // actually reported it: an absent or `null` context is "not supplied" and
-  // must never look like 0 %, while a supplied 0 cost is a real zero. Both
-  // distinctions are pinned by test.
-  const modelLabel = session?.modelName ?? session?.modelId;
-  const thinkingLevel = session?.thinkingLevel;
-  const contextPercent = session?.contextPercent;
-  const sessionCost = session?.sessionCost;
-  const hasIdentity =
-    Boolean(modelLabel) || Boolean(thinkingLevel) || contextPercent != null || sessionCost != null;
-
-  if (!error && statusEntries.length === 0 && !showNotifications && !hasIdentity) return null;
+  if (!error && statusEntries.length === 0 && !showNotifications) return null;
 
   return (
     <>
@@ -95,43 +85,6 @@ export function StatusLine({ error, statuses, notifications, session }: StatusLi
           ))}
         </ul>
       ) : null}
-      {hasIdentity ? (
-        <dl className="gc-status-identity" aria-label="Session identity">
-          {modelLabel ? (
-            <div className="gc-status-identity__field">
-              <dt>model</dt>
-              <dd>{modelLabel}</dd>
-            </div>
-          ) : null}
-          {thinkingLevel ? (
-            <div className="gc-status-identity__field">
-              <dt>thinking</dt>
-              <dd>{thinkingLevel}</dd>
-            </div>
-          ) : null}
-          {contextPercent != null ? (
-            <div className="gc-status-identity__field">
-              <dt>context</dt>
-              <dd>{contextPercent}%</dd>
-            </div>
-          ) : null}
-          {sessionCost != null ? (
-            <div className="gc-status-identity__field">
-              <dt>cost</dt>
-              <dd>{formatCost(sessionCost)}</dd>
-            </div>
-          ) : null}
-        </dl>
-      ) : null}
     </>
   );
-}
-
-/**
- * Session cost as the child reports it: a real zero stays "$0" and a
- * fractional cost keeps two decimals. The caller never reaches this function
- * when the child supplied nothing — absent cost renders no field at all.
- */
-function formatCost(cost: number): string {
-  return `$${cost % 1 === 0 ? cost.toFixed(0) : cost.toFixed(2)}`;
 }

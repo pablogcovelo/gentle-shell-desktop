@@ -53,7 +53,84 @@
 .gc-composer__foot {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Artboard `.composer-tools`: 44px square hit targets, tools left of Send. */
+.gc-composer__tools {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.gc-composer__tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.gc-composer__tool:hover:not(:disabled) {
+  background: var(--raised);
+  color: var(--accent);
+}
+
+.gc-composer__tool:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.gc-composer__tool:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Inline emoji palette: raised surface, strong line, no shadows. */
+.gc-composer__emoji-panel {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--raised);
+}
+
+.gc-composer__emoji {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.gc-composer__emoji:hover {
+  background: var(--line);
+}
+
+.gc-composer__emoji:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .gc-composer__hints {

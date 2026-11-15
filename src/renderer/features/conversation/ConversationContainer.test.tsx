@@ -169,7 +169,7 @@ describe("ConversationContainer", () => {
     expect(await screen.findByText("Hello there")).toBeInTheDocument();
   });
 
-  it("renders the session identity block when the pushed ChatState carries one", async () => {
+  it("renders the session identity and context in the footer when the pushed ChatState carries them", async () => {
     let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({
       onState: vi.fn((callback: (state: ChatState) => void) => {
@@ -191,12 +191,17 @@ describe("ConversationContainer", () => {
       session: { modelName: "Claude Sonnet 4", thinkingLevel: "medium", contextPercent: 30, sessionCost: 0.45 },
     });
 
-    const block = await screen.findByLabelText("Session identity");
-    expect(block).toHaveTextContent("Claude Sonnet 4");
-    expect(block).toHaveTextContent("30%");
-    expect(block).toHaveTextContent("$0.45");
-    // Identity is status chrome, never conversation content.
-    expect(screen.queryByText("Claude Sonnet 4")).toBe(block.querySelector("dd"));
+    const footer = await screen.findByLabelText("Session footer");
+    // S9/S10: model, thinking level and context moved out of the status line
+    // into the footer's identity and context groups — one home for each fact.
+    expect(footer).toHaveTextContent("Claude Sonnet 4");
+    expect(footer).toHaveTextContent("medium");
+    expect(footer).toHaveTextContent("30%");
+    // Cost keeps its single home in the inspector's usage summary, so the
+    // footer never repeats it.
+    expect(footer).not.toHaveTextContent("$0.45");
+    // Identity is chrome, never conversation content.
+    expect(screen.queryByText("Claude Sonnet 4", { selector: ".gc-message__text" })).not.toBeInTheDocument();
   });
 
   it("renders no session identity block when the pushed ChatState carries none", async () => {
@@ -1370,8 +1375,12 @@ describe("ConversationContainer created workspace (T11)", () => {
     });
 
     const footer = await screen.findByLabelText("Session footer");
-    expect(footer).toHaveTextContent("main");
-    expect(footer).toHaveTextContent("+4/-1");
+    // The design's changes group is counts only: files, additions, deletions.
+    expect(footer).toHaveTextContent("1 files");
+    expect(footer).toHaveTextContent("+4");
+    expect(footer).toHaveTextContent("-1");
+    // The branch is not part of that group in the design footer.
+    expect(footer.textContent).not.toContain("main");
   });
 
   it("renders no worktree group while no workspace directory is known", async () => {

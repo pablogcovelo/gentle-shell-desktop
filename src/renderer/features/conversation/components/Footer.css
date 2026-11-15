@@ -1,7 +1,8 @@
 /*
  * Session footer (artboard `.footer`): one quiet mono line of grouped facts
- * under the conversation, with thin separators between the groups. It wraps
- * before it overflows — a narrow window must never hide a fact.
+ * under the conversation. Each group is nowrap with a thin separator
+ * between groups; the footer itself wraps only when it must — a narrow
+ * window must never hide a fact.
  */
 
 .gc-footer {
@@ -19,29 +20,94 @@
   color: var(--text-2);
 }
 
-.gc-footer__field {
+/* One group per design section (`.footer .workspace-path`,
+ * `.footer-changes`, `.footer-capabilities`, `.session-identity`,
+ * `.context-stat`): nowrap, a `--line-strong` separator on its right, and
+ * a fixed gap so each group reads as one fact. */
+.gc-footer__group {
   display: inline-flex;
-  align-items: baseline;
-  gap: 5px;
-  padding: 0 14px;
+  align-items: center;
+  gap: 14px;
+  padding: 0 16px;
   border-right: 1px solid var(--line-strong);
   white-space: nowrap;
+  min-width: max-content;
 }
 
-.gc-footer__field:first-child {
+.gc-footer__group:first-child {
   padding-left: 0;
 }
 
-.gc-footer__field:last-child {
+.gc-footer__group:last-child {
   border-right: 0;
 }
 
+/* The path is the design's first group and the only one allowed to break:
+ * the full directory always renders — never an ellipsis. */
+.gc-footer__path {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+/* Design meta labels: `changes`, `context`, MCP. */
 .gc-footer__label {
   color: var(--muted);
   font-size: 10px;
 }
 
-.gc-footer__value {
-  overflow-wrap: anywhere;
-  white-space: normal;
+/* Added lines in the design's green, deleted lines in its red. */
+.gc-footer__added {
+  color: var(--green);
+}
+
+.gc-footer__deleted {
+  color: var(--red);
+}
+
+/* Session identity: the design colours the model and the reasoning level
+ * distinctly from the surrounding facts. */
+.gc-footer__model {
+  color: var(--text);
+}
+
+.gc-footer__thinking {
+  color: var(--blue);
+}
+
+.gc-footer__dot {
+  color: var(--muted);
+}
+
+/* Context: the design's small meter (`height:5px; width:58px`) on the
+ * `--line-strong` track, filled with the accent, plus the real percent. */
+.gc-footer__context {
+  gap: 8px;
+}
+
+.gc-footer__meter {
+  height: 5px;
+  width: 58px;
+  background: var(--line-strong);
+  border-radius: 999px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.gc-footer__meter > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.gc-footer__context-used {
+  color: var(--accent-active);
+}
+
+/* App version: right-aligned at the end, quiet, never wrapping. */
+.gc-footer__version {
+  margin-left: auto;
+  padding-left: 16px;
+  color: var(--muted);
+  white-space: nowrap;
 }

@@ -171,6 +171,27 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   const [bridgeError, setBridgeError] = useState<string | undefined>(undefined);
   const [draft, setDraft] = useState("");
   const [pane, setPane] = useState<ConversationPane>(CONVERSATION_PANE.CHAT);
+  // The packaged app's version for the footer's last group (S9). Asked once:
+  // the value never changes while the window lives, and a bridge without
+  // app.info leaves it undefined so the footer omits the group rather than
+  // inventing a version.
+  const [appVersion, setAppVersion] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    bridge
+      .appInfo?.()
+      .then((info) => {
+        if (!cancelled) setAppVersion(info.version);
+      })
+      .catch(() => {
+        // A bridge without app facts leaves the footer's version group out;
+        // a failed read must not become a guessed version.
+        if (!cancelled) setAppVersion(undefined);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [bridge]);
   // The moment this chat became active — HelpersContainer's line between
   // "current" helpers and the collapsed "Earlier" group (format.ts's
   // partitionHelpers). Set once per activeChat change, not per pane
@@ -383,12 +404,7 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
         runningHelpersCount={chatState.helpers.summary.running}
         onSelectPane={setPane}
       />
-      <StatusLine
-        error={error}
-        statuses={chatState.statuses}
-        notifications={chatState.notifications}
-        session={chatState.session}
-      />
+      <StatusLine error={error} statuses={chatState.statuses} notifications={chatState.notifications} />
       {pane === CONVERSATION_PANE.HELPERS ? (
         <HelpersContainer
           activity={chatState.helpers}
@@ -420,6 +436,10 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
               onChange={setDraft}
               onSend={handleSend}
               onAbort={handleAbort}
+              // S14: the attachment action inserts the chosen path; a bridge
+              // without a file picker (or a cancelled pick, which answers
+              // null) changes nothing.
+              onPickFile={bridge.chooseFile ? () => bridge.chooseFile!() : undefined}
             />
           </div>
           {/* The artboard's fixed three-section inspector (T3): the chat's own
@@ -437,8 +457,15 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
         </div>
       )}
       {/* Footer last: it is the conversation column's bottom strip, never a row
-      between the context bar and the thread. */}
-      <Footer workspace={chatState.workspace} workspacePath={workspacePath} />
+      between the context bar and the thread. It now carries the design's
+      session-identity and context groups (S9/S10), so those facts have exactly
+      one home — here — and no longer duplicate a status-line block. */}
+      <Footer
+        workspace={chatState.workspace}
+        workspacePath={workspacePath}
+        session={chatState.session}
+        appVersion={appVersion}
+      />
     </section>
   );
 }

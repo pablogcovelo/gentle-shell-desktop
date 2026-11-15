@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
-import type { ChatNotification, SessionIdentityView } from "@shared/bridge-types";
+import { cleanup, render, screen } from "@testing-library/react";
+import type { ChatNotification } from "@shared/bridge-types";
 import { StatusLine } from "./StatusLine";
 
 function notification(message: string, severity: ChatNotification["severity"]): ChatNotification {
@@ -122,61 +122,9 @@ describe("StatusLine", () => {
   });
 });
 
-describe("StatusLine session identity (desktop-rpc T4)", () => {
-  const FULL_IDENTITY: SessionIdentityView = {
-    modelId: "claude-sonnet-4-20250514",
-    modelName: "Claude Sonnet 4",
-    modelProvider: "anthropic",
-    thinkingLevel: "medium",
-    contextTokens: 60000,
-    contextWindow: 200000,
-    contextPercent: 30,
-    sessionCost: 0.45,
-    tokensTotal: 105000,
-  };
-
-  it("renders the model, thinking level, context percentage and session cost the child reported", () => {
-    render(<StatusLine session={FULL_IDENTITY} />);
-
-    const block = screen.getByLabelText("Session identity");
-    expect(block).toHaveTextContent("Claude Sonnet 4");
-    expect(block).toHaveTextContent("medium");
-    expect(block).toHaveTextContent("30%");
-    expect(block).toHaveTextContent("$0.45");
-  });
-
-  it("falls back to the model id when the child supplies no display name", () => {
-    render(<StatusLine session={{ ...FULL_IDENTITY, modelName: undefined }} />);
-
-    expect(screen.getByLabelText("Session identity")).toHaveTextContent("claude-sonnet-4-20250514");
-  });
-
-  it("renders nothing for a field the child did not supply, and never renders it as zero", () => {
-    render(<StatusLine session={{ sessionCost: 0.45 }} />);
-
-    const block = screen.getByLabelText("Session identity");
-    expect(block).toHaveTextContent("$0.45");
-    expect(within(block).queryByText("context")).not.toBeInTheDocument();
-    expect(within(block).queryByText("model")).not.toBeInTheDocument();
-    expect(within(block).queryByText("thinking")).not.toBeInTheDocument();
-  });
-
-  it("renders nothing for a context supplied as unknown (null right after compaction)", () => {
-    render(<StatusLine session={{ contextTokens: null, contextWindow: 200000, contextPercent: null }} />);
-
-    expect(screen.queryByLabelText("Session identity")).not.toBeInTheDocument();
-  });
-
-  it("renders a supplied zero cost as zero — unavailable and zero stay distinct", () => {
-    render(<StatusLine session={{ sessionCost: 0 }} />);
-
-    expect(screen.getByLabelText("Session identity")).toHaveTextContent("$0");
-  });
-
-  it("renders nothing at all when the child supplies no renderable identity fields", () => {
-    const { container } = render(<StatusLine session={{ tokensTotal: 105000 }} />);
-
-    expect(screen.queryByLabelText("Session identity")).not.toBeInTheDocument();
-    expect(container).toBeEmptyDOMElement();
-  });
-});
+// The former "StatusLine session identity (desktop-rpc T4)" describe block
+// was DELETED here: the owner's footer decision (desktop-workspace-shell
+// S9/S10, "Implementa el footer tal cual está en el diseño") moves the
+// session identity facts out of the status line into the footer, and their
+// tests now live in Footer.test.tsx. Every other StatusLine test above is
+// untouched.
