@@ -193,3 +193,20 @@ L28. T5c+T5d reviewed as their own candidate (lineage `review-c379a6fc4ef6175e`,
 Both were observed RED first. Checks after the fix: `pnpm test` 50 files / 608 tests, `pnpm typecheck` clean. One flake to watch, recorded rather than explained away: in the first full-suite run after the change, `App > routes each chat's requests to its own host after switching chats` failed once under full parallel load; it passes alone and in the next two full runs. If it recurs, the fix belongs in that test's waits, not in the lifecycle code.
 
 L29. The cleanup fix itself was reviewed as its own small candidate (lineage `review-5aa9d7713897e505`, 5 files, 115 lines, resilience + reliability) after starting from the full-range base produced `lens_context_budget_exceeded` again — the lesson from L28 holds, so the base went to the previous commit. Closed approved with three advisories, one of them real: `closedHosts`, the set that refuses a late refresh for a closed host, was written on every close and cleared only by the test helper, so a renderer that opens and closes chats all session grew it without bound. It is now bounded to the most recent closes (a refresh is a single IPC round trip, so remembering 32 is ample), and the test that closes forty hosts pins that the trimming never drops the recent ones. The second advisory was a missing assertion rather than a bug: the close listener now has to fire even when the stop rejects, which is asserted on the failure path that motivated the `finally`.
+
+### T11 — Add workspace with a directory (unblocks T8b)
+
+Owner decision, verbatim: "Los chats los estámos representando por los workspaces, es decir, cada workspace es un chat y cada workspace es una ruta/carpeta donde el usuario va a trabajar. Lo que se muestra en el footer es la ruta completa a esa carpeta donde el usuario ha aberto el workspace/chat para trabajar. Tal como lo estamos planteando el footer solo mostrará una ruta cuando el usuario tiene un workspace/chat abierto y en caso de no existir workspaces podemos mostrar solo ruta raiz '~/'". Followed by "A", accepting the native Electron directory picker over a typed path.
+
+This closes a real ownership gap: creating a workspace with its folder appeared only in the artboard, and belonged to no ODD unit. U6b (`odd/plans/desktop-ade-app-units.md:26,98`) is persistence and restore-on-relaunch, not this.
+
+Scope: creating a workspace means creating a chat bound to a directory. The child must actually run in that directory — `PiSession` already accepts `cwd` (`PiSession.ts:32,105,160,186`) and spawns with it; `ChatHost` simply never passes one, which is why today's sessions carry whatever directory Electron had.
+
+Acceptance:
+- An "Add workspace" action opens the native directory picker (`dialog.showOpenDialog` with `openDirectory`); cancelling changes nothing at all.
+- The chosen absolute directory is validated in main (exists, is a directory, readable) before anything is created; an invalid selection is refused with a clear message and leaves no host, no chat and no state behind.
+- The created workspace's host is spawned with that directory as `cwd`, so `ChatSummary.cwd` and the footer's path are the directory the user chose, not the app's launch directory.
+- Choosing a directory that is already open selects the existing workspace instead of creating a second child for it.
+- The footer shows the full path of the open workspace, and `~/` when no workspace is open.
+- Out of scope: persisting the workspace list and restoring it on relaunch (U6b), a close affordance, and the worktree group itself (T8b, which this unblocks because a root now exists).
+- Risk: item 1 (a path validated before any record is written) and item 3 (the host/bridge contract gains a directory), so it ships in its own commit and is reviewed.
