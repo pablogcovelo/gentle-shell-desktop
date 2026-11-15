@@ -20,6 +20,9 @@ export interface ChatsContainerProps {
   readonly onWorkspaceCreated?: (result: OpenChatResult) => void;
   /** The currently open chat's id, for highlighting; undefined while a fresh chat is open. */
   readonly selectedChatId?: string;
+  /** The open workspace's branch, shown under that workspace's name (owner
+   * decision: the branch lives with the workspace, not in the footer). */
+  readonly activeBranch?: string;
   /** Case-insensitive filter from the top bar's search. When undefined or
    * blank, every chat renders. Matches the chat title or its directory. */
   readonly query?: string;
@@ -34,7 +37,7 @@ export interface ChatsContainerProps {
  * owns "the currently open chat" per GentleBridge's single-current-chat
  * shape, so this only reports selection intent up to App.
  */
-export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, selectedChatId, query, navigationTools, navigationOpen }: ChatsContainerProps) {
+export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, selectedChatId, activeBranch, query, navigationTools, navigationOpen }: ChatsContainerProps) {
   const bridge = useBridge();
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -186,7 +189,7 @@ export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, se
           Could not add the workspace: {workspaceError}
         </p>
       )}
-      <ChatList chats={visibleChats} selectedId={selectedChatId} onSelect={handleSelect} />
+      <ChatList chats={visibleChats} selectedId={selectedChatId} onSelect={handleSelect} activeBranch={activeBranch} />
       {normalizedQuery && visibleChats.length === 0 && (
         <p className="gc-chats__empty">No chats match &quot;{normalizedQuery}&quot;.</p>
       )}

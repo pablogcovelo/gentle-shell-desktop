@@ -36,6 +36,9 @@ export function App() {
   const bridge = useBridge();
   const [screen, setScreen] = useState<Screen>(SCREEN.LOADING);
   const [activeChat, setActiveChat] = useState<ActiveChat>(NEW_CHAT);
+  // The open workspace's branch, reported by the conversation pane and shown
+  // under the workspace's name in the sidebar (owner decision).
+  const [activeBranch, setActiveBranch] = useState<string | undefined>(undefined);
   // T5b: the active chat's workspace host id, as answered by chat.open/
   // chat.new (ConversationContainer reports it up on resolution). It is
   // reset on every selection change so the previous chat's host can never
@@ -226,6 +229,7 @@ export function App() {
           onNewChat={handleNewChat}
           onWorkspaceCreated={handleWorkspaceCreated}
           selectedChatId={activeChat.kind === "existing" ? activeChat.chat.id : undefined}
+          activeBranch={activeBranch}
           query={query}
           navigationTools={<RailTools onOpenSettings={() => setDialog(APP_DIALOG.SETTINGS)} onOpenShortcuts={() => setDialog(APP_DIALOG.SHORTCUTS)} />}
           navigationOpen={narrow && navigationOpen}
@@ -236,6 +240,7 @@ export function App() {
           activeHostId={activeHostId}
           createdWorkspace={createdWorkspace}
           onHostResolved={setActiveHostId}
+          onWorktreeBranch={setActiveBranch}
         />
       </div>
       <div className="gc-app__footer" ref={setFooterTarget} />

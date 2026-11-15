@@ -83,4 +83,18 @@ describe("ChatList", () => {
     expect(screen.getByRole("button", { name: /Alpha/ })).not.toHaveTextContent("Alpha");
     expect(screen.getByRole("button", { name: /Alpha/ })).toHaveTextContent("project");
   });
+
+it("shows the branch under the selected workspace's name and nowhere else", () => {
+  const chats = [
+    { id: "a", title: "Project A", cwd: "/repos/alpha", updatedAt: "2026-09-21T09:00:00.000Z", messageCount: 1, state: "idle" },
+    { id: "b", title: "Project B", cwd: "/repos/beta", updatedAt: "2026-09-21T09:00:00.000Z", messageCount: 1, state: "idle" },
+  ] as unknown as readonly ChatSummary[];
+
+  render(<ChatList chats={chats} selectedId="a" onSelect={() => {}} activeBranch="develop" />);
+
+  // The branch is a fact about the OPEN workspace only; a row that is not
+  // open must not carry one.
+  expect(screen.getByText("develop")).toBeInTheDocument();
+  expect(screen.getAllByText("develop")).toHaveLength(1);
+});
 });

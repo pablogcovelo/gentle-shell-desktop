@@ -42,6 +42,10 @@ export interface ConversationContainerProps {
   /** Reports the host id the open/new or refresh resolution returned, so
    * App can keep it and pass it back down. */
   readonly onHostResolved?: (hostId: string) => void;
+  /** The open workspace's branch, for the sidebar card that names the
+   * workspace (owner decision: the branch belongs under the workspace name,
+   * not in the footer). Undefined when the child reported none. */
+  readonly onWorktreeBranch?: (branch: string | undefined) => void;
   /** T11: a workspace just created through "Add workspace" — the pane key
    * it belongs to plus the open/new-shaped resolution main already
    * returned (host id + state). When it matches the active pane, the
@@ -153,7 +157,7 @@ function errorText(cause: unknown): string {
  * notifications (desktop-rpc T2b) render in the same status surface for
  * the same reason: they are feedback chrome, never transcript entries.
  */
-export function ConversationContainer({ activeChat, activeHostId, onHostResolved, createdWorkspace, footerTarget }: ConversationContainerProps) {
+export function ConversationContainer({ activeChat, activeHostId, onHostResolved, onWorktreeBranch, createdWorkspace, footerTarget }: ConversationContainerProps) {
   const bridge = useBridge();
   const [chatState, setChatState] = useState<ChatState>(emptyChatState());
   // The host id this container resolved for the current activeChat, kept
@@ -393,6 +397,13 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   // from the sidebar is a different pane identity and therefore gets its own
   // intro, because the app cannot prove it is the same conversation that was
   // just saved.
+  // The branch describes the open workspace, so it is reported upward whenever
+  // it changes and cleared on a chat switch: only the row that names the
+  // workspace may carry it.
+  const worktreeBranch = chatState.workspace?.worktree?.branch;
+  useEffect(() => {
+    onWorktreeBranch?.(worktreeBranch);
+  }, [onWorktreeBranch, worktreeBranch, activeChat]);
   const title = directoryOf(workspacePath ?? "") ?? (activeChat.kind === "existing" ? activeChat.chat.title : "New chat");
   const welcomeKey = chatKeyOf(activeChat);
   const footer = <Footer workspace={chatState.workspace} workspacePath={workspacePath} session={chatState.session} appVersion={appVersion} />;

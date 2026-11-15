@@ -4,6 +4,10 @@ import "./ChatListItem.css";
 export interface ChatListItemProps {
   readonly chat: ChatSummary;
   readonly selected?: boolean;
+  /** The open workspace's branch, when its child reported one. Only the
+   * selected row can have it: it comes from that workspace's live worktree
+   * state, and the session summary carries no branch to invent one from. */
+  readonly branch?: string;
   readonly onSelect: (chat: ChatSummary) => void;
 }
 
@@ -12,7 +16,7 @@ export function directoryOf(cwd: ChatSummary["cwd"]): string | undefined {
   return cwd ? cwd.split(/[\\/]/).filter(Boolean).pop() : undefined;
 }
 
-export function ChatListItem({ chat, selected = false, onSelect }: ChatListItemProps) {
+export function ChatListItem({ chat, selected = false, branch, onSelect }: ChatListItemProps) {
   const directory = directoryOf(chat.cwd);
   return (
     <li>
@@ -22,7 +26,10 @@ export function ChatListItem({ chat, selected = false, onSelect }: ChatListItemP
         </svg>
         <span className="gc-chat-list-item__body">
           <strong className="gc-chat-list-item__title">{directory ?? chat.title}</strong>
-          {/* ChatSummary has no branch field: do not substitute a cwd, state or sample branch. */}
+          {/* The branch belongs under the workspace name (owner decision), and
+          only when the child reported one: ChatSummary has no branch field, so
+          an unselected row must not invent one. */}
+          {branch !== undefined ? <span className="gc-chat-list-item__branch">{branch}</span> : null}
         </span>
       </button>
     </li>
