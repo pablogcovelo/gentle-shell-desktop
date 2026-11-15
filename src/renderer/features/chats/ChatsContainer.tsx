@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChatSummary, OpenChatResult } from "@shared/bridge-types";
 import { useBridge } from "@renderer/shared/bridge/useBridge";
 import { Button } from "@renderer/shared/ui/atoms/Button";
@@ -36,6 +36,23 @@ export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, se
   // list's — a refused directory is a clear message beside the action that
   // asked for it, and never a fake chat entry.
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  // T11: one Add-workspace flow at a time, and any action that moves the pane
+  // supersedes a flow already running (see handleAddWorkspace).
+  const [addingWorkspace, setAddingWorkspace] = useState(false);
+  // The ref is the synchronous guard: state only lands on the next render, so
+  // two clicks in the same tick would both pass a state-based check.
+  const addingRef = useRef(false);
+  const paneActions = useRef(0);
+
+  const handleSelect = (chat: ChatSummary): void => {
+    paneActions.current += 1;
+    onSelectChat(chat);
+  };
+
+  const handleNewChat = (): void => {
+    paneActions.current += 1;
+    onNewChat();
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -60,6 +77,7 @@ export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, se
    * workspace, and the resolution is handed up so App can adopt the pane.
    * A refused directory surfaces here, beside the action that asked for it. */
   const handleAddWorkspace = (): void => {
+    if (addingRef.current) return; // one flow at a time: no duplicate creations
     void (async () => {
       if (!onWorkspaceCreated) return;
       const pick = bridge.chooseDirectory?.bind(bridge);
@@ -67,11 +85,24 @@ export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, se
       if (!pick || !create) return;
 
       setWorkspaceError(null);
-      const directory = await pick();
-      if (directory === null) return; // cancelled: change nothing
+      addingRef.current = true;
+      setAddingWorkspace(true);
+      // A creation takes as long as the picker and a child start. If the user
+      // opens another chat in the meantime, their later choice wins: the stale
+      // answer would otherwise switch the pane back and strand the chat they
+      // picked, with its host alive and invisible.
+      const actionAtStart = paneActions.current;
+      try {
+        const directory = await pick();
+        if (directory === null) return; // cancelled: change nothing
 
-      const result = await create(directory);
-      onWorkspaceCreated(result);
+        const result = await create(directory);
+        if (paneActions.current !== actionAtStart) return; // superseded
+        onWorkspaceCreated(result);
+      } finally {
+        addingRef.current = false;
+        setAddingWorkspace(false);
+      }
     })().catch((cause: unknown) => {
       setWorkspaceError(cause instanceof Error ? cause.message : String(cause));
     });
@@ -82,11 +113,11 @@ export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, se
       <div className="gc-chats__header">
         <h2 className="gc-chats__heading">Chats</h2>
         {onWorkspaceCreated ? (
-          <Button variant="ghost" type="button" onClick={handleAddWorkspace}>
+          <Button variant="ghost" type="button" onClick={handleAddWorkspace} disabled={addingWorkspace}>
             Add workspace
           </Button>
         ) : null}
-        <Button variant="ghost" type="button" onClick={onNewChat}>
+        <Button variant="ghost" type="button" onClick={handleNewChat}>
           New chat
         </Button>
       </div>
@@ -98,7 +129,7 @@ export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, se
           Could not add the workspace: {workspaceError}
         </p>
       )}
-      <ChatList chats={chats} selectedId={selectedChatId} onSelect={onSelectChat} />
+      <ChatList chats={chats} selectedId={selectedChatId} onSelect={handleSelect} />
     </aside>
   );
 }

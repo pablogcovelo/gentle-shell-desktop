@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { CHAT_STATE, type ChatSummary, type GentleBridge } from "@shared/bridge-types";
+import { CHAT_STATE, type ChatState, type ChatSummary, type GentleBridge } from "@shared/bridge-types";
 import { ChatsContainer } from "./ChatsContainer";
 
 function makeBridge(overrides: Partial<GentleBridge> = {}): GentleBridge {
@@ -52,4 +52,56 @@ it("calls onSelectChat with the chat when a list item is clicked", async () => {
   (await screen.findByRole("button", { name: /Refactor the store/ })).click();
 
   expect(onSelectChat).toHaveBeenCalledWith(chat);
+});
+
+const EMPTY_STATE: ChatState = {
+  messages: [],
+  working: false,
+  pendingDialogs: [],
+  activity: 0,
+  helpers: { summary: { running: 0, queued: 0, waiting: 0, finished: 0 }, tasks: [] },
+};
+
+it("does not adopt a workspace created after the user moved on", async () => {
+  let releaseCreate: (() => void) | undefined;
+  const onWorkspaceCreated = vi.fn();
+  const createWorkspace = vi.fn(
+    () =>
+      new Promise<{ hostId: string; state: ChatState }>((resolve) => {
+        releaseCreate = () => resolve({ hostId: "host-1", state: EMPTY_STATE });
+      }),
+  );
+  window.gentle = makeBridge({
+    chooseDirectory: vi.fn().mockResolvedValue("/tmp/ws-late"),
+    createWorkspace,
+  });
+
+  render(
+    <ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} onWorkspaceCreated={onWorkspaceCreated} />,
+  );
+  screen.getByRole("button", { name: "Add workspace" }).click();
+  await vi.waitFor(() => expect(createWorkspace).toHaveBeenCalled());
+
+  // The user changes their mind while the creation is still running: its
+  // answer must not switch the pane back and strand the chat they picked.
+  screen.getByRole("button", { name: "New chat" }).click();
+  releaseCreate?.();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  expect(onWorkspaceCreated).not.toHaveBeenCalled();
+});
+
+it("ignores a second Add workspace click while one is in flight", async () => {
+  const chooseDirectory = vi.fn(() => new Promise<string | null>(() => {}));
+  const createWorkspace = vi.fn();
+  window.gentle = makeBridge({ chooseDirectory, createWorkspace });
+
+  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} onWorkspaceCreated={vi.fn()} />);
+  const button = screen.getByRole("button", { name: "Add workspace" });
+  button.click();
+  button.click();
+  await vi.waitFor(() => expect(chooseDirectory).toHaveBeenCalledTimes(1));
+
+  expect(chooseDirectory).toHaveBeenCalledTimes(1);
 });
