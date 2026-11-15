@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChatSummary, OpenChatResult } from "@shared/bridge-types";
+import type { ChatSummary, OpenChatResult, SetupStatus } from "@shared/bridge-types";
 import { useBridge } from "@renderer/shared/bridge/useBridge";
 import { ChatsContainer } from "@renderer/features/chats/ChatsContainer";
 import { ConversationContainer, type ActiveChat } from "@renderer/features/conversation/ConversationContainer";
 import { FirstRunContainer } from "@renderer/features/first-run/FirstRunContainer";
 import { AppRail } from "./components/AppRail";
-import { TopBar } from "./components/TopBar";
+import { AppDialogs, APP_DIALOG, type AppDialogName } from "./components/AppDialogs";
+import { TopBar, type WindowControls } from "./components/TopBar";
 import "./App.css";
 
 const NEW_CHAT: ActiveChat = { kind: "new", epoch: 0 };
@@ -56,18 +57,47 @@ export function App() {
   // on the shell so the modifier classes below stay the only source of layout.
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [inspectorVisible, setInspectorVisible] = useState(true);
+  // The top bar's one search: the shell owns the text, the sidebar applies it
+  // (the artboard's search box filters the directory list).
+  const [query, setQuery] = useState("");
+  // The chrome's two dialogs: which one is open, if any.
+  const [dialog, setDialog] = useState<AppDialogName | undefined>(undefined);
+  // Facts the dialogs report: what the first-run probe found, and the
+  // version this build ships. Both are read once and never guessed.
+  const [setup, setSetup] = useState<SetupStatus | undefined>(undefined);
+  const [appVersion, setAppVersion] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
     bridge
       .setupStatus()
       .then((status) => {
-        if (!cancelled) setScreen(status.needsChoice ? SCREEN.FIRST_RUN : SCREEN.CHAT);
+        if (cancelled) return;
+        setSetup(status);
+        setScreen(status.needsChoice ? SCREEN.FIRST_RUN : SCREEN.CHAT);
       })
       .catch(() => {
         // Fail open: a broken setup-status check should never block the
         // whole app from starting.
         if (!cancelled) setScreen(SCREEN.CHAT);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [bridge]);
+
+  // The version the settings dialog reports. Asked once: it cannot change
+  // while the window lives, and a bridge without app facts leaves it absent
+  // rather than guessed.
+  useEffect(() => {
+    let cancelled = false;
+    bridge
+      .appInfo?.()
+      .then((info) => {
+        if (!cancelled) setAppVersion(info.version);
+      })
+      .catch(() => {
+        if (!cancelled) setAppVersion(undefined);
       });
     return () => {
       cancelled = true;
@@ -99,6 +129,20 @@ export function App() {
   if (screen === SCREEN.LOADING) return <div className="gc-app-loading" />;
   if (screen === SCREEN.FIRST_RUN) return <FirstRunContainer onDone={() => setScreen(SCREEN.CHAT)} />;
 
+  const toggleSidebar = (): void => setSidebarVisible((visible) => !visible);
+  const toggleInspector = (): void => setInspectorVisible((visible) => !visible);
+  // The window's own buttons exist only where the bridge does: outside
+  // Electron (the browser preview) there is no OS window to act on, so the
+  // chrome omits them instead of drawing buttons that do nothing.
+  const windowControls: WindowControls | undefined =
+    bridge.minimizeWindow && bridge.toggleMaximizeWindow && bridge.closeWindow
+      ? {
+          minimize: () => void bridge.minimizeWindow?.(),
+          toggleMaximize: () => void bridge.toggleMaximizeWindow?.(),
+          close: () => void bridge.closeWindow?.(),
+        }
+      : undefined;
+
   const appClasses = [
     "gc-app",
     !sidebarVisible && "gc-app--sidebar-hidden",
@@ -112,16 +156,22 @@ export function App() {
       <TopBar
         sidebarVisible={sidebarVisible}
         inspectorVisible={inspectorVisible}
-        onToggleSidebar={() => setSidebarVisible((visible) => !visible)}
-        onToggleInspector={() => setInspectorVisible((visible) => !visible)}
+        onToggleSidebar={toggleSidebar}
+        onToggleInspector={toggleInspector}
+        query={query}
+        onQueryChange={setQuery}
+        onOpenSettings={() => setDialog(APP_DIALOG.SETTINGS)}
+        onOpenShortcuts={() => setDialog(APP_DIALOG.SHORTCUTS)}
+        windowControls={windowControls}
       />
       <div className="gc-app__body">
-        <AppRail sidebarVisible={sidebarVisible} onToggleSidebar={() => setSidebarVisible((visible) => !visible)} />
+        <AppRail sidebarVisible={sidebarVisible} onToggleSidebar={toggleSidebar} />
         <ChatsContainer
           onSelectChat={handleSelectChat}
           onNewChat={handleNewChat}
           onWorkspaceCreated={handleWorkspaceCreated}
           selectedChatId={activeChat.kind === "existing" ? activeChat.chat.id : undefined}
+          query={query}
         />
         <ConversationContainer
           activeChat={activeChat}
@@ -130,6 +180,12 @@ export function App() {
           onHostResolved={setActiveHostId}
         />
       </div>
+      <AppDialogs
+        dialog={dialog}
+        onClose={() => setDialog(undefined)}
+        appVersion={appVersion}
+        setup={setup}
+      />
     </div>
   );
 }
