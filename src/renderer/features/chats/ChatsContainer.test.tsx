@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { CHAT_STATE, type ChatState, type ChatSummary, type GentleBridge } from "@shared/bridge-types";
 import { ChatsContainer } from "./ChatsContainer";
 
@@ -104,4 +104,64 @@ it("ignores a second Add workspace click while one is in flight", async () => {
   await vi.waitFor(() => expect(chooseDirectory).toHaveBeenCalledTimes(1));
 
   expect(chooseDirectory).toHaveBeenCalledTimes(1);
+});
+
+it("does not start a creation when the user moved on during the picker", async () => {
+  let releasePick: ((directory: string | null) => void) | undefined;
+  const chooseDirectory = vi.fn(
+    () =>
+      new Promise<string | null>((resolve) => {
+        releasePick = resolve;
+      }),
+  );
+  const createWorkspace = vi.fn();
+  const onWorkspaceCreated = vi.fn();
+  window.gentle = makeBridge({ chooseDirectory, createWorkspace });
+
+  render(
+    <ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} onWorkspaceCreated={onWorkspaceCreated} />,
+  );
+  screen.getByRole("button", { name: "Add workspace" }).click();
+  await vi.waitFor(() => expect(chooseDirectory).toHaveBeenCalled());
+
+  // The user gave up on the picker and opened a new chat instead: the answer
+  // that arrives afterwards must not start a child nobody asked for.
+  screen.getByRole("button", { name: "New chat" }).click();
+  releasePick?.("/tmp/ws-abandoned");
+  await act(async () => {});
+
+  expect(createWorkspace).not.toHaveBeenCalled();
+  expect(onWorkspaceCreated).not.toHaveBeenCalled();
+});
+
+it("closes a workspace created after the user moved on instead of orphaning it", async () => {
+  let releaseCreate: (() => void) | undefined;
+  const closeChat = vi.fn().mockResolvedValue(undefined);
+  const onWorkspaceCreated = vi.fn();
+  const createWorkspace = vi.fn(
+    () =>
+      new Promise<{ hostId: string; state: ChatState }>((resolve) => {
+        releaseCreate = () => resolve({ hostId: "host-late", state: EMPTY_STATE });
+      }),
+  );
+  window.gentle = makeBridge({
+    chooseDirectory: vi.fn().mockResolvedValue("/tmp/ws-orphan"),
+    createWorkspace,
+    closeChat,
+  });
+
+  render(
+    <ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} onWorkspaceCreated={onWorkspaceCreated} />,
+  );
+  screen.getByRole("button", { name: "Add workspace" }).click();
+  await vi.waitFor(() => expect(createWorkspace).toHaveBeenCalled());
+
+  screen.getByRole("button", { name: "New chat" }).click();
+  releaseCreate?.();
+  await act(async () => {});
+
+  // Dropping the result would leave a live child nobody can reach: the same
+  // orphan this flow exists to avoid, so it is closed instead.
+  expect(onWorkspaceCreated).not.toHaveBeenCalled();
+  expect(closeChat).toHaveBeenCalledWith("host-late");
 });

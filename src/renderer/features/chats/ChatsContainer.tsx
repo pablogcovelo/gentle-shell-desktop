@@ -95,9 +95,18 @@ export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, se
       try {
         const directory = await pick();
         if (directory === null) return; // cancelled: change nothing
+        // The picker can stay open for a while: if the user moved on meanwhile,
+        // stop here and start no child at all for a workspace nobody waits for.
+        if (paneActions.current !== actionAtStart) return;
 
         const result = await create(directory);
-        if (paneActions.current !== actionAtStart) return; // superseded
+        if (paneActions.current !== actionAtStart) {
+          // The child already exists, so merely dropping the result would leave
+          // a workspace host nobody can reach — the same orphan this flow is
+          // meant to prevent. Close it instead.
+          void bridge.closeChat?.(result.hostId).catch(() => undefined);
+          return;
+        }
         onWorkspaceCreated(result);
       } finally {
         addingRef.current = false;
