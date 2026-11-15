@@ -333,4 +333,14 @@ describe("mockBridge", () => {
       }
     });
   });
+
+it("keeps the rest of the workspace facts when a chat's worktree is unavailable", async () => {
+  const opened = await mockBridge.openChat("chat-migration");
+
+  // The demo's unavailable worktree must not wipe the profile and MCP
+  // inventory the footer also renders.
+  expect(opened.state.workspace?.worktree?.countsUnavailable).toBe(true);
+  expect(opened.state.workspace?.profile).toBeDefined();
+  expect(opened.state.workspace?.mcp).toBeDefined();
+});
 });

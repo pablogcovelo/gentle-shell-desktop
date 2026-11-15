@@ -64,4 +64,21 @@ describe("parseWorktreeChanges (desktop-rpc T8b)", () => {
       countsUnavailable: true,
     });
   });
+
+it("keeps the branch the child supplied even when the counts are unavailable", () => {
+  const parsed = parseWorktreeChanges({
+    root: "/repo",
+    branch: "main",
+    model: { files: [{ path: "a.ts", countsUnavailable: true }], added: 4, deleted: 1, digest: "d" },
+  });
+
+  // The branch is the child's own fact and does not depend on the counts: a
+  // partial answer must not silently drop it from the footer.
+  expect(parsed).toEqual({
+    root: "/repo",
+    branch: "main",
+    files: ["a.ts"],
+    countsUnavailable: true,
+  });
+});
 });

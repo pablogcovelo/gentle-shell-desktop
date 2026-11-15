@@ -637,7 +637,11 @@ export const mockBridge: GentleBridge = {
     setState({
       ...emptyState(),
       hostId,
-      ...(id === "chat-migration" ? { workspace: UNAVAILABLE_WORKTREE_DEMO } : {}),
+      // Only the worktree is overridden: the demo keeps the profile and MCP
+      // inventory the same chat already showed.
+      ...(id === "chat-migration"
+        ? { workspace: { ...emptyState().workspace, ...UNAVAILABLE_WORKTREE_DEMO } }
+        : {}),
     });
     if (id === "chat-migration") startHelpersScenario();
     return { hostId, state: currentState };

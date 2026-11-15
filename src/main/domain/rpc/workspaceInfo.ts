@@ -34,23 +34,27 @@ export function parseWorktreeChanges(data: unknown): WorktreeChanges | undefined
   if (data.failed === true || data.unborn === true) return unavailableWorktreeChanges(data.root);
 
   const model = data.model;
-  if (!isRecord(model)) return unavailableWorktreeChanges(data.root);
-  if (typeof model.added !== "number" || !Number.isFinite(model.added)) return unavailableWorktreeChanges(data.root);
-  if (typeof model.deleted !== "number" || !Number.isFinite(model.deleted)) return unavailableWorktreeChanges(data.root);
+  const declaredBranch = typeof data.branch === "string" ? data.branch : undefined;
+  if (!isRecord(model)) return unavailableWorktreeChanges(data.root, declaredBranch);
+  if (typeof model.added !== "number" || !Number.isFinite(model.added)) return unavailableWorktreeChanges(data.root, declaredBranch);
+  if (typeof model.deleted !== "number" || !Number.isFinite(model.deleted)) return unavailableWorktreeChanges(data.root, declaredBranch);
 
   const files = parseFilePaths(model.files);
   // A file the child has not measured (an untracked file's lines are not in
   // `diff --numstat`) makes the sums PARTIAL: labelled, with no numbers
   // carried, so the footer cannot present a partial count as complete.
+  // `branch` sits beside `model` in the documented answer, and is "unknown"
+  // when the root's own branch cannot be read — that is the child's own word
+  // and is rendered as supplied, whether or not the counts survived.
+  const branch = typeof data.branch === "string" && data.branch.length > 0 ? { branch: data.branch } : {};
   const countsUnavailable = files.labeled || model.countsUnavailable === true;
-  if (countsUnavailable) return { root: data.root, files: files.paths, countsUnavailable: true };
+  if (countsUnavailable) {
+    return { root: data.root, ...branch, files: files.paths, countsUnavailable: true };
+  }
 
   return {
     root: data.root,
-    // `branch` sits beside `model` in the documented answer, and is
-    // "unknown" when the root's own branch cannot be read — that is the
-    // child's own word and is rendered as supplied.
-    ...(typeof data.branch === "string" && data.branch.length > 0 ? { branch: data.branch } : {}),
+    ...branch,
     files: files.paths,
     added: model.added,
     deleted: model.deleted,
@@ -59,8 +63,13 @@ export function parseWorktreeChanges(data: unknown): WorktreeChanges | undefined
 
 /** The unavailable shape shared by every "the child supplied no counts"
  * answer: no numbers at all, only the flag the footer renders as such. */
-export function unavailableWorktreeChanges(root: string): WorktreeChanges {
-  return { root, files: [], countsUnavailable: true };
+export function unavailableWorktreeChanges(root: string, branch?: string): WorktreeChanges {
+  return {
+    root,
+    ...(branch !== undefined && branch.length > 0 ? { branch } : {}),
+    files: [],
+    countsUnavailable: true,
+  };
 }
 
 /** The per-file projection: `file.path` is relative to `root`, and a file
