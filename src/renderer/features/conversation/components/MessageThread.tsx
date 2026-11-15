@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { MESSAGE_ROLE, type ChatMessage, type Dialog, type DialogAnswer } from "@shared/bridge-types";
 import { DialogCard } from "./DialogCard";
 import { MessageBubble } from "./MessageBubble";
@@ -15,12 +15,13 @@ export interface MessageThreadProps {
    * callers that do not own a chat identity.
    */
   readonly welcomeKey?: string;
+  readonly activity?: ReactNode;
 }
 
 // Presentational: renders message bubbles in order, then any pending
 // dialog cards (pi blocks on these, so they read as the newest thing in
 // the thread), and auto-scrolls to the bottom whenever either changes.
-export function MessageThread({ messages, dialogs, onAnswerDialog, welcomeKey }: MessageThreadProps) {
+export function MessageThread({ messages, dialogs, onAnswerDialog, welcomeKey, activity }: MessageThreadProps) {
   // React 19: ref is a normal prop/hook value, no forwardRef needed.
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -67,6 +68,7 @@ export function MessageThread({ messages, dialogs, onAnswerDialog, welcomeKey }:
           ))}
         </>
       )}
+      {activity}
       <div ref={bottomRef} />
     </div>
   );

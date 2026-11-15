@@ -76,21 +76,29 @@ export function UsageMeters({ usage, channelUnavailable, variant = "card" }: Usa
   return (
     <section className={chrome} aria-label="Subscription usage">
       {providers.map((provider) => (
-        <UsageProviderBlock key={provider.provider} provider={provider} />
+        <UsageProviderBlock key={provider.provider} provider={provider} panel={variant === "panel"} />
       ))}
     </section>
   );
 }
 
-function UsageProviderBlock({ provider }: { readonly provider: UsageProvider }) {
+function UsageProviderBlock({ provider, panel }: { readonly provider: UsageProvider; readonly panel: boolean }) {
   const limits = provider.limits ?? [];
   const windowCount = limits.reduce((total, limit) => total + limit.windows.length, 0);
 
   return (
     <div className="gc-usage__provider" data-provider={provider.provider}>
       <div className="gc-usage__provider-head">
-        <span className="gc-usage__provider-name">{provider.provider}</span>
-        {provider.plan ? <span className="gc-usage__plan">{provider.plan}</span> : null}
+        {panel && <span className="gc-usage__mark" aria-hidden="true">{provider.provider.slice(0, 2).toUpperCase()}</span>}
+        {panel ? (
+          <div>
+            <span className="gc-usage__provider-name">{provider.provider}</span>
+            {provider.plan ? <span className="gc-usage__plan">{provider.plan}</span> : null}
+          </div>
+        ) : <>
+          <span className="gc-usage__provider-name">{provider.provider}</span>
+          {provider.plan ? <span className="gc-usage__plan">{provider.plan}</span> : null}
+        </>}
       </div>
       {windowCount > 0 ? (
         limits.map((limit, index) => <UsageLimitGroup key={index} limit={limit} showName={limits.length > 1} />)

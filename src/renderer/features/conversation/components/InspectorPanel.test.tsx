@@ -81,6 +81,23 @@ function renderPanel(props: {
 }
 
 describe("InspectorPanel", () => {
+  it("keeps real agent metadata behind a collapsed disclosure", () => {
+    renderPanel({ helpers: helpersActivity([helperTask({ lastStep: "Reading source" })]) });
+    const summary = screen.getByText("refactorer").closest("summary")!;
+    const details = summary.closest("details")!;
+    expect(details).not.toHaveAttribute("open");
+    fireEvent.click(summary);
+    expect(details).toHaveAttribute("open");
+    expect(details).toHaveTextContent("a1");
+    expect(details).toHaveTextContent("Reading source");
+    expect(details).toHaveTextContent("3 turns · 7 tool calls");
+  });
+
+  it("shows derived task progress without changing the card variant", () => {
+    renderPanel({ todo: todoState([todoTask({ id: 1, status: "done" }), todoTask({ id: 2 })]) });
+    expect(screen.getByRole("progressbar", { name: "Task progress" })).toHaveAttribute("aria-valuenow", "50");
+    expect(screen.getByText("1/2 · 50%")).toBeInTheDocument();
+  });
   it("renders the three sections in the fixed order Todo / Usage / Agents (S3)", () => {
     renderPanel();
 

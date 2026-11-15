@@ -19,6 +19,20 @@ function Harness(props: { readonly initial?: string; readonly onPickFile?: () =>
 }
 
 describe("Composer", () => {
+  it("keeps Send icon-only and grows then shrinks the textarea with the draft", () => {
+    const props = { working: false, onChange: vi.fn(), onSend: vi.fn(), onAbort: vi.fn() };
+    const { rerender } = render(<Composer {...props} value="hi" />);
+    const field = screen.getByRole("textbox");
+    Object.defineProperty(field, "scrollHeight", { configurable: true, value: 120 });
+    rerender(<Composer {...props} value="hi\nmore" />);
+    expect(field).toHaveStyle({ height: "120px" });
+    Object.defineProperty(field, "scrollHeight", { configurable: true, value: 48 });
+    rerender(<Composer {...props} value="" />);
+    expect(field).toHaveStyle({ height: "48px" });
+    const send = screen.getByRole("button", { name: "Send" });
+    expect(send.textContent).toBe("");
+    expect(send.querySelector("svg")).not.toBeNull();
+  });
   it("exposes the form with the accessible name 'Composer'", () => {
     render(<Composer value="" working={false} onChange={vi.fn()} onSend={vi.fn()} onAbort={vi.fn()} />);
 

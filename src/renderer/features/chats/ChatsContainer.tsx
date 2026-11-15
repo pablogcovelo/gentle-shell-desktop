@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ChatSummary, OpenChatResult } from "@shared/bridge-types";
 import { useBridge } from "@renderer/shared/bridge/useBridge";
 import { Button } from "@renderer/shared/ui/atoms/Button";
@@ -23,6 +23,8 @@ export interface ChatsContainerProps {
   /** Case-insensitive filter from the top bar's search. When undefined or
    * blank, every chat renders. Matches the chat title or its directory. */
   readonly query?: string;
+  readonly navigationTools?: ReactNode;
+  readonly navigationOpen?: boolean;
 }
 
 /**
@@ -32,7 +34,7 @@ export interface ChatsContainerProps {
  * owns "the currently open chat" per GentleBridge's single-current-chat
  * shape, so this only reports selection intent up to App.
  */
-export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, selectedChatId, query }: ChatsContainerProps) {
+export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, selectedChatId, query, navigationTools, navigationOpen }: ChatsContainerProps) {
   const bridge = useBridge();
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +71,19 @@ export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, se
     paneActions.current += 1;
     onNewChat();
   };
+
+  // The removed visible New chat action remains available with Ctrl/⌘+N.
+  // Reuse the same pane-action helper so pending creations still lose to it.
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent): void => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "n" && !document.querySelector('[role="dialog"]')) {
+        event.preventDefault();
+        handleNewChat();
+      }
+    };
+    window.addEventListener("keydown", keydown);
+    return () => window.removeEventListener("keydown", keydown);
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -136,7 +151,14 @@ export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, se
   // S8: the sidebar SHOWS chats as workspaces (the bridge serves chats, the
   // owner's call), so the panel's heading is the artboard's "Workspaces".
   return (
-    <aside className="gc-chats" id="gc-chats">
+    <aside className="gc-chats" id="gc-chats" aria-label="Workspace directories" onKeyDown={(event) => {
+      if (!navigationOpen || event.key !== "Tab") return;
+      const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
+      const first = buttons[0];
+      const last = buttons.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }}>
       {/* T2: the artboard's directory-panel anatomy (design/slack-gentle/
       01-workspace.html .sidebar-head): eyebrow, heading with its accent dot
       and a subtitle. The dot is aria-hidden so the heading's accessible name
@@ -149,11 +171,9 @@ export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, se
         <p className="gc-chats__subtitle">Your directories. One place to build.</p>
       </div>
       <div className="gc-chats__actions">
-        <Button variant="primary" type="button" onClick={handleNewChat}>
-          New chat
-        </Button>
         {onWorkspaceCreated ? (
           <Button variant="ghost" type="button" onClick={handleAddWorkspace} disabled={addingWorkspace}>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
             Add workspace
           </Button>
         ) : null}
@@ -170,6 +190,11 @@ export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, se
       {normalizedQuery && visibleChats.length === 0 && (
         <p className="gc-chats__empty">No chats match &quot;{normalizedQuery}&quot;.</p>
       )}
+      <div className="gc-chats__footer">
+        <p>You lead. Gentle helps.</p>
+        <p>Local directory workspaces.</p>
+        <div className="gc-chats__mobile-tools">{navigationTools}</div>
+      </div>
     </aside>
   );
 }

@@ -19,7 +19,7 @@ function makeChat(overrides: Partial<ChatSummary> = {}): ChatSummary {
 }
 
 describe("ChatList", () => {
-  it("renders a day heading per group and a state pill per chat", () => {
+  it("renders flat directory rows without day groups, state pills or invented branches", () => {
     const chats = [
       makeChat({ id: "a", title: "Today's chat", updatedAt: "2026-09-21T09:00:00.000Z", state: CHAT_STATE.WORKING }),
       makeChat({ id: "b", title: "Old chat", updatedAt: "2026-09-10T09:00:00.000Z", state: CHAT_STATE.NEEDS_YOU }),
@@ -27,10 +27,11 @@ describe("ChatList", () => {
 
     render(<ChatList chats={chats} onSelect={vi.fn()} now={NOW} />);
 
-    expect(screen.getByRole("heading", { name: "Today" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "2026-09-10" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Today's chat/ })).toHaveTextContent("working");
-    expect(screen.getByRole("button", { name: /Old chat/ })).toHaveTextContent("needs you");
+    expect(screen.queryByRole("heading")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Today's chat/ })).toHaveTextContent("project");
+    expect(screen.queryByText("working")).not.toBeInTheDocument();
+    expect(screen.queryByText("needs you")).not.toBeInTheDocument();
+    expect(screen.queryByText("main")).not.toBeInTheDocument();
   });
 
   it("calls onSelect with the chat when an item is clicked", () => {
@@ -73,12 +74,13 @@ describe("ChatList", () => {
     expect(screen.getByRole("button", { name: /Bare/ })).not.toHaveTextContent("proj");
   });
 
-  it("keeps the state pill beside the directory on the meta line", () => {
+  it("uses the directory as the visible row title while preserving the chat title for selection", () => {
     const chat = makeChat({ id: "a", title: "Alpha", state: CHAT_STATE.NEEDS_YOU });
 
     render(<ChatList chats={[chat]} onSelect={vi.fn()} now={NOW} />);
 
-    expect(screen.getByRole("button", { name: /Alpha/ })).toHaveTextContent("needs you");
+    expect(screen.getByRole("button", { name: /Alpha/ })).not.toHaveTextContent("needs you");
+    expect(screen.getByRole("button", { name: /Alpha/ })).not.toHaveTextContent("Alpha");
     expect(screen.getByRole("button", { name: /Alpha/ })).toHaveTextContent("project");
   });
 });

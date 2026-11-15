@@ -1,84 +1,31 @@
-/*
- * Context bar + tab row (design/slack-gentle/01-workspace.html `.contextbar`
- * and `.tabbar`): the chat's directory glyph and title on one line, then
- * underline-style pane tabs on the border.
- */
-
 .gc-conversation-header {
-  display: flex;
-  flex-direction: column;
   flex: none;
   min-width: 0;
+  border-bottom: 1px solid var(--line);
 }
-
 .gc-conversation-header__context {
   display: flex;
   align-items: center;
-  gap: 10px;
+  padding: 22px 28px 20px;
   min-width: 0;
-  padding: 18px 28px 14px;
 }
-
 .gc-conversation-header__title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  /* Board: 8px icon margin + 4.9375px inline space at this title font. */
+  gap: 12.9375px;
   min-width: 0;
   margin: 0;
   color: var(--text);
-  font-family: var(--font-display);
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: -0.3px;
 }
-
-.gc-conversation-header__glyph {
-  flex: none;
-  color: var(--accent);
+.gc-conversation-header__glyph { flex: none; color: var(--accent); }
+.gc-conversation-header__title-text { min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 1100px) {
+  .gc-conversation-header__context { padding: 18px; }
 }
-
-.gc-conversation-header__title-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.gc-conversation-header__tabs {
-  display: flex;
-  align-items: center;
-  gap: 22px;
-  margin: 0 28px;
-  border-bottom: 1px solid var(--line);
-}
-
-.gc-conversation-header__tab {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 10px 0 11px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  background: transparent;
-  color: var(--muted);
-  font-family: var(--font-body);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.gc-conversation-header__tab:hover {
-  color: var(--text-2);
-}
-
-.gc-conversation-header__tab--active {
-  border-bottom-color: var(--accent);
-  color: var(--text);
-}
-
-.gc-conversation-header__tab:focus-visible {
-  outline: 2px solid var(--accent-active);
-  outline-offset: 2px;
+@media (max-width: 800px) {
+  .gc-conversation-header__glyph { display: none; }
 }

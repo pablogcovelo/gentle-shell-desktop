@@ -52,8 +52,11 @@ export function Footer({ workspace, workspacePath, session, appVersion }: Footer
   const contextPercent = session?.contextPercent;
 
   return (
-    <section className="gc-footer" aria-label="Session footer">
-      <span className="gc-footer__group gc-footer__path">{workspacePath ?? "~/"} </span>
+    <section className="gc-footer" aria-label="Session footer" tabIndex={0} title="Scroll horizontally to see all session details in narrow windows.">
+      <span className="gc-footer__group gc-footer__path">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z" /></svg>
+        <span>{workspacePath ?? "~/"}</span>
+      </span>
       {worktree ? <ChangesGroup worktree={worktree} /> : null}
       {mcp ? <CapabilitiesGroup mcp={mcp} /> : null}
       {session ? <IdentityGroup session={session} profileLabel={profileLabel} /> : null}
@@ -66,7 +69,7 @@ export function Footer({ workspace, workspacePath, session, appVersion }: Footer
           <span className="gc-footer__context-used">{contextPercent}%</span>
         </span>
       ) : null}
-      {appVersion ? <span className="gc-footer__version">{appVersion}</span> : null}
+      {appVersion ? <span className="gc-footer__version">{appVersion.startsWith("v") ? appVersion : `v${appVersion}`}</span> : null}
     </section>
   );
 }
@@ -94,7 +97,7 @@ function IdentityGroup({
       {modelLabel ? <span className="gc-footer__model">{modelLabel}</span> : null}
       {modelLabel && thinkingLevel ? <DotSeparator /> : null}
       {thinkingLevel ? <span className="gc-footer__thinking">{thinkingLevel}</span> : null}
-      {thinkingLevel && profileLabel ? <DotSeparator /> : null}
+      {(thinkingLevel || modelLabel) && profileLabel ? <DotSeparator /> : null}
       {profileLabel ? <span>{profileLabel}</span> : null}
     </span>
   );
@@ -134,9 +137,11 @@ function ChangesGroup({ worktree }: { worktree: WorktreeChanges }) {
 function CapabilitiesGroup({ mcp }: { mcp: McpStatus }) {
   const names = mcp.configuredNames.length > 0 ? mcp.configuredNames.length : mcp.registered.length;
   return (
-    <span className="gc-footer__group">
-      <span className="gc-footer__label">MCP</span>
-      <span>{names === 0 && mcp.configuredStatus === "absent" ? "none configured" : `${names} configured · ${mcp.namespaces.length} tool groups`}</span>
+    <span className="gc-footer__group" role="group" aria-label="Capabilities">
+      <span className="gc-footer__capability" role="img" aria-label={`MCP: ${names} configured servers`} title={`MCP: ${names} configured servers`}>
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 3v5M16 3v5M6 8h12v4a6 6 0 0 1-12 0V8ZM12 18v4" /></svg>
+        <span>{names}</span>
+      </span>
     </span>
   );
 }

@@ -1,81 +1,55 @@
-/*
- * App shell — the "Workspace" layout from design/slack-gentle/01-workspace.html:
- * one compact chrome row, then the three-column body
- * (application rail | chat directories | open conversation).
- *
- * The conversation keeps its own footer instead of the artboard's app-wide
- * one: every fact in it (path, branch, changes, MCP, profile) belongs to the
- * single open chat the bridge serves, so the shell must not own it.
- *
- * Panel visibility is owned here as modifier classes: a toggle collapses a
- * whole column, and the grid template is what gives the width back.
- */
+/* Final board cascade: compact chrome, three-column body, app-wide footer. */
+body { font: 14px/1.55 "Segoe UI", system-ui, sans-serif; }
 .gc-app {
-  --gc-chrome-height: 34px;
+  --gc-chrome-height: 33.5px;
   --gc-rail-width: 84px;
   --gc-sidebar-width: 260px;
+  --font-body: "Segoe UI", system-ui, sans-serif;
+  --font-display: "Segoe UI", system-ui, sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, monospace;
+  font: 14px/1.55 var(--font-body);
   display: grid;
-  grid-template-rows: var(--gc-chrome-height) minmax(0, 1fr);
+  grid-template-rows: var(--gc-chrome-height) minmax(0, 1fr) var(--gc-chrome-height);
   grid-template-columns: minmax(0, 1fr);
   height: 100%;
-  font-family: var(--font-body);
+  min-height: 650px;
   background: var(--bg);
   color: var(--text);
 }
-
 .gc-app__body {
   display: grid;
   grid-template-columns: var(--gc-rail-width) var(--gc-sidebar-width) minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
 }
-
-.gc-app--sidebar-hidden .gc-app__body {
-  grid-template-columns: var(--gc-rail-width) minmax(0, 1fr);
-}
-
-.gc-app--sidebar-hidden .gc-chats {
-  display: none;
-}
-
-/* The inspector's own grid lives in ConversationContainer.css; the shell only
- * says whether the column exists, so the panel keeps owning its layout. */
-.gc-app--inspector-hidden .gc-inspector {
-  display: none;
-}
-
+.gc-app__footer { min-width: 0; min-height: 0; }
+.gc-app__footer > .gc-footer { height: 100%; }
+.gc-app--sidebar-hidden .gc-app__body { grid-template-columns: var(--gc-rail-width) minmax(0, 1fr); }
+.gc-app--sidebar-hidden .gc-chats { display: none; }
+.gc-app--inspector-hidden .gc-inspector { display: none; }
 .gc-app--inspector-hidden .gc-conversation__body {
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
 }
-
-.gc-app-loading {
-  height: 100%;
-  background: var(--bg);
-}
-
+.gc-app-loading { height: 100%; background: var(--bg); }
 @media (max-width: 1100px) {
-  .gc-app__body {
-    grid-template-columns: 64px 220px minmax(0, 1fr);
-  }
-
-  .gc-app--sidebar-hidden .gc-app__body {
-    grid-template-columns: 64px minmax(0, 1fr);
-  }
+  .gc-app { --gc-sidebar-width: 220px; }
+  .gc-app--inspector-hidden .gc-conversation__body { overflow: hidden; }
+  .gc-app--inspector-hidden .gc-conversation__stack { flex: 1; min-height: 0; height: auto; }
 }
-
-/* Below 900px the rail goes away first: the directory panel is the part that
- * cannot be replaced, and the top bar's toggle can still collapse it. */
-@media (max-width: 900px) {
-  .gc-app__body {
-    grid-template-columns: 208px minmax(0, 1fr);
+@media (max-width: 800px) {
+  .gc-app { --gc-chrome-height: 32px; min-height: 600px; }
+  .gc-app__body, .gc-app--sidebar-hidden .gc-app__body { grid-template-columns: minmax(0, 1fr); }
+  .gc-rail, .gc-chats { display: none; }
+  .gc-app--nav-open .gc-chats {
+    display: flex;
+    position: absolute;
+    z-index: 2;
+    top: var(--gc-chrome-height);
+    bottom: var(--gc-chrome-height);
+    left: 0;
+    width: min(304px, 85vw);
+    border-right-color: var(--accent);
   }
-
-  .gc-app--sidebar-hidden .gc-app__body {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .gc-rail {
-    display: none;
-  }
+  .gc-app--nav-open .gc-conversation { opacity: .35; pointer-events: none; }
 }

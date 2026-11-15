@@ -1,34 +1,76 @@
-/*
- * Message rows (artboard `.message`): the human's words sit to the right in
- * the raised surface, Gentle's to the left on the panel surface. No accent
- * border — the accent is reserved for actions, so a message never reads as a
- * control.
- */
-
+/* Transparent speaker grids from the final Workspace board. */
 .gc-message {
-  max-width: 65ch;
-  padding: 0.65rem 0.9rem;
-  border-radius: 12px;
-  font-size: 0.9rem;
-  line-height: 1.65;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 12px;
+  margin: 0 0 26px;
+  color: var(--text-2);
   overflow-wrap: anywhere;
 }
-
-.gc-message--user {
-  align-self: flex-end;
+.gc-message__avatar {
+  width: 36px;
+  height: 36px;
   border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: var(--raised);
+  font: 600 12px var(--font-mono);
   color: var(--text);
 }
-
-.gc-message--assistant {
-  align-self: flex-start;
-  border: 1px solid var(--line);
-  background: var(--panel);
-  color: var(--text-2);
+.gc-message--assistant .gc-message__avatar {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
 }
-
-.gc-message__text {
-  margin: 0;
-  white-space: pre-wrap;
+.gc-message__body { min-width: 0; }
+.gc-message__speaker {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+.gc-message__speaker strong { font-size: 13px; }
+.gc-message__badge {
+  font: 9px var(--font-mono);
+  color: var(--accent);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.gc-message--user {
+  width: fit-content;
+  max-width: min(85%, 65ch);
+  margin-left: auto;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  text-align: right;
+}
+.gc-message--user .gc-message__avatar { grid-column: 2; grid-row: 1; }
+.gc-message--user .gc-message__body { grid-column: 1; grid-row: 1; }
+.gc-message--user .gc-message__speaker { justify-content: flex-end; }
+.gc-message__text { margin: 0; white-space: pre-wrap; }
+.gc-message__text, .gc-message .gs-markdown { font-size: 14px; line-height: 1.75; }
+.gc-message .gs-markdown p { max-width: 65ch; margin: 0; }
+.gc-message .gs-markdown p + p { margin-top: 10px; }
+.gc-message .gs-markdown code { color: var(--accent); font-size: 12px; }
+.gc-message .gs-markdown pre { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.gc-message .gs-markdown blockquote {
+  margin: 14px 0;
+  max-width: 540px;
+  border-left: 2px solid var(--accent);
+  background: var(--panel);
+  padding: 12px 16px;
+  border-radius: 0 8px 8px 0;
+}
+.gc-message .gs-markdown blockquote p { font-size: 12px; }
+@media (max-width: 800px) {
+  .gc-message--user { grid-template-columns: minmax(0, 1fr) 30px; }
+  .gc-message__text, .gc-message .gs-markdown { font-size: 13px; }
+}
+@media (max-width: 520px) {
+  .gc-message { gap: 8px; grid-template-columns: 30px minmax(0, 1fr); }
+  .gc-message--user { grid-template-columns: minmax(0, 1fr) 30px; }
+  .gc-message__avatar { width: 30px; height: 30px; }
 }

@@ -1,113 +1,38 @@
-/* App chrome row: one 34px line — brand, search, shell + window controls.
- * The bar is the window's drag region (the frame is gone), so every
- * interactive child opts out with no-drag. */
-
 .gc-topbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
   align-items: center;
-  gap: 12px;
+  gap: 4px;
   min-width: 0;
-  padding: 0 12px 0 16px;
+  height: var(--gc-chrome-height);
+  padding: 0 16px;
   border-bottom: 1px solid var(--line);
   background: var(--bg);
   -webkit-app-region: drag;
 }
-
-.gc-topbar__brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: none;
-  min-width: 0;
-}
-
-.gc-topbar__rose {
-  display: block;
-  flex: none;
-  width: 24px;
-  height: 24px;
-  object-fit: contain;
-  mix-blend-mode: screen;
-}
-
+.gc-topbar__brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.gc-topbar__rose { display: block; flex: none; width: 24px; height: 24px; object-fit: contain; }
 .gc-topbar__wordmark {
   margin: 0;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text);
-  font-family: var(--font-display);
   font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
+  font-weight: 650;
+  letter-spacing: .3px;
 }
-
-.gc-topbar__wordmark-suffix {
-  color: var(--accent);
-}
-
-/* The artboard's .searchbox: centered, muted, framed by --line-strong. */
-.gc-topbar__search {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: 0 1 620px;
-  min-width: 0;
-  height: 26px;
-  margin: 0 auto;
-  padding: 0 10px;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  background: var(--raised);
-  color: var(--muted);
-  -webkit-app-region: no-drag;
-}
-
-.gc-topbar__search:focus-within {
-  border-color: var(--accent);
-}
-
-.gc-topbar__search-input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  background: none;
-  color: var(--text);
-  font-family: var(--font-body);
-  font-size: 12px;
-  outline: none;
-}
-
-.gc-topbar__search-input::placeholder {
-  color: var(--muted);
-}
-
-.gc-topbar__search-input::-webkit-search-cancel-button {
-  filter: invert(0.7);
-}
-
-.gc-topbar__search-kbd {
-  flex: none;
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: 10px;
-}
-
-.gc-topbar__controls {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex: none;
-  -webkit-app-region: no-drag;
-}
-
-.gc-topbar__toggle {
+.gc-topbar__controls { display: flex; align-items: center; gap: 4px; -webkit-app-region: no-drag; }
+.gc-topbar__toggle, .gc-topbar__window-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   width: 28px;
+  min-width: 28px;
   height: 28px;
+  min-height: 28px;
   padding: 3px;
   border: 1px solid transparent;
   border-radius: 8px;
@@ -115,62 +40,12 @@
   color: var(--text-2);
   cursor: pointer;
 }
-
-.gc-topbar__toggle:hover {
-  background: var(--raised);
-  color: var(--text);
-}
-
-.gc-topbar__toggle[aria-expanded="true"] {
-  color: var(--accent);
-}
-
-/* The window's own buttons sit apart, like the artboard's .window-controls. */
-.gc-topbar__window {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  margin-left: 8px;
-  padding-left: 8px;
-  border-left: 1px solid var(--line-strong);
-}
-
-.gc-topbar__window-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 3px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-2);
-  cursor: pointer;
-}
-
-.gc-topbar__window-button:hover {
-  background: var(--raised);
-  color: var(--text);
-}
-
-.gc-topbar__window-button--close:hover {
-  background: var(--red);
-  color: var(--bg);
-}
-
-.gc-topbar__toggle:focus-visible,
-.gc-topbar__window-button:focus-visible {
-  outline: 2px solid var(--accent-active);
-  outline-offset: 2px;
-}
-
-@media (max-width: 900px) {
-  .gc-topbar__search-kbd {
-    display: none;
-  }
-
-  .gc-topbar__wordmark-suffix {
-    display: none;
-  }
+.gc-topbar__toggle:hover, .gc-topbar__window-button:hover { background: var(--raised); color: var(--text); }
+.gc-topbar__toggle[aria-expanded="true"] { color: var(--accent); }
+.gc-topbar__window { display: flex; align-items: center; gap: 2px; margin-left: 10px; padding-left: 10px; }
+.gc-topbar__window-button--close:hover { background: var(--red); color: var(--bg); }
+.gc-topbar__toggle:focus-visible, .gc-topbar__window-button:focus-visible { outline: 2px solid var(--accent-active); outline-offset: 2px; }
+@media (max-width: 800px) {
+  .gc-topbar__brand { gap: 4px; }
+  .gc-topbar__wordmark { font-size: 11px; }
 }

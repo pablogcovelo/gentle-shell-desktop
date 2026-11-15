@@ -3,15 +3,15 @@
  * the conversation surface. */
 
 .gc-action-rows {
-  padding: 0 32px 8px;
+  max-width: 65ch;
+  margin: 16px 0 24px 48px;
 }
 
 .gc-action-rows__caption {
   margin: 0 0 6px;
   color: var(--gc-muted, #a78e9b);
   font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+
 }
 
 .gc-action-rows__list {
@@ -26,12 +26,12 @@
 
 .gc-action-row__summary {
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) auto auto;
+  grid-template-columns: 22px minmax(0, 1fr) auto auto 12px;
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 34px;
-  padding: 6px 0;
+  min-height: 36px;
+  padding: 8px 0;
   background: none;
   border: 0;
   border-radius: 0;
@@ -39,6 +39,15 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.gc-action-row__summary::after { content: "+"; color: var(--muted); text-align: center; }
+.gc-action-row__summary[aria-expanded="true"]::after { content: "−"; }
+@media (max-width: 800px) {
+  .gc-action-rows { margin-left: 38px; }
+  .gc-action-row__summary { gap: 6px; }
+  .gc-action-row__label { font-size: 10px; }
+  .gc-action-row__state { font-size: 9px; }
 }
 
 .gc-action-row__summary:hover {

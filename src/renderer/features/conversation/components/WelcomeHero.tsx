@@ -183,10 +183,10 @@ export function WelcomeHero({ chatKey }: WelcomeHeroProps) {
         <p className="gc-welcome__desktop">
           DESKTOP <span>· You lead. Gentle helps.</span>
         </p>
+        <svg className="gc-welcome__spark" width={18} height={18} viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d={SPARK_PATH} />
+        </svg>
       </div>
-      <svg className="gc-welcome__spark" width={18} height={18} viewBox="0 0 24 24" aria-hidden="true">
-        <path fill="currentColor" d={SPARK_PATH} />
-      </svg>
     </header>
   );
 }

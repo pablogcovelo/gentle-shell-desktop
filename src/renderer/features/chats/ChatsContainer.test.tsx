@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { expect, it, vi } from "vitest";
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { CHAT_STATE, type ChatState, type ChatSummary, type GentleBridge } from "@shared/bridge-types";
 import { ChatsContainer } from "./ChatsContainer";
 
@@ -47,12 +47,13 @@ it("shows a message when listChats rejects", async () => {
   expect(await screen.findByText("Chats are not available yet: bridge not ready")).toBeInTheDocument();
 });
 
-it("calls onNewChat when the New chat button is clicked", async () => {
+it("calls onNewChat through Ctrl+N without a visible New chat button", async () => {
   window.gentle = makeBridge();
   const onNewChat = vi.fn();
 
   render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={onNewChat} />);
-  screen.getByRole("button", { name: "New chat" }).click();
+  expect(screen.queryByRole("button", { name: "New chat" })).not.toBeInTheDocument();
+  fireEvent.keyDown(window, { key: "n", ctrlKey: true });
 
   expect(onNewChat).toHaveBeenCalled();
 });
@@ -75,7 +76,7 @@ it("calls onSelectChat with the chat when a list item is clicked", async () => {
   expect(onSelectChat).toHaveBeenCalledWith(chat);
 });
 
-it("renders each row as glyph, title, directory and state pill", async () => {
+it("renders a directory row without a state pill", async () => {
   const chat = makeChat({ id: "chat-1", title: "Alpha", cwd: "/tmp/project" });
   window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([chat]) });
 
@@ -83,7 +84,7 @@ it("renders each row as glyph, title, directory and state pill", async () => {
   const row = await screen.findByRole("button", { name: /Alpha/ });
 
   expect(row).toHaveTextContent("project");
-  expect(row).toHaveTextContent("idle");
+  expect(row).not.toHaveTextContent("idle");
 });
 
 it("renders no directory when the chat's cwd is empty", async () => {
@@ -94,7 +95,8 @@ it("renders no directory when the chat's cwd is empty", async () => {
   const row = await screen.findByRole("button", { name: /Alpha/ });
 
   expect(row).not.toHaveTextContent("tmp");
-  expect(row).toHaveTextContent("idle");
+  expect(row).toHaveTextContent("Alpha");
+  expect(row).not.toHaveTextContent("idle");
 });
 
 it("filters chats by title, case-insensitively", async () => {
@@ -170,7 +172,7 @@ it("does not adopt a workspace created after the user moved on", async () => {
 
   // The user changes their mind while the creation is still running: its
   // answer must not switch the pane back and strand the chat they picked.
-  screen.getByRole("button", { name: "New chat" }).click();
+  fireEvent.keyDown(window, { key: "n", ctrlKey: true });
   releaseCreate?.();
   await Promise.resolve();
   await Promise.resolve();
@@ -212,7 +214,7 @@ it("does not start a creation when the user moved on during the picker", async (
 
   // The user gave up on the picker and opened a new chat instead: the answer
   // that arrives afterwards must not start a child nobody asked for.
-  screen.getByRole("button", { name: "New chat" }).click();
+  fireEvent.keyDown(window, { key: "n", ctrlKey: true });
   releasePick?.("/tmp/ws-abandoned");
   await act(async () => {});
 
@@ -242,7 +244,7 @@ it("closes a workspace created after the user moved on instead of orphaning it",
   screen.getByRole("button", { name: "Add workspace" }).click();
   await vi.waitFor(() => expect(createWorkspace).toHaveBeenCalled());
 
-  screen.getByRole("button", { name: "New chat" }).click();
+  fireEvent.keyDown(window, { key: "n", ctrlKey: true });
   releaseCreate?.();
   await act(async () => {});
 

@@ -9,7 +9,7 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-left: 1px solid var(--line-strong);
+  border-left: 1px solid var(--line);
   background: var(--panel);
   overflow: hidden;
   width: 100%;
@@ -94,15 +94,40 @@
 }
 
 .gc-inspector__agent {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  padding: 13px 0;
-  border-bottom: 1px solid var(--line);
-  font-size: 12px;
+  padding: 0;
+  font-size: 11px;
+}
+
+.gc-inspector__intro { margin: 2px 0 20px; }
+.gc-inspector__progress-meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 10px; margin-bottom: 8px; }
+.gc-inspector__progress { height: 4px; border-radius: 999px; background: var(--line-strong); }
+.gc-inspector__progress > span { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
+.gc-inspector__cost { display: flex; justify-content: space-between; gap: 10px; border-top: 1px solid var(--line); padding-top: 13px; margin-top: 14px; color: var(--muted); font: 10px var(--font-mono); }
+.gc-inspector__cost strong { color: var(--accent); font-size: 12px; }
+.gc-inspector__agent details { border: 0; padding: 0; margin: 0; }
+.gc-inspector__agent summary { display: flex; align-items: center; gap: 6px; min-height: 28px; padding: 3px 0; font: 11px/22px var(--font-mono); list-style: none; cursor: pointer; border-radius: 4px; }
+.gc-inspector__agent summary::-webkit-details-marker { display: none; }
+.gc-inspector__agent summary:hover { background: var(--raised); }
+.gc-inspector__agent summary::after { content: "⋯"; margin-left: auto; color: var(--muted); }
+.gc-inspector__agent details[open] summary::after { content: "−"; }
+.gc-inspector__agent-tree { color: var(--muted); }
+.gc-inspector__agent-caption { margin: 4px 0 10px; color: var(--muted); font-size: 10px; }
+.gc-inspector__agent-caption code { font: inherit; }
+.gc-inspector__agent-name code { color: var(--accent); font: inherit; }
+.gc-inspector__agent-log { padding: 8px 12px 14px 24px; margin: 2px 0 8px 5px; border-left: 1px solid var(--line-strong); overflow-wrap: anywhere; }
+.gc-inspector__agent-log p { margin: 3px 0 5px; }
+.gc-inspector__agent-log code { font: 10px var(--font-mono); color: var(--muted); }
+@media (max-width: 1200px) {
+  .gc-inspector__head { padding: 12px 16px 8px; }
+  .gc-inspector__scroll { padding: 0 16px 14px; }
 }
 
 .gc-inspector__agent-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-family: var(--font-mono);
   color: var(--text-2);
 }

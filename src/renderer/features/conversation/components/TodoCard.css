@@ -133,3 +133,25 @@
 .gc-todo-card__row--unknown .gc-todo-card__title {
   color: var(--text-2);
 }
+
+/* Panel-only overrides preserve the expandable standalone card. */
+.gc-todo-card--panel .gc-todo-card__rows {
+  margin: 12px 0 0;
+  padding: 0;
+  border: 0;
+  gap: 0;
+}
+.gc-todo-card--panel .gc-todo-card__row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: 4px 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.gc-todo-card--panel .gc-todo-card__marker { grid-row: 1 / 3; font-size: 14px; }
+.gc-todo-card--panel .gc-todo-card__note { grid-column: 2; font-size: 11px; }
+.gc-todo-card--panel .gc-todo-card__row--dimmed .gc-todo-card__title { text-decoration: none; }
+.gc-todo-card--panel .gc-todo-card__row--current .gc-todo-card__title { color: var(--text); font-weight: 500; }
+.gc-todo-card--panel .gc-todo-card__row--current .gc-todo-card__marker { color: var(--amber); }

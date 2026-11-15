@@ -4,7 +4,7 @@ import { useBridge } from "@renderer/shared/bridge/useBridge";
 import { ChatsContainer } from "@renderer/features/chats/ChatsContainer";
 import { ConversationContainer, type ActiveChat } from "@renderer/features/conversation/ConversationContainer";
 import { FirstRunContainer } from "@renderer/features/first-run/FirstRunContainer";
-import { AppRail } from "./components/AppRail";
+import { AppRail, RailTools } from "./components/AppRail";
 import { AppDialogs, APP_DIALOG, type AppDialogName } from "./components/AppDialogs";
 import { TopBar, type WindowControls } from "./components/TopBar";
 import "./App.css";
@@ -56,9 +56,23 @@ export function App() {
   // the directory column and the plan/usage/agents panel. Held as two booleans
   // on the shell so the modifier classes below stay the only source of layout.
   const [sidebarVisible, setSidebarVisible] = useState(true);
+  const [narrow, setNarrow] = useState(() => window.innerWidth <= 800);
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const [footerTarget, setFooterTarget] = useState<HTMLDivElement | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const searchTrigger = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const resize = (): void => {
+      setNarrow(window.innerWidth <= 800);
+      if (window.innerWidth > 800) setNavigationOpen(false);
+    };
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, []);
   const [inspectorVisible, setInspectorVisible] = useState(true);
-  // The top bar's one search: the shell owns the text, the sidebar applies it
-  // (the artboard's search box filters the directory list).
+  // Search stays available through Ctrl/⌘+K without restoring removed chrome.
   const [query, setQuery] = useState("");
   // The chrome's two dialogs: which one is open, if any.
   const [dialog, setDialog] = useState<AppDialogName | undefined>(undefined);
@@ -104,13 +118,53 @@ export function App() {
     };
   }, [bridge]);
 
+  useEffect(() => {
+    if (screen !== SCREEN.CHAT) return;
+    const keydown = (event: KeyboardEvent): void => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k" && !dialog) {
+        event.preventDefault();
+        searchTrigger.current = document.activeElement as HTMLElement;
+        setSearchOpen(true);
+        setNavigationOpen(true);
+        setSidebarVisible(true);
+      }
+      if (event.key === "Escape" && !dialog) {
+        if (searchOpen) {
+          setSearchOpen(false);
+          setQuery("");
+          searchTrigger.current?.focus();
+        } else if (navigationOpen) {
+          setNavigationOpen(false);
+          document.querySelector<HTMLButtonElement>('.gc-topbar__toggle')?.focus();
+        }
+      }
+    };
+    window.addEventListener("keydown", keydown);
+    return () => window.removeEventListener("keydown", keydown);
+  }, [screen, dialog, searchOpen, navigationOpen]);
+
+  useEffect(() => {
+    if (searchOpen) searchRef.current?.focus();
+  }, [searchOpen]);
+
+  useEffect(() => {
+    if (narrow && navigationOpen && !searchOpen) {
+      document.querySelector<HTMLButtonElement>(".gc-chats button")?.focus();
+    }
+  }, [narrow, navigationOpen, searchOpen]);
+
   const handleSelectChat = (chat: ChatSummary): void => {
+    setNavigationOpen(false);
+    setSearchOpen(false);
+    setQuery("");
     setActiveHostId(undefined); // the old host id must not answer for the new chat (T5b)
     setCreatedWorkspace(undefined); // a stale creation must not adopt into this pane (T11)
     setActiveChat({ kind: "existing", chat });
   };
 
   const handleNewChat = (): void => {
+    setNavigationOpen(false);
+    setQuery("");
     setActiveHostId(undefined);
     setCreatedWorkspace(undefined);
     setActiveChat({ kind: "new", epoch: nextNewChatEpoch.current++ });
@@ -124,12 +178,16 @@ export function App() {
     setActiveHostId(undefined);
     setActiveChat({ kind: "new", epoch });
     setCreatedWorkspace({ chatKey: `new-${epoch}`, result });
+    setNavigationOpen(false);
   };
 
   if (screen === SCREEN.LOADING) return <div className="gc-app-loading" />;
   if (screen === SCREEN.FIRST_RUN) return <FirstRunContainer onDone={() => setScreen(SCREEN.CHAT)} />;
 
-  const toggleSidebar = (): void => setSidebarVisible((visible) => !visible);
+  const toggleSidebar = (): void => {
+    if (narrow) setNavigationOpen((visible) => !visible);
+    else setSidebarVisible((visible) => !visible);
+  };
   const toggleInspector = (): void => setInspectorVisible((visible) => !visible);
   // The window's own buttons exist only where the bridge does: outside
   // Electron (the browser preview) there is no OS window to act on, so the
@@ -145,7 +203,8 @@ export function App() {
 
   const appClasses = [
     "gc-app",
-    !sidebarVisible && "gc-app--sidebar-hidden",
+    !sidebarVisible && !narrow && "gc-app--sidebar-hidden",
+    navigationOpen && "gc-app--nav-open",
     !inspectorVisible && "gc-app--inspector-hidden",
   ]
     .filter(Boolean)
@@ -154,32 +213,48 @@ export function App() {
   return (
     <div className={appClasses}>
       <TopBar
-        sidebarVisible={sidebarVisible}
+        sidebarVisible={narrow ? navigationOpen : sidebarVisible}
         inspectorVisible={inspectorVisible}
         onToggleSidebar={toggleSidebar}
         onToggleInspector={toggleInspector}
-        query={query}
-        onQueryChange={setQuery}
-        onOpenSettings={() => setDialog(APP_DIALOG.SETTINGS)}
-        onOpenShortcuts={() => setDialog(APP_DIALOG.SHORTCUTS)}
         windowControls={windowControls}
       />
       <div className="gc-app__body">
-        <AppRail sidebarVisible={sidebarVisible} onToggleSidebar={toggleSidebar} />
+        <AppRail sidebarVisible={sidebarVisible} onToggleSidebar={() => setSidebarVisible(true)} onOpenSettings={() => setDialog(APP_DIALOG.SETTINGS)} onOpenShortcuts={() => setDialog(APP_DIALOG.SHORTCUTS)} />
         <ChatsContainer
           onSelectChat={handleSelectChat}
           onNewChat={handleNewChat}
           onWorkspaceCreated={handleWorkspaceCreated}
           selectedChatId={activeChat.kind === "existing" ? activeChat.chat.id : undefined}
           query={query}
+          navigationTools={<RailTools onOpenSettings={() => setDialog(APP_DIALOG.SETTINGS)} onOpenShortcuts={() => setDialog(APP_DIALOG.SHORTCUTS)} />}
+          navigationOpen={narrow && navigationOpen}
         />
         <ConversationContainer
+          footerTarget={footerTarget}
           activeChat={activeChat}
           activeHostId={activeHostId}
           createdWorkspace={createdWorkspace}
           onHostResolved={setActiveHostId}
         />
       </div>
+      <div className="gc-app__footer" ref={setFooterTarget} />
+      {searchOpen ? (
+        <div className="gc-dialog-backdrop">
+          <div className="gc-dialog" role="dialog" aria-modal="true" aria-label="Search chats" onKeyDown={(event) => {
+            if (event.key !== "Tab") return;
+            const input = searchRef.current;
+            const button = event.currentTarget.querySelector("button");
+            if (event.shiftKey && document.activeElement === input) { event.preventDefault(); button?.focus(); }
+            else if (!event.shiftKey && document.activeElement === button) { event.preventDefault(); input?.focus(); }
+          }}>
+            <h2>Search chats</h2>
+            <input ref={searchRef} type="search" aria-label="Search chats" placeholder="Search chats…" value={query} onChange={(event) => setQuery(event.target.value)} />
+            <p>Search by title or directory. Escape clears the filter and closes search.</p>
+            <button type="button" onClick={() => { setSearchOpen(false); searchTrigger.current?.focus(); }}>Show results</button>
+          </div>
+        </div>
+      ) : null}
       <AppDialogs
         dialog={dialog}
         onClose={() => setDialog(undefined)}

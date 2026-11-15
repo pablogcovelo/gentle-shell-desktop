@@ -1,51 +1,44 @@
-/*
- * Application rail: the artboard's 84px column, holding the one
- * workspace-level section the bridge can serve. The active item reads as a
- * raised chip with the accent colour, exactly like .rail button.active.
- */
-
 .gc-rail {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
+  gap: 22px;
   min-height: 0;
-  padding: 20px 6px 12px;
+  padding: 12px 4px;
   border-right: 1px solid var(--line);
   background: var(--bg);
 }
-
 .gc-rail__item {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  width: 58px;
-  padding: 8px 2px;
+  width: 76px;
+  padding: 10px 2px;
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
   color: var(--muted);
-  font-family: var(--font-body);
-  font-size: 10px;
+  font: 10px/1.55 var(--font-body);
   cursor: pointer;
 }
-
-.gc-rail__item:hover {
-  background: var(--raised);
-  color: var(--text-2);
+.gc-rail__item:hover, .gc-rail__action:hover { background: var(--raised); color: var(--accent); }
+.gc-rail__item--active { background: var(--raised); color: var(--accent); }
+.gc-rail__tools { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: auto; }
+.gc-rail__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
 }
-
-.gc-rail__item--active {
-  background: var(--raised);
-  color: var(--accent);
-}
-
-.gc-rail__item:focus-visible {
-  outline: 2px solid var(--accent-active);
-  outline-offset: 2px;
-}
-
-.gc-rail__label {
-  line-height: 1.2;
-}
+/* The board's vertical rail buttons start the glyph at their content edge. */
+.gc-rail .gc-rail__action { flex-direction: column; justify-content: flex-start; }
+.gc-rail__item:focus-visible, .gc-rail__action:focus-visible { outline: 2px solid var(--accent-active); outline-offset: 4px; }

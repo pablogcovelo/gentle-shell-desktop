@@ -31,11 +31,15 @@
   min-height: 0;
 }
 
+@media (max-width: 1200px) {
+  .gc-conversation { --gc-inspector-width: 250px; }
+}
+
 /* Narrow windows stack the panel under the conversation and let the whole
  * body scroll, the way the artboard's `.show-tasks .content` does: the thread
  * keeps a readable height instead of being squeezed to a strip between the
  * status blocks and the composer. */
-@media (max-width: 1099px) {
+@media (max-width: 1100px) {
   .gc-conversation__body {
     display: flex;
     flex-direction: column;
@@ -44,12 +48,8 @@
 
   .gc-conversation__stack {
     flex: 0 0 auto;
-  }
-
-  .gc-conversation__stack .gc-thread {
-    flex: 0 0 auto;
-    min-height: 360px;
-    overflow-y: visible;
+    min-height: 420px;
+    height: calc(100dvh - 210px);
   }
 
   .gc-conversation__body .gc-inspector {

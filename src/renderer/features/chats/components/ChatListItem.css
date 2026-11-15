@@ -1,81 +1,22 @@
-/* T2/S8: the artboard's .workspace-item — a leading folder mark beside a
-   two-line body: the title above a muted directory line that also carries
-   the state pill. */
 .gc-chat-list-item {
   display: flex;
   align-items: flex-start;
   gap: 10px;
   width: 100%;
   padding: 13px 12px;
+  margin-bottom: 6px;
   border-radius: 8px;
-  color: var(--text-2);
+  color: var(--text);
   background: transparent;
   border: 1px solid transparent;
-  font-family: var(--font-body);
-  font-size: 0.875rem;
+  font: 14px/1.55 var(--font-body);
   text-align: left;
   cursor: pointer;
 }
-
-.gc-chat-list-item:hover {
-  background: var(--raised);
-}
-
-.gc-chat-list-item--selected {
-  background: var(--raised);
-  border-color: var(--line-strong);
-  color: var(--accent);
-}
-
-/* The artboard's leading mark: muted, turning accent on the selected row. */
-.gc-chat-list-item__glyph {
-  flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  margin-top: 3px;
-  color: var(--muted);
-}
-
-.gc-chat-list-item--selected .gc-chat-list-item__glyph {
-  color: var(--accent);
-}
-
-.gc-chat-list-item__body {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 4px;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.gc-chat-list-item__title {
-  /* Without min-width: 0, a flex child can never shrink below its content's
-     intrinsic width, so a long title pushes past the panel edge instead of
-     the title itself truncating — this is what let "needs you" wrap at
-     250px sidebar width. */
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 500;
-  font-size: 13px;
-}
-
-/* The artboard's meta line: the directory (its .workspace-item small) with
-   the state pill beside it. */
-.gc-chat-list-item__meta {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 0;
-}
-
-.gc-chat-list-item__directory {
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+.gc-chat-list-item:hover { background: var(--raised); }
+.gc-chat-list-item--selected { background: var(--raised); border-color: var(--line-strong); color: var(--accent); }
+.gc-chat-list-item__glyph { flex-shrink: 0; width: 18px; height: 18px; margin-top: 3px; color: var(--muted); }
+.gc-chat-list-item--selected .gc-chat-list-item__glyph { color: var(--accent); }
+.gc-chat-list-item__body { min-width: 0; }
+.gc-chat-list-item__title { font-weight: 500; font-size: 13px; overflow-wrap: anywhere; }
+.gc-chat-list-item:focus-visible { outline: 2px solid var(--accent-active); outline-offset: -2px; }

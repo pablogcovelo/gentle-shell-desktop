@@ -113,8 +113,8 @@ const SHORTCUTS: readonly { readonly keys: string; readonly action: string }[] =
   { keys: "Enter", action: "Send the message" },
   { keys: "Shift+Enter", action: "Start a new line" },
   { keys: "Esc", action: "Stop the running turn" },
-  { keys: "⌘K / Ctrl+K", action: "Focus the chat search" },
-  { keys: "Esc in search", action: "Clear the search" },
+  { keys: "⌘N / Ctrl+N", action: "Start a new chat" },
+  { keys: "⌘K / Ctrl+K", action: "Open the chat search dialog" },
   { keys: "Esc in a dialog", action: "Close the dialog" },
 ];
 

@@ -9,14 +9,19 @@ describe("MessageBubble", () => {
     const message: ChatMessage = { id: "m1", role: MESSAGE_ROLE.ASSISTANT, text: "**bold**" };
     const { container } = render(<MessageBubble message={message} />);
 
-    expect(container.querySelector("strong")).toHaveTextContent("bold");
+    expect(container.querySelector(".gs-markdown strong")).toHaveTextContent("bold");
+    expect(container).toHaveTextContent("el Gentleman");
+    expect(container).toHaveTextContent("GENTLE");
+    expect(container.querySelector("time")).toBeNull();
   });
 
   it("renders user text literally, without interpreting Markdown", () => {
     const message: ChatMessage = { id: "m1", role: MESSAGE_ROLE.USER, text: "**bold**" };
     const { container } = render(<MessageBubble message={message} />);
 
-    expect(container.querySelector("strong")).toBeNull();
+    expect(container.querySelector(".gc-message__text strong")).toBeNull();
+    expect(container).toHaveTextContent("YOU");
+    expect(container).toHaveTextContent("You");
     expect(container).toHaveTextContent("**bold**");
   });
 

@@ -137,3 +137,31 @@
 .gc-usage__note--channel-unavailable {
   color: var(--red);
 }
+.gc-usage--panel .gc-usage__provider { gap: 0; }
+.gc-usage--panel .gc-usage__provider-head {
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+.gc-usage__mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--raised);
+  font: 600 10px var(--font-mono);
+  color: var(--accent);
+}
+.gc-usage--panel .gc-usage__provider-name { display: block; font-size: 12px; }
+.gc-usage--panel .gc-usage__plan { display: block; font-size: 10px; margin-top: 2px; }
+.gc-usage--panel .gc-usage__windows { gap: 14px; }
+.gc-usage--panel .gc-usage__label { font-size: 10px; min-width: 36px; }
+.gc-usage--panel .gc-usage__percent { font-size: 11px; min-width: 34px; }
+.gc-usage--panel .gc-usage__window-row { gap: 10px; }

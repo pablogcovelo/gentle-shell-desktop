@@ -39,9 +39,9 @@ node node_modules/electron/install.js   # downloads the Electron binary; pnpm ma
 pnpm dev
 ```
 
-On first run the window asks where your chats live ("Use my pi setup" or "Keep it separate"). The screen only appears when `~/.pi/agent` exists. The choice is saved; the chat list then shows your existing pi chats, and "New chat" starts one.
+On first run the window asks where your chats live ("Use my pi setup" or "Keep it separate"). The screen only appears when `~/.pi/agent` exists. The choice is saved; the Workspaces sidebar then shows your existing pi chats by directory. Select a directory row to reopen its chat, or use **Ctrl/Cmd+N** to start a new chat. **Add workspace** opens the native directory picker.
 
-To see the Helpers tab, ask for something that delegates work to a subagent; the helper shows up under that chat within a few seconds.
+Use **Ctrl/Cmd+K** to open the chat search dialog. The top-right panel controls toggle the sidebar and inspector; on narrow windows, the workspace panel control opens the sidebar overlay. The rail's gear opens application settings. The inspector shows TODO, USAGE and AGENTS for the open chat. Ask for delegated work to see agents appear there, then select an agent to inspect its thread. The bottom session footer scrolls horizontally with keyboard focus in narrow windows; its version stays visible.
 
 ### Build an app bundle (optional)
 
@@ -59,7 +59,7 @@ or set `GENTLE_SHELL_BIN` to the launcher's full path (`which gentle-shell`). ma
 
 ### Known limitations
 
-- Stop in the Helpers tab needs a gentle-pi whose desktop control channel advertises `cancel_subagent` (the method exists in current gentle-pi builds; see [`odd/tasks/desktop-rpc-client.md`](odd/tasks/desktop-rpc-client.md)). The app probes `capabilities` once per chat and keeps Stop disabled — with the reason shown next to the button — while the channel is still connecting, unavailable, or lacks the method. Stopping is asynchronous: the button sends `cancel_subagent` and the row updates when the following `agents_update` event confirms the helper exited, never from the response alone.
+- Stop in the agent detail view needs a gentle-pi whose desktop control channel advertises `cancel_subagent` (the method exists in current gentle-pi builds; see [`odd/tasks/desktop-rpc-client.md`](odd/tasks/desktop-rpc-client.md)). The app probes `capabilities` once per chat and keeps Stop disabled — with the reason shown next to the button — while the channel is still connecting, unavailable, or lacks the method. Stopping is asynchronous: the button sends `cancel_subagent` and the row updates when the following `agents_update` event confirms the helper exited, never from the response alone.
 - No ODD phase indicator yet (M3b): the M3 task card shows tasks only, not the phase. Sign in and manage providers or extensions through `gentle-shell` in the terminal (M4).
 - No signing, notarization or auto-update yet (M5).
 
@@ -77,37 +77,32 @@ Each feature document records the scope, decisions, tasks, checks and review evi
 
 ### ODD task card
 
-The card in the chat pane shows the open chat's own task list, the same list
-gentle-shell's todo tool keeps for that session. It starts collapsed as one
-line (the task in progress plus a `done/planned` count, with dropped tasks off
-the list) and expands to one row per task, with a status glyph, the title and
-the task's note when it has one. It renders nothing when the chat has no tasks.
-
-Placement is provisional: stacked at the bottom of the work area, or as a
-right rail once the window is 1100px wide. That mirrors where the terminal UI
-puts the same card, and will change when the desktop design exists.
+The inspector's TODO section shows the open chat's own task list, the same list
+gentle-shell's todo tool keeps for that session. It shows a progress count and
+one row per task, with a status glyph, title and note when present. With no
+tasks, it says so instead of inventing a plan. The inspector sits beside the
+conversation on wide windows and below it on narrower windows.
 
 The panel reads the state gentle-shell already persists inside the session, so
 it survives reopening the chat and needs no change in gentle-pi.
 
-### Helpers tab
+### Agents inspector
 
-Each chat header carries a `Chat | Helpers` toggle with the count of
-currently running helpers. The Helpers tab lists every subagent that chat
-started — queued, running, waiting, done or failed — and, once you pick
-one, its narrated thread: Task, Plan, Step N with tool calls collapsed to
+The AGENTS section lists every subagent the open chat started — queued,
+running, waiting, done or failed. Expand an agent row for its activity summary, or pick
+an agent to see its narrated thread: Task, Plan, Step N with tool calls collapsed to
 one line (a "Show tool details" toggle reveals args/output), and Update or
 Note rows. Footer controls: Follow live (auto-scrolls as new activity
 arrives), Back to chat, and Stop — enabled for a queued or running helper
 once the chat's desktop control channel is adopted and gentle-shell
 advertises `cancel_subagent`; otherwise it stays disabled with the reason
 (next to the button). Stop is asynchronous: the list updates when
-gentle-shell confirms the helper exited. The tab is per chat, never a
+gentle-shell confirms the helper exited. The agent list is per chat, never a
 global list — a helper only ever shows under the chat that started it.
 
 The app sets `GENTLE_SHELL_INTERACTIVE_HOST=1` on the pi process it spawns
 so gentle-pi publishes helper activity and enables RPC dialogs (gentle-pi
-3.7.0 or newer; with an older gentle-pi the Helpers tab stays empty).
+3.7.0 or newer; with an older gentle-pi the AGENTS section stays empty).
 
 ## Development
 
@@ -124,6 +119,7 @@ pnpm package:mac   # same, macOS only (dmg + zip)
 pnpm package:win   # same, Windows only (nsis)
 pnpm package:linux # same, Linux only (AppImage)
 pnpm smoke:electron # build, launch the packaged main entry through Playwright, and verify the window actually comes up
+node scripts/check-workspace-fidelity.mjs # with dev:web running: compare board/app geometry and capture paired screenshots
 ```
 
 The app resolves the launcher from `GENTLE_SHELL_BIN` (a path to a gentle-pi checkout's `bin/gentle-shell.mjs`, or another gentle-shell executable) or a `gentle-shell` binary on `PATH`; see `src/main/adapters/launcherLocator.ts`.

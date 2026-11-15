@@ -1,6 +1,4 @@
-import { useId, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
-import { Button } from "@renderer/shared/ui/atoms/Button";
-import { TextField } from "@renderer/shared/ui/atoms/TextField";
+import { useId, useState, useLayoutEffect, useRef, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
 import "./Composer.css";
 
 export interface ComposerProps {
@@ -96,6 +94,20 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
 
   const [emojiOpen, setEmojiOpen] = useState(false);
   const emojiPanelId = useId();
+  const fieldRef = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const field = fieldRef.current;
+    if (!field) return;
+    const resize = (): void => {
+      field.style.height = "auto";
+      const max = Math.min(window.innerHeight * 0.32, 260);
+      field.style.height = `${Math.max(48, Math.min(field.scrollHeight, max))}px`;
+      field.style.overflowY = field.scrollHeight > max ? "auto" : "hidden";
+    };
+    resize();
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, [value]);
 
   const handleChange = (event: ChangeEvent<HTMLTextAreaElement>): void => {
     onChange(event.target.value);
@@ -138,9 +150,12 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
   return (
     <form className="gc-composer" aria-label="Composer" onSubmit={handleSubmit}>
       <div className="gc-composer__box">
-        <p className="gc-composer__eyebrow">Your next move</p>
-        <TextField
-          multiline
+        <div className="gc-composer__input-column">
+        <label className="gc-composer__eyebrow" htmlFor={`${emojiPanelId}-draft`}>Your next move</label>
+        <textarea
+          className="gc-text-field"
+          ref={fieldRef}
+          id={`${emojiPanelId}-draft`}
           rows={2}
           placeholder="Tell Gentle what you need…"
           value={value}
@@ -148,7 +163,6 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
           onChange={handleChange}
           onKeyDown={handleKeyDown}
         />
-        <div className="gc-composer__foot">
           <div className="gc-composer__tools">
             <button
               type="button"
@@ -172,7 +186,9 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
                 <ToolIcon d={ICON_PATHS.attachment} />
               </button>
             ) : null}
-            {/** S13: no audio pipeline exists, so it stays disabled with the reason. */}
+            {emojiOpen ? <EmojiPanel id={emojiPanelId} onPick={handlePickEmoji} onClose={() => setEmojiOpen(false)} /> : null}
+        <div className="gc-composer__foot">
+            {/** No audio pipeline exists: disclose the unavailable action. */}
             <button
               type="button"
               className="gc-composer__tool"
@@ -182,13 +198,11 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
             >
               <ToolIcon d={ICON_PATHS.microphone} />
             </button>
-            {emojiOpen ? (
-              <EmojiPanel id={emojiPanelId} onPick={handlePickEmoji} onClose={() => setEmojiOpen(false)} />
-            ) : null}
+          <button className="gc-composer__send" type="submit" aria-label="Send" disabled={!canSend}>
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true"><path d="M4 3.5 21 12 4 20.5V14l10-2-10-2V3.5Z" /></svg>
+          </button>
+        </div>
           </div>
-          <Button type="submit" disabled={!canSend}>
-            Send
-          </Button>
         </div>
       </div>
       <p className="gc-composer__hints">Enter to send · Shift+Enter for a new line · Esc to stop</p>

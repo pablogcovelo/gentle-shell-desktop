@@ -34,7 +34,7 @@ describe("Footer (desktop-workspace-shell T7 — the design's footer, S9/S10/S11
     expect(footer).toHaveTextContent("/home/dev/gentle");
     expect(footer).toHaveTextContent("Claude Sonnet 4");
     expect(footer).toHaveTextContent("opensourcing");
-    expect(within(footer).getByText("MCP")).not.toBeNull();
+    expect(within(footer).getByLabelText("MCP: 2 configured servers")).toHaveTextContent("2");
     // Cost keeps its single home in the inspector's usage summary.
     expect(footer.textContent).not.toContain("$");
   });
@@ -128,8 +128,8 @@ describe("Footer (desktop-workspace-shell T7 — the design's footer, S9/S10/S11
       render(<Footer workspace={{ mcp: MCP }} />);
 
       const footer = screen.getByLabelText("Session footer");
-      expect(footer).toHaveTextContent("2 configured");
-      expect(footer).toHaveTextContent("1 tool groups");
+      expect(within(footer).getByLabelText("MCP: 2 configured servers")).toHaveTextContent("2");
+      expect(footer).not.toHaveTextContent("tool groups");
       // The word the contract forbids: pi exposes no health, so none is claimed.
       expect(footer.textContent?.toLowerCase()).not.toContain("connected");
       // `health` is carried but never rendered.
@@ -143,7 +143,7 @@ describe("Footer (desktop-workspace-shell T7 — the design's footer, S9/S10/S11
         />,
       );
 
-      expect(screen.getByLabelText("Session footer")).toHaveTextContent("none configured");
+      expect(screen.getByLabelText("MCP: 0 configured servers")).toHaveTextContent("0");
     });
 
     // S11 — `skills` and `extensions` are not in ChatState: they render only
@@ -231,7 +231,12 @@ describe("Footer (desktop-workspace-shell T7 — the design's footer, S9/S10/S11
   });
 
   describe("app version", () => {
-    it("renders the version right-aligned when supplied", () => {
+    it("prefixes the real bare app version", () => {
+      render(<Footer appVersion="0.1.0" />);
+      expect(within(screen.getByLabelText("Session footer")).getByText("v0.1.0", { exact: true })).toBeInTheDocument();
+    });
+
+    it("renders the version right-aligned without doubling an existing prefix", () => {
       render(<Footer appVersion="v1.2" />);
 
       expect(within(screen.getByLabelText("Session footer")).getByText("v1.2")).toBeInTheDocument();
@@ -244,9 +249,14 @@ describe("Footer (desktop-workspace-shell T7 — the design's footer, S9/S10/S11
     });
   });
 
+  it("separates a supplied model and profile even without a thinking level", () => {
+    render(<Footer session={{ modelId: "real-model" }} workspace={{ profile: { label: "real-profile" } }} />);
+    expect(screen.getByLabelText("Session identity").textContent).toBe("real-model·real-profile");
+  });
+
   it("renders the aria-label the contract pins", () => {
     render(<Footer />);
 
-    expect(screen.getByLabelText("Session footer")).toBeInTheDocument();
+    expect(screen.getByLabelText("Session footer")).toHaveAttribute("tabindex", "0");
   });
 });

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { App } from "./App";
 import { resetWelcomeHeroIntrosForTests } from "../features/conversation/components/WelcomeHero";
 import { resetWorkspaceSnapshotsForTests } from "../features/conversation/ConversationContainer";
@@ -62,21 +62,21 @@ describe("App", () => {
     });
     await waitFor(() => expect(hero()).toHaveAttribute("data-intro", "complete"));
 
-    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    fireEvent.keyDown(window, { key: "n", ctrlKey: true });
 
     // A new click is a new pane: its intro starts over instead of staying
     // settled from the previous unsaved chat.
     await waitFor(() => expect(hero()).toHaveAttribute("data-intro", "playing"));
   });
 
-  it("selecting a sidebar chat updates the conversation header title", async () => {
+  it("selecting a sidebar chat updates the conversation header directory", async () => {
     render(<App />);
 
     // mockBridge's example chats load asynchronously into the sidebar.
     const item = await screen.findByRole("button", { name: /Write the README intro/ });
     item.click();
 
-    expect(await screen.findByRole("heading", { name: "Write the README intro" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "gentle-shell-desktop" })).toBeInTheDocument();
   });
 
   // T5b pin (app-level): App owns the active host id, resets it on every
@@ -105,7 +105,7 @@ describe("App", () => {
     await screen.findByText("hello first");
 
     fireEvent.click(await screen.findByRole("button", { name: /Write the README intro/ }));
-    await screen.findByRole("heading", { name: "Write the README intro" });
+    await screen.findByRole("heading", { name: "gentle-shell-desktop" });
 
     await sendWhenReady("hello second");
     await screen.findByText("hello second");
@@ -164,17 +164,20 @@ describe("App", () => {
     }
   });
 
-  it("the sidebar offers Add workspace beside New chat (T11)", async () => {
+  it("offers Add workspace without the removed New chat or Chat selector controls", async () => {
     render(<App />);
 
     expect(await screen.findByRole("button", { name: "Add workspace" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "New chat" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New chat" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Chat" })).not.toBeInTheDocument();
   });
 
-  it("filters the workspace directories from the top bar search", async () => {
+  it("keeps search available through Ctrl+K without a top bar search control", async () => {
     render(<App />);
 
     expect(await screen.findByRole("button", { name: /Write the README intro/ })).toBeInTheDocument();
+    expect(within(screen.getByRole("banner", { name: "Application chrome" })).queryByRole("searchbox")).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     const search = screen.getByRole("searchbox", { name: "Search chats" });
 
     fireEvent.change(search, { target: { value: "no-such-chat-anywhere" } });
@@ -194,14 +197,16 @@ describe("App", () => {
     // The mock bridge exposes the window controls, so the chrome draws them.
     expect(screen.getByRole("button", { name: "Minimize window" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    const rail = screen.getByRole("navigation", { name: "Application" });
+    expect(within(screen.getByRole("banner", { name: "Application chrome" })).queryByRole("button", { name: "Application settings" })).not.toBeInTheDocument();
+    fireEvent.click(within(rail).getByRole("button", { name: "Application settings" }));
     const settings = await screen.findByRole("dialog", { name: "Application settings" });
     expect(settings).toHaveTextContent("version");
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Open keyboard shortcuts" }));
+    fireEvent.click(within(rail).getByRole("button", { name: "Add quick shortcut" }));
     const shortcuts = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
     expect(shortcuts).toHaveTextContent("Shift+Enter");
   });
@@ -214,19 +219,44 @@ describe("App", () => {
     expect(shell).not.toHaveClass("gc-app--sidebar-hidden");
     expect(shell).not.toHaveClass("gc-app--inspector-hidden");
 
-    fireEvent.click(screen.getByRole("button", { name: "Hide chats" }));
+    fireEvent.click(screen.getByRole("button", { name: "Hide workspaces" }));
 
     expect(shell).toHaveClass("gc-app--sidebar-hidden");
     // The toggle keeps reporting the real state it just changed.
-    expect(screen.getByRole("button", { name: "Show chats" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: "Show workspaces" })).toHaveAttribute("aria-expanded", "false");
 
-    fireEvent.click(screen.getByRole("button", { name: "Hide plan, usage and agents" }));
+    fireEvent.click(screen.getByRole("button", { name: "Hide general information" }));
 
     expect(shell).toHaveClass("gc-app--inspector-hidden");
-    expect(screen.getByRole("button", { name: "Show plan, usage and agents" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Show general information" })).toHaveAttribute(
       "aria-expanded",
       "false",
     );
+  });
+
+  it("opens narrow navigation from the header and closes it with Escape", async () => {
+    const width = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 600 });
+    try {
+      render(<App />);
+      const toggle = await screen.findByRole("button", { name: "Show workspaces" });
+      fireEvent.click(toggle);
+      expect(screen.getByRole("button", { name: "Hide workspaces" })).toHaveAttribute("aria-expanded", "true");
+      expect(document.querySelector(".gc-app")).toHaveClass("gc-app--nav-open");
+      fireEvent.keyDown(window, { key: "Escape" });
+      expect(document.querySelector(".gc-app")).not.toHaveClass("gc-app--nav-open");
+      expect(screen.getByRole("button", { name: "Show workspaces" })).toHaveFocus();
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+    }
+  });
+
+  it("renders the session footer outside the body as an app-wide status line", async () => {
+    render(<App />);
+    const footer = await screen.findByLabelText("Session footer");
+    expect(footer.closest(".gc-app__body")).toBeNull();
+    expect(footer.parentElement).toHaveClass("gc-app__footer");
+    expect(footer).toHaveAttribute("tabindex", "0");
   });
 
   it("shows the first-run screen when setupStatus reports needsChoice (no persisted home choice yet)", async () => {

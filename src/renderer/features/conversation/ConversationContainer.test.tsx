@@ -77,6 +77,17 @@ afterEach(() => {
 });
 
 describe("ConversationContainer", () => {
+  it("portals the real footer into the shell slot and falls back inline", async () => {
+    window.gentle = makeBridge();
+    const footerTarget = document.createElement("div");
+    const { container, rerender } = render(<ConversationContainer activeChat={NEW_CHAT} {...{ footerTarget }} />);
+    await act(async () => {});
+    expect(footerTarget.querySelector('[aria-label="Session footer"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Session footer"]')).toBeNull();
+    rerender(<ConversationContainer activeChat={NEW_CHAT} />);
+    expect(footerTarget.childElementCount).toBe(0);
+    expect(screen.getByLabelText("Session footer")).toBeInTheDocument();
+  });
   it('calls bridge.newChat() for activeChat { kind: "new" } and shows "New chat" as the title', async () => {
     const bridge = makeBridge();
     window.gentle = bridge;
@@ -96,7 +107,7 @@ describe("ConversationContainer", () => {
 
     await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledWith("chat-1"));
     expect(bridge.newChat).not.toHaveBeenCalled();
-    expect(screen.getByRole("heading", { name: "Refactor the store" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "project" })).toBeInTheDocument();
   });
 
   it("re-opens when activeChat changes", async () => {
@@ -200,6 +211,7 @@ describe("ConversationContainer", () => {
     // Cost keeps its single home in the inspector's usage summary, so the
     // footer never repeats it.
     expect(footer).not.toHaveTextContent("$0.45");
+    expect(screen.getByLabelText("Usage in this conversation")).toHaveTextContent("$0.45");
     // Identity is chrome, never conversation content.
     expect(screen.queryByText("Claude Sonnet 4", { selector: ".gc-message__text" })).not.toBeInTheDocument();
   });
@@ -255,6 +267,7 @@ describe("ConversationContainer", () => {
     });
 
     const rows = await screen.findByLabelText("Tool activity");
+    expect(screen.getByTestId("gc-message-thread")).toContainElement(rows);
     expect(rows).toHaveTextContent("≡");
     // The uncovered tool keeps its raw name: no invented category.
     expect(rows).toHaveTextContent("some_future_tool");
@@ -526,7 +539,7 @@ describe("ConversationContainer", () => {
     ],
   };
 
-  it("shows the Helpers strip when the chat has tasks, and opens the Helpers tab on click", async () => {
+  it("opens real helper activity through the inspector control",  async () => {
     let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({
       onState: vi.fn((callback: (state: ChatState) => void) => {
@@ -543,14 +556,13 @@ describe("ConversationContainer", () => {
 
     pushState({ messages: [], working: false, pendingDialogs: [], activity: 0, helpers: HELPERS_WITH_TASKS });
 
-    const strip = await screen.findByText("Helpers · 1 running");
-    fireEvent.click(strip);
-
-    expect(screen.getByRole("tab", { name: "Helpers (1 running)" })).toHaveAttribute("aria-selected", "true");
+    const open = await screen.findByRole("button", { name: "Open helpers" });
+    fireEvent.click(open);
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Look into the failing test" })).toBeInTheDocument();
   });
 
-  it("switches tabs from the header, and Back to chat returns to the chat pane", async () => {
+  it("opens helpers from the inspector, and Back to chat returns to the chat pane", async () => {
     let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({
       onState: vi.fn((callback: (state: ChatState) => void) => {
@@ -563,13 +575,11 @@ describe("ConversationContainer", () => {
     render(<ConversationContainer activeChat={NEW_CHAT} />);
     await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
     pushState({ messages: [], working: false, pendingDialogs: [], activity: 0, helpers: HELPERS_WITH_TASKS });
-    await screen.findByText("Helpers · 1 running");
-
-    fireEvent.click(screen.getByRole("tab", { name: "Helpers (1 running)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open helpers" }));
     expect(screen.getByRole("heading", { name: "Look into the failing test" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Back to chat" }));
-    expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText("Tell Gentle what you need…")).toBeInTheDocument();
   });
 
@@ -644,7 +654,7 @@ describe("ConversationContainer", () => {
     } as unknown as ChatState);
     await act(async () => {});
 
-    fireEvent.click(screen.getByRole("tab", { name: "Helpers (1 running)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open helpers" }));
     // The only running helper is selected automatically, so Stop is enabled.
     fireEvent.click(await screen.findByRole("button", { name: "Stop" }));
     await act(async () => {});
@@ -746,12 +756,12 @@ describe("ConversationContainer", () => {
       working: false,
       pendingDialogs: [],
       activity: 0,
-      helpers: EMPTY_HELPERS,
+      helpers: HELPERS_WITH_TASKS,
       todo: { tasks: [{ id: 1, title: "Panel task only", status: "pending" }], nextId: 2, updatedTurn: 1 },
     });
     expect(await screen.findByTestId("gc-todo-card")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("tab", { name: "Helpers" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open helpers" }));
 
     expect(screen.queryByTestId("gc-todo-card")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Back to chat" }));
@@ -771,14 +781,13 @@ describe("ConversationContainer", () => {
     const { rerender } = render(<ConversationContainer activeChat={NEW_CHAT} />);
     await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
     pushState({ messages: [], working: false, pendingDialogs: [], activity: 0, helpers: HELPERS_WITH_TASKS });
-    await screen.findByText("Helpers · 1 running");
-
-    fireEvent.click(screen.getByRole("tab", { name: "Helpers (1 running)" }));
-    expect(screen.getByRole("tab", { name: "Helpers (1 running)" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(await screen.findByRole("button", { name: "Open helpers" }));
+    expect(screen.getByRole("button", { name: "Back to chat" })).toBeInTheDocument();
 
     rerender(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} />);
 
-    expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("form", { name: "Composer" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Back to chat" })).not.toBeInTheDocument();
   });
 
   it("renders pushed keyed statuses in the status surface, never as messages", async () => {

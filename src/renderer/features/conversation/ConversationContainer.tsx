@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import type { ChatState, ChatSummary, DialogAnswer, OpenChatResult } from "@shared/bridge-types";
 import { useBridge } from "@renderer/shared/bridge/useBridge";
 import { HelpersContainer } from "@renderer/features/helpers/HelpersContainer";
+import { directoryOf } from "@renderer/features/chats/components/ChatListItem";
 import { Composer } from "./components/Composer";
 import { ActionRows } from "./components/ActionRows";
 import { Footer } from "./components/Footer";
 import { CONVERSATION_PANE, ConversationHeader, type ConversationPane } from "./components/ConversationHeader";
-import { HelpersStrip } from "./components/HelpersStrip";
 import { InspectorPanel } from "./components/InspectorPanel";
 import { MessageThread } from "./components/MessageThread";
 import { StatusLine } from "./components/StatusLine";
@@ -25,6 +26,7 @@ export type ActiveChat =
 
 export interface ConversationContainerProps {
   readonly activeChat: ActiveChat;
+  readonly footerTarget?: HTMLDivElement | null;
   /** T5b: the active chat's workspace host id, OWNED BY App — set from
    * the open/new resolution (see onHostResolved) and reset on every
    * selection change. Every request the container sends is addressed to
@@ -151,7 +153,7 @@ function errorText(cause: unknown): string {
  * notifications (desktop-rpc T2b) render in the same status surface for
  * the same reason: they are feedback chrome, never transcript entries.
  */
-export function ConversationContainer({ activeChat, activeHostId, onHostResolved, createdWorkspace }: ConversationContainerProps) {
+export function ConversationContainer({ activeChat, activeHostId, onHostResolved, createdWorkspace, footerTarget }: ConversationContainerProps) {
   const bridge = useBridge();
   const [chatState, setChatState] = useState<ChatState>(emptyChatState());
   // The host id this container resolved for the current activeChat, kept
@@ -375,7 +377,6 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
     bridge.answerDialog(hostId, id, answer).catch((cause: unknown) => setBridgeError(errorText(cause)));
   };
 
-  const title = activeChat.kind === "existing" ? activeChat.chat.title : "New chat";
   // T11: the footer's path is the open workspace's directory. Preference
   // order: the app-validated directory the pane's host was created with
   // (workspace.create attached it to the state at the push boundary), then
@@ -392,7 +393,9 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   // from the sidebar is a different pane identity and therefore gets its own
   // intro, because the app cannot prove it is the same conversation that was
   // just saved.
-  const welcomeKey = activeChat.kind === "existing" ? activeChat.chat.id : `new-chat-${activeChat.epoch}`;
+  const title = directoryOf(workspacePath ?? "") ?? (activeChat.kind === "existing" ? activeChat.chat.title : "New chat");
+  const welcomeKey = chatKeyOf(activeChat);
+  const footer = <Footer workspace={chatState.workspace} workspacePath={workspacePath} session={chatState.session} appVersion={appVersion} />;
   const error = bridgeError ?? chatState.lastError;
 
   return (
@@ -404,7 +407,7 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
         runningHelpersCount={chatState.helpers.summary.running}
         onSelectPane={setPane}
       />
-      <StatusLine error={error} statuses={chatState.statuses} notifications={chatState.notifications} />
+      {pane === CONVERSATION_PANE.HELPERS && <StatusLine error={error} statuses={chatState.statuses} notifications={chatState.notifications} />}
       {pane === CONVERSATION_PANE.HELPERS ? (
         <HelpersContainer
           activity={chatState.helpers}
@@ -419,14 +422,13 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
       ) : (
         <div className="gc-conversation__body">
           <div className="gc-conversation__stack">
-            <HelpersStrip helpers={chatState.helpers} onOpen={() => setPane(CONVERSATION_PANE.HELPERS)} />
             <MessageThread
               messages={chatState.messages}
               dialogs={chatState.pendingDialogs}
               onAnswerDialog={handleAnswerDialog}
               welcomeKey={welcomeKey}
+              activity={<><ActionRows toolCalls={chatState.toolCalls} vocabulary={chatState.toolVocabulary} /><StatusLine error={error} statuses={chatState.statuses} notifications={chatState.notifications} /></>}
             />
-            <ActionRows toolCalls={chatState.toolCalls} vocabulary={chatState.toolVocabulary} />
             <Composer
               value={draft}
               working={chatState.working}
@@ -449,6 +451,7 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
           which is itself the full agent view. */}
           <InspectorPanel
             todo={chatState.todo}
+            session={chatState.session}
             usage={chatState.usage}
             usageChannelUnavailable={chatState.usageChannelUnavailable}
             helpers={chatState.helpers}
@@ -456,16 +459,8 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
           />
         </div>
       )}
-      {/* Footer last: it is the conversation column's bottom strip, never a row
-      between the context bar and the thread. It now carries the design's
-      session-identity and context groups (S9/S10), so those facts have exactly
-      one home — here — and no longer duplicate a status-line block. */}
-      <Footer
-        workspace={chatState.workspace}
-        workspacePath={workspacePath}
-        session={chatState.session}
-        appVersion={appVersion}
-      />
+      {/* The shell owns the global slot; standalone callers retain the inline footer. */}
+      {footerTarget ? createPortal(footer, footerTarget) : footer}
     </section>
   );
 }
