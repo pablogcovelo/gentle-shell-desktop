@@ -24,8 +24,16 @@ export interface ChatListItemProps {
 // (through ChatList) owns the bridge call and passes ChatSummary values
 // down. A <button> (not a clickable <div>) so the list is keyboard- and
 // screen-reader-navigable without extra ARIA plumbing.
+/** T2: the artboard's .workspace-item secondary line — the chat's directory,
+ * i.e. the last segment of its cwd, on either path separator. An empty or
+ * missing cwd yields no second line: we never invent one (S5). */
+function directoryOf(cwd: ChatSummary["cwd"]): string | undefined {
+  return cwd ? cwd.split(/[\\/]/).filter(Boolean).pop() : undefined;
+}
+
 export function ChatListItem({ chat, selected = false, onSelect }: ChatListItemProps) {
   const classes = ["gc-chat-list-item", selected && "gc-chat-list-item--selected"].filter(Boolean).join(" ");
+  const directory = directoryOf(chat.cwd);
 
   return (
     <li>
@@ -35,8 +43,11 @@ export function ChatListItem({ chat, selected = false, onSelect }: ChatListItemP
         aria-current={selected || undefined}
         onClick={() => onSelect(chat)}
       >
-        <span className="gc-chat-list-item__title">{chat.title}</span>
-        <Pill tone={STATE_PILL_TONE[chat.state]}>{STATE_LABEL[chat.state]}</Pill>
+        <span className="gc-chat-list-item__row">
+          <span className="gc-chat-list-item__title">{chat.title}</span>
+          <Pill tone={STATE_PILL_TONE[chat.state]}>{STATE_LABEL[chat.state]}</Pill>
+        </span>
+        {directory ? <span className="gc-chat-list-item__meta">{directory}</span> : null}
       </button>
     </li>
   );

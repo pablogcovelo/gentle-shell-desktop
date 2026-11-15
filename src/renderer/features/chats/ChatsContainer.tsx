@@ -118,17 +118,27 @@ export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, se
   };
 
   return (
-    <aside className="gc-chats">
+    <aside className="gc-chats" id="gc-chats">
+      {/* T2: the artboard's directory-panel anatomy (design/slack-gentle/
+      01-workspace.html .sidebar-head): eyebrow, heading with its accent dot
+      and a subtitle. The dot is aria-hidden so the heading's accessible name
+      stays exactly "Chats". */}
       <div className="gc-chats__header">
-        <h2 className="gc-chats__heading">Chats</h2>
+        <p className="gc-chats__eyebrow">YOUR WORK, IN GOOD COMPANY</p>
+        <h2 className="gc-chats__heading">
+          Chats<span aria-hidden="true" className="gc-chats__dot">.</span>
+        </h2>
+        <p className="gc-chats__subtitle">Your directories. One place to build.</p>
+      </div>
+      <div className="gc-chats__actions">
+        <Button variant="primary" type="button" onClick={handleNewChat}>
+          New chat
+        </Button>
         {onWorkspaceCreated ? (
           <Button variant="ghost" type="button" onClick={handleAddWorkspace} disabled={addingWorkspace}>
             Add workspace
           </Button>
         ) : null}
-        <Button variant="ghost" type="button" onClick={handleNewChat}>
-          New chat
-        </Button>
       </div>
       {error && (
         <p style={{ color: "var(--muted)" }}>Chats are not available yet: {error}</p>
