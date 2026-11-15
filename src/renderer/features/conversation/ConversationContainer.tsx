@@ -20,7 +20,9 @@ import "./ConversationContainer.css";
  * calls chat.open/chat.new itself, because GentleBridge tracks exactly one
  * "currently open" chat.
  */
-export type ActiveChat = { readonly kind: "new" } | { readonly kind: "existing"; readonly chat: ChatSummary };
+export type ActiveChat =
+  | { readonly kind: "new"; readonly epoch: number }
+  | { readonly kind: "existing"; readonly chat: ChatSummary };
 
 export interface ConversationContainerProps {
   readonly activeChat: ActiveChat;
@@ -122,10 +124,14 @@ export function ConversationContainer({ activeChat }: ConversationContainerProps
   };
 
   const title = activeChat.kind === "existing" ? activeChat.chat.title : "New chat";
-  // One welcome intro per chat (T9b): an existing chat keeps its identity, a
-  // not-yet-saved chat shares the "new" identity, so the intro plays when the
-  // chat opens and never again on restore.
-  const welcomeKey = activeChat.kind === "existing" ? activeChat.chat.id : "new";
+  // One welcome intro per chat identity (T9b). An existing chat keeps its id,
+  // so re-selecting the same saved chat never replays. Every unsaved chat is
+  // its own pane via App's epoch counter, so two "New chat" clicks never
+  // share an intro. Boundary, deliberately accepted: opening a saved chat
+  // from the sidebar is a different pane identity and therefore gets its own
+  // intro, because the app cannot prove it is the same conversation that was
+  // just saved.
+  const welcomeKey = activeChat.kind === "existing" ? activeChat.chat.id : `new-chat-${activeChat.epoch}`;
   const error = bridgeError ?? chatState.lastError;
 
   return (

@@ -15,7 +15,8 @@ import "./WelcomeHero.css";
  *
  * Two rules come straight from the artboard rather than from taste:
  *  - it plays once per chat and settles when the chat is restored, so
- *    switching back to a chat never replays the intro;
+ *    switching back to a chat never replays the intro — an intro only counts
+ *    as played once it ran to completion, so an interrupted one replays;
  *  - it settles immediately and statically under `prefers-reduced-motion`,
  *    and cancels an intro already in flight if the preference flips.
  */
@@ -44,33 +45,24 @@ const LETTERS: readonly Letter[] = [
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 const SPARK_PATH = "m12 2 2.8 7.2L22 12l-7.2 2.8L12 22l-2.8-7.2L2 12l7.2-2.8Z";
 
-export type WelcomeIntro = "pending" | "playing" | "complete";
+export type WelcomeIntro = "playing" | "complete";
 
 export interface WelcomeHeroProps {
   /** Identity of the chat whose intro this is: one intro per chat. */
   readonly chatKey: string;
 }
 
-interface IntroRecord {
-  readonly startedAt: number;
-  readonly completed: boolean;
-}
+// Which chats already played their intro to the end. Module-level on
+// purpose: it must survive a chat being closed and restored, exactly like
+// the artboard's per-chat `introPlayed` flag, and it holds no user data.
+// Only COMPLETED intros are recorded — React's StrictMode throwaway mount
+// and a chat switch mid-intro never mark a chat as played, so an intro that
+// was interrupted is played again the next time its chat opens.
+const completedIntros = new Set<string>();
 
-// Which chats already played their intro. Module-level on purpose: it must
-// survive a chat being closed and restored, exactly like the artboard's
-// per-chat `introPlayed` flag, and it holds no user data.
-const intros = new Map<string, IntroRecord>();
-
-function record(chatKey: string): IntroRecord | undefined {
-  return intros.get(chatKey);
-}
-
-function markStarted(chatKey: string): void {
-  intros.set(chatKey, { startedAt: Date.now(), completed: false });
-}
-
-function markComplete(chatKey: string): void {
-  intros.set(chatKey, { startedAt: record(chatKey)?.startedAt ?? Date.now(), completed: true });
+/** Test-only: clears the intro registry so tests start from a clean state. */
+export function resetWelcomeHeroIntrosForTests(): void {
+  completedIntros.clear();
 }
 
 function prefersReducedMotion(): boolean {
@@ -88,25 +80,16 @@ export function WelcomeHero({ chatKey }: WelcomeHeroProps) {
   const uid = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const maskId = `gc-welcome-ink-mask-${uid}`;
   const heroRef = useRef<HTMLElement>(null);
-  const [intro, setIntro] = useState<WelcomeIntro>("pending");
+  // Decided during the first render, not in an effect: the CSS default for
+  // `.gc-welcome` is the fully drawn hero, so any first paint without a
+  // decision would flash the finished state before the intro restarts.
+  // Already-completed chats and reduced motion land on the static end state
+  // immediately; everything else paints already playing.
+  const [intro, setIntro] = useState<WelcomeIntro>(() =>
+    completedIntros.has(chatKey) || prefersReducedMotion() ? "complete" : "playing",
+  );
 
-  // Decide once per chat: replay nothing that already completed, and never
-  // animate for a user who asked for less motion.
-  useEffect(() => {
-    if (record(chatKey)?.completed === true || prefersReducedMotion()) {
-      markComplete(chatKey);
-      setIntro("complete");
-      return;
-    }
-    // React's StrictMode mounts, unmounts and mounts again in development, and
-    // a chat can be reopened while its intro is still painting: an intro that
-    // never finished was never shown, so it starts over instead of being
-    // wasted as already played.
-    markStarted(chatKey);
-    setIntro("playing");
-  }, [chatKey]);
-
-  // The `is-playing` class committed by the effect above is what creates the
+  // The `is-playing` class is what creates the
   // CSS animations, but they only exist once the browser has computed style
   // for that class — reading them in the same effect that committed it returns
   // nothing and would end the intro before it painted. The first frame after
@@ -119,7 +102,7 @@ export function WelcomeHero({ chatKey }: WelcomeHeroProps) {
     let cancelled = false;
     const settle = (): void => {
       if (cancelled) return;
-      markComplete(chatKey);
+      completedIntros.add(chatKey);
       setIntro("complete");
     };
     const frame = requestAnimationFrame(() => {
@@ -150,7 +133,7 @@ export function WelcomeHero({ chatKey }: WelcomeHeroProps) {
     const onMotionChange = (event: MediaQueryListEvent): void => {
       if (!event.matches) return;
       animationsOf(hero).forEach((animation) => animation.cancel());
-      markComplete(chatKey);
+      completedIntros.add(chatKey);
       setIntro("complete");
     };
     query.addEventListener("change", onMotionChange);

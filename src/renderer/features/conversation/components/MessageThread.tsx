@@ -40,7 +40,9 @@ export function MessageThread({ messages, dialogs, onAnswerDialog, welcomeKey }:
   // has nothing to follow, and scrolling there would push the welcome hero
   // (T9b) — the first thing the reader should meet — out of view.
   useEffect(() => {
-    if (isEmpty) return;
+    if (isEmpty) {
+      return;
+    }
     bottomRef.current?.scrollIntoView({ behavior: "auto" });
   }, [messages, dialogs, isEmpty]);
 
@@ -49,7 +51,10 @@ export function MessageThread({ messages, dialogs, onAnswerDialog, welcomeKey }:
       {/* Chat-start welcome (T9b): persistent at the top of the thread like the
       artboard, so it is what the reader meets in an empty chat and scrolls
       away naturally once the conversation grows. */}
-      {welcomeKey ? <WelcomeHero chatKey={welcomeKey} /> : null}
+      {/* key = welcomeKey: a pane identity change REMOUNTS the hero, so a
+      chat switch mid-intro restarts it from its own first render instead of
+      keeping the previous chat's `is-playing` class and animations (T9b). */}
+      {welcomeKey ? <WelcomeHero key={welcomeKey} chatKey={welcomeKey} /> : null}
       {isEmpty ? (
         <p className="gc-thread__empty">Start a conversation with Gentle.</p>
       ) : (

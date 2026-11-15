@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChatSummary } from "@shared/bridge-types";
 import { useBridge } from "@renderer/shared/bridge/useBridge";
 import { ChatsContainer } from "@renderer/features/chats/ChatsContainer";
@@ -6,7 +6,7 @@ import { ConversationContainer, type ActiveChat } from "@renderer/features/conve
 import { FirstRunContainer } from "@renderer/features/first-run/FirstRunContainer";
 import "./App.css";
 
-const NEW_CHAT: ActiveChat = { kind: "new" };
+const NEW_CHAT: ActiveChat = { kind: "new", epoch: 0 };
 
 const SCREEN = {
   LOADING: "loading",
@@ -33,6 +33,10 @@ export function App() {
   const bridge = useBridge();
   const [screen, setScreen] = useState<Screen>(SCREEN.LOADING);
   const [activeChat, setActiveChat] = useState<ActiveChat>(NEW_CHAT);
+  // Every "New chat" click is a distinct pane identity (its own welcome
+  // intro, T9b): the counter starts after the initial chat's epoch 0 and is
+  // bumped once per click, so no two unsaved chats ever share a key.
+  const nextNewChatEpoch = useRef(1);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,7 +60,7 @@ export function App() {
   };
 
   const handleNewChat = (): void => {
-    setActiveChat(NEW_CHAT);
+    setActiveChat({ kind: "new", epoch: nextNewChatEpoch.current++ });
   };
 
   if (screen === SCREEN.LOADING) return <div className="gc-app-loading" />;

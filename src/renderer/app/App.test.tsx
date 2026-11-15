@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App } from "./App";
+import { resetWelcomeHeroIntrosForTests } from "../features/conversation/components/WelcomeHero";
 
 // `?firstRun=0` forces mockBridge.setupStatus() to needsChoice: false (see
 // mockBridge's firstRunOverride), so these tests exercise the normal chat
@@ -10,10 +11,12 @@ import { App } from "./App";
 describe("App", () => {
   beforeEach(() => {
     window.history.pushState({}, "", "?firstRun=0");
+    resetWelcomeHeroIntrosForTests();
   });
 
   afterEach(() => {
     window.history.pushState({}, "", "/");
+    (Element.prototype as unknown as { getAnimations?: unknown }).getAnimations = undefined;
   });
 
   it("renders the sidebar heading and the composer placeholder", async () => {
@@ -29,6 +32,35 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findAllByRole("heading", { name: "New chat" })).toHaveLength(1);
+  });
+
+  it("every 'New chat' click is a distinct chat that plays its own welcome intro", async () => {
+    // jsdom ships no Web Animations API; these fakes never resolve on their
+    // own, so the intro stays "playing" until the test settles it.
+    let resolve!: () => void;
+    const finished = new Promise<void>((r) => {
+      resolve = r;
+    });
+    (Element.prototype as unknown as { getAnimations?: unknown }).getAnimations = vi.fn(
+      () => [{ finished }] as unknown as Animation[],
+    );
+
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Chats" });
+    const hero = () => screen.getByTestId("gc-welcome-hero");
+    await waitFor(() => expect(hero()).toHaveAttribute("data-intro", "playing"));
+    await act(async () => {
+      resolve();
+      await finished;
+    });
+    await waitFor(() => expect(hero()).toHaveAttribute("data-intro", "complete"));
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+
+    // A new click is a new pane: its intro starts over instead of staying
+    // settled from the previous unsaved chat.
+    await waitFor(() => expect(hero()).toHaveAttribute("data-intro", "playing"));
   });
 
   it("selecting a sidebar chat updates the conversation header title", async () => {

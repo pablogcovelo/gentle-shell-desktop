@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { CHAT_STATE, MESSAGE_ROLE, type ChatState, type ChatSummary, type GentleBridge, type SubscriptionUsage } from "@shared/bridge-types";
 import { ConversationContainer, type ActiveChat } from "./ConversationContainer";
+import { resetWelcomeHeroIntrosForTests } from "./components/WelcomeHero";
 
-const NEW_CHAT: ActiveChat = { kind: "new" };
+const NEW_CHAT: ActiveChat = { kind: "new", epoch: 0 };
 
 const EXISTING_CHAT: ChatSummary = {
   id: "chat-1",
@@ -19,6 +20,26 @@ const EMPTY_HELPERS = { summary: { running: 0, queued: 0, waiting: 0, finished: 
 
 function emptyState(): ChatState {
   return { messages: [], working: false, pendingDialogs: [], activity: 0, helpers: EMPTY_HELPERS };
+}
+
+// The welcome hero reads the Web Animations API, which jsdom does not ship;
+// these fakes never resolve on their own, so an intro stays "playing" until
+// the test settles it explicitly (same pattern as WelcomeHero.test.tsx).
+function fakeHeroAnimations(count: number): { finished: Promise<void>; resolve: () => void }[] {
+  return Array.from({ length: count }, () => {
+    let resolve!: () => void;
+    const finished = new Promise<void>((r) => {
+      resolve = r;
+    });
+    return { finished, resolve };
+  });
+}
+
+function stubHeroAnimations(count: number): { animations: { finished: Promise<void>; resolve: () => void }[]; getAnimations: ReturnType<typeof vi.fn> } {
+  const animations = fakeHeroAnimations(count);
+  const getAnimations = vi.fn(() => animations as unknown as Animation[]);
+  (Element.prototype as unknown as { getAnimations?: unknown }).getAnimations = getAnimations;
+  return { animations, getAnimations };
 }
 
 function makeBridge(overrides: Partial<GentleBridge> = {}): GentleBridge {
@@ -36,6 +57,14 @@ function makeBridge(overrides: Partial<GentleBridge> = {}): GentleBridge {
     ...overrides,
   };
 }
+
+beforeEach(() => {
+  resetWelcomeHeroIntrosForTests();
+});
+
+afterEach(() => {
+  (Element.prototype as unknown as { getAnimations?: unknown }).getAnimations = undefined;
+});
 
 describe("ConversationContainer", () => {
   it('calls bridge.newChat() for activeChat { kind: "new" } and shows "New chat" as the title', async () => {
@@ -69,6 +98,41 @@ describe("ConversationContainer", () => {
 
     rerender(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} />);
     await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledWith("chat-1"));
+  });
+
+  it("gives every unsaved chat its own welcome intro and never replays a saved chat's", async () => {
+    const { animations, getAnimations } = stubHeroAnimations(1);
+    window.gentle = makeBridge();
+    const hero = () => screen.getByTestId("gc-welcome-hero");
+    const settle = async (): Promise<void> => {
+      await act(async () => {
+        animations.forEach((animation) => animation.resolve());
+        await Promise.all(animations.map((animation) => animation.finished));
+      });
+      await waitFor(() => expect(hero()).toHaveAttribute("data-intro", "complete"));
+    };
+
+    const { rerender } = render(<ConversationContainer activeChat={{ kind: "new", epoch: 1 }} />);
+    await waitFor(() => expect(hero()).toHaveAttribute("data-intro", "playing"));
+    await settle();
+
+    // A second unsaved chat is a distinct pane: its intro starts over instead
+    // of inheriting the first one's completion.
+    rerender(<ConversationContainer activeChat={{ kind: "new", epoch: 2 }} />);
+    await waitFor(() => expect(hero()).toHaveAttribute("data-intro", "playing"));
+    await settle();
+
+    // The saved chat has its own identity (its id), so it plays once.
+    rerender(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} />);
+    await waitFor(() => expect(hero()).toHaveAttribute("data-intro", "playing"));
+    await settle();
+
+    // Re-selecting the same saved chat never replays: already settled from
+    // the first render on, and no animation is ever started.
+    getAnimations.mockClear();
+    rerender(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} />);
+    expect(hero()).toHaveAttribute("data-intro", "complete");
+    expect(getAnimations).not.toHaveBeenCalled();
   });
 
   it("renders only the pushed ChatState", async () => {
