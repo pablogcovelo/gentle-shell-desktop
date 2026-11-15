@@ -123,7 +123,7 @@ describe("Footer (desktop-workspace-shell T7 — the design's footer, S9/S10/S11
     });
   });
 
-  describe("capabilities group (MCP inventory only)", () => {
+  describe("capabilities group", () => {
     it("describes MCP as inventory and never claims a connection", () => {
       render(<Footer workspace={{ mcp: MCP }} />);
 
@@ -146,14 +146,27 @@ describe("Footer (desktop-workspace-shell T7 — the design's footer, S9/S10/S11
       expect(screen.getByLabelText("MCP: 0 configured servers")).toHaveTextContent("0");
     });
 
-    // S11 — `skills` and `extensions` are not in ChatState: they render only
-    // once a bridge field supplies them, never as a sample count or a zero.
-    it("never prints skills or extensions, not even as a zero", () => {
-      render(<Footer workspace={{ mcp: MCP }} />);
+    it("keeps skills and extensions visible with zero when their counts are unavailable", () => {
+      const { rerender } = render(<Footer />);
+      const capabilities = screen.getByRole("group", { name: "Capabilities" });
+      const skills = within(capabilities).getByRole("img", { name: "Skills: 0" });
+      const extensions = within(capabilities).getByRole("img", { name: "Extensions: 0" });
+      expect(skills).toHaveTextContent("0");
+      expect(extensions).toHaveTextContent("0");
+      expect(skills).toHaveAttribute("title", expect.stringContaining("not reported"));
+      expect(extensions).toHaveAttribute("title", expect.stringContaining("not reported"));
+      expect(within(capabilities).getByLabelText("MCP: 0 configured servers")).toHaveTextContent("0");
 
-      const footer = screen.getByLabelText("Session footer");
-      expect(footer.textContent?.toLowerCase()).not.toContain("skills");
-      expect(footer.textContent?.toLowerCase()).not.toContain("extensions");
+      rerender(<Footer workspace={{ mcp: MCP }} />);
+      expect(screen.getByRole("group", { name: "Capabilities" })).toBe(capabilities);
+      expect(within(capabilities).getByRole("img", { name: "Skills: 0" })).toBe(skills);
+      expect(within(capabilities).getByRole("img", { name: "Extensions: 0" })).toBe(extensions);
+      expect(within(capabilities).getByLabelText("MCP: 2 configured servers")).toHaveTextContent("2");
+
+      rerender(<Footer />);
+      expect(within(capabilities).getByRole("img", { name: "Skills: 0" })).toBe(skills);
+      expect(within(capabilities).getByRole("img", { name: "Extensions: 0" })).toBe(extensions);
+      expect(within(capabilities).getByLabelText("MCP: 0 configured servers")).toHaveTextContent("0");
     });
   });
 

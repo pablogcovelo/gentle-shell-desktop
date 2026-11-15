@@ -41,7 +41,7 @@ pnpm dev
 
 On first run the window asks where your chats live ("Use my pi setup" or "Keep it separate"). The screen only appears when `~/.pi/agent` exists. The choice is saved; the Workspaces sidebar then shows your existing pi chats by directory. Select a directory row to reopen its chat, or use **Ctrl/Cmd+N** to start a new chat. **Add workspace** opens the native directory picker.
 
-Use **Ctrl/Cmd+K** to open the chat search dialog. The top-right panel controls toggle the sidebar and inspector; on narrow windows, the workspace panel control opens the sidebar overlay. The rail's gear opens application settings. The inspector shows TODO, USAGE and AGENTS for the open chat. Ask for delegated work to see agents appear there, then select an agent to inspect its thread. The bottom session footer scrolls horizontally with keyboard focus in narrow windows; its version stays visible.
+Use **Ctrl/Cmd+K** to open the chat search dialog. The top-right panel controls toggle the sidebar and inspector; on narrow windows, the workspace panel control opens the sidebar overlay. The rail's gear opens application settings. The inspector shows TODO, USAGE and AGENTS for the open chat. Ask for delegated work to see agents appear there, then select an agent to inspect its thread. The bottom session footer scrolls horizontally with keyboard focus in narrow windows; its version stays visible. Its MCP, skills and extensions indicators remain visible. Missing capability counts display `0`; tooltips clarify that skills and extensions counts are not yet reported by the bridge.
 
 ### Build an app bundle (optional)
 

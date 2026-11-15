@@ -43,6 +43,8 @@
 .gc-footer__context-used { color: var(--accent-active); }
 .gc-footer__capability { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); }
 .gc-footer__capability svg { color: var(--blue); flex-shrink: 0; }
+.gc-footer__capability[data-capability="skills"] svg { color: var(--accent); }
+.gc-footer__capability[data-capability="extensions"] svg { color: var(--green); }
 .gc-footer__version {
   position: sticky;
   right: 0;

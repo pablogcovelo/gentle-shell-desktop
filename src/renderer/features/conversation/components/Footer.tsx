@@ -3,7 +3,7 @@ import "./Footer.css";
 
 export interface FooterProps {
   /** Worktree/MCP/profile facts from desktop-rpc (T8). Each part is optional
-   * and renders only when it arrived. */
+   * and renders only when it arrived, except stable capability placeholders. */
   readonly workspace?: WorkspaceInfo;
   /** T11: the open workspace's directory — the app-validated absolute path
    * the host's child runs in, or the session summary's own cwd for a chat
@@ -36,9 +36,10 @@ export interface FooterProps {
  * known, with the child's own counts or `unavailable` for a failed, refused
  * or partially measured answer — never zeros. Capabilities are the MCP
  * inventory, never health: pi does not expose whether a server is
- * connected, so no wording here may ever claim it; `skills` and
- * `extensions` are not in `ChatState`, so they render only once a bridge
- * field supplies them (S11), never as a zero. The identity group carries
+ * connected, so no wording here may ever claim it. The capabilities group
+ * stays mounted even before inventory arrives. Skills and extensions have
+ * no bridge counts yet: show zero placeholders with explanatory tooltips,
+ * per the owner's stable-layout requirement. The identity group carries
  * the session's effective model, thinking level and profile (S10), each
  * only when the child supplied it. The context group is a small meter plus
  * the real `contextPercent`: absent or `null` renders nothing — never 0%.
@@ -58,7 +59,7 @@ export function Footer({ workspace, workspacePath, session, appVersion }: Footer
         <span>{workspacePath ?? "~/"}</span>
       </span>
       {worktree ? <ChangesGroup worktree={worktree} /> : null}
-      {mcp ? <CapabilitiesGroup mcp={mcp} /> : null}
+      <CapabilitiesGroup mcp={mcp} />
       {session ? <IdentityGroup session={session} profileLabel={profileLabel} /> : null}
       {contextPercent != null ? (
         <span className="gc-footer__group gc-footer__context" aria-label="Context used">
@@ -134,13 +135,34 @@ function ChangesGroup({ worktree }: { worktree: WorktreeChanges }) {
 /** Inventory wording only. `health` is deliberately not rendered: it is
  * always "unknown", and printing it would invite someone to read a green dot
  * into a channel that cannot report one. */
-function CapabilitiesGroup({ mcp }: { mcp: McpStatus }) {
-  const names = mcp.configuredNames.length > 0 ? mcp.configuredNames.length : mcp.registered.length;
+function CapabilitiesGroup({ mcp }: { mcp?: McpStatus }) {
+  const names = mcp ? (mcp.configuredNames.length > 0 ? mcp.configuredNames.length : mcp.registered.length) : 0;
   return (
     <span className="gc-footer__group" role="group" aria-label="Capabilities">
       <span className="gc-footer__capability" role="img" aria-label={`MCP: ${names} configured servers`} title={`MCP: ${names} configured servers`}>
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 3v5M16 3v5M6 8h12v4a6 6 0 0 1-12 0V8ZM12 18v4" /></svg>
         <span>{names}</span>
+      </span>
+      <span className="gc-footer__capability" data-capability="skills" role="img" aria-label="Skills: 0" title="Skills: 0 — count not reported by the bridge">
+        {/* Lucide Puzzle — ISC License
+         * Copyright (c) 2026 Lucide Icons and Contributors
+         * Permission to use, copy, modify, and/or distribute this software for any
+         * purpose with or without fee is hereby granted, provided that the above
+         * copyright notice and this permission notice appear in all copies.
+         * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+         * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+         * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+         * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+         * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+         * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+         * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+         */}
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z" /></svg>
+        <span>0</span>
+      </span>
+      <span className="gc-footer__capability" data-capability="extensions" role="img" aria-label="Extensions: 0" title="Extensions: 0 — count not reported by the bridge">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 11h8v10H3V11ZM3 3h8v8H3V3ZM11 13h8v8h-8v-8ZM15 2h7v7h-7V2Z" /></svg>
+        <span>0</span>
       </span>
     </span>
   );
