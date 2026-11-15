@@ -22,6 +22,16 @@ const ANTHROPIC_PENDING: UsageProvider = { provider: "anthropic", status: "pendi
 const REPRESENTATIVE: SubscriptionUsage = { providers: [CODEX_WINDOW_OK, ANTHROPIC_PENDING] };
 
 describe("UsageMeters", () => {
+  it("drops only the card chrome in the panel variant (T3 inspector)", () => {
+    const { container } = render(<UsageMeters usage={REPRESENTATIVE} variant="panel" />);
+
+    expect(screen.getByText("openai-codex")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: /week usage/i })).toBeInTheDocument();
+    expect(screen.getByText("40%")).toBeInTheDocument();
+    const section = container.querySelector(".gc-usage") as HTMLElement;
+    expect(section).toHaveClass("gc-usage--panel");
+  });
+
   it("renders nothing when there is no usage data at all", () => {
     const { container } = render(<UsageMeters />);
     expect(container).toBeEmptyDOMElement();

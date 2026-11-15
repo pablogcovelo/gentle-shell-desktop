@@ -1,0 +1,167 @@
+/*
+ * InspectorPanel (T3 — design/slack-gentle/01-workspace.html): the
+ * artboard's fixed three-section inspector mapped onto the project's
+ * Gentleman-Cute tokens (src/renderer/shared/theme/tokens.css). No new
+ * color, no shadow (S4): every value below is a token reference, exactly
+ * like the artboard's `.inspector` anatomy.
+ */
+.gc-inspector {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--line-strong);
+  background: var(--panel);
+  overflow: hidden;
+  width: 100%;
+}
+
+/* Three equal sections filling the panel; each one scrolls on its own. */
+.gc-inspector__section {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.gc-inspector__section + .gc-inspector__section {
+  border-top: 1px solid var(--line-strong);
+}
+
+.gc-inspector__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-shrink: 0;
+  padding: 12px 20px 8px;
+}
+
+.gc-inspector__head h2 {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.gc-inspector__meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.gc-inspector__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 20px 16px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.gc-inspector__scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.gc-inspector__scroll::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
+}
+
+.gc-inspector__scroll:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+/* Empty-state notes (S5): the section says what the wire did not send. */
+.gc-inspector__note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Delegated agents: one flat row per helper task, the artboard's
+ * directory-list rhythm. */
+.gc-inspector__agents {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.gc-inspector__agent {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+
+.gc-inspector__agent-name {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+
+/* Status color comes from the row's data-status and the project's status
+ * semantics: running = amber, done = green, failed = red, waiting = blue.
+ * Anything else (a newer gentle-agents status) stays muted rather than
+ * guessing a color (S5). */
+.gc-inspector__agent-status {
+  color: var(--muted);
+}
+
+.gc-inspector__agent[data-status="running"] .gc-inspector__agent-status {
+  color: var(--amber);
+}
+
+.gc-inspector__agent[data-status="done"] .gc-inspector__agent-status {
+  color: var(--green);
+}
+
+.gc-inspector__agent[data-status="failed"] .gc-inspector__agent-status {
+  color: var(--red);
+}
+
+.gc-inspector__agent[data-status="waiting"] .gc-inspector__agent-status {
+  color: var(--blue);
+}
+
+.gc-inspector__agent-label {
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.gc-inspector__agent-step {
+  color: var(--text-2);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.gc-inspector__agent-counters {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* S6: the button performs its stated action — opens the helpers view. */
+.gc-inspector__open-helpers {
+  align-self: flex-start;
+  margin-top: 12px;
+  font-size: 11px;
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.gc-inspector__open-helpers:hover {
+  color: var(--accent-active);
+  border-color: var(--accent);
+}

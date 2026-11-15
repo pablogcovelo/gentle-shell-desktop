@@ -11,6 +11,10 @@ export interface UsageMetersProps {
    * surface must say the channel is unavailable — a distinct state from a
    * provider's `pending`, which means the provider has not reported yet. */
   readonly channelUnavailable?: boolean;
+  /** `"card"` (default) is the chat-stack card; `"panel"` drops only the
+   * card chrome (border, background, radius, outer padding) for the
+   * InspectorPanel, whose section supplies the surface. */
+  readonly variant?: "card" | "panel";
 }
 
 /**
@@ -45,7 +49,10 @@ const STATUS_NOTES: Readonly<Record<string, string>> = {
  * Fed strictly from the pushed ChatState.usage of the open chat; the
  * `rate_limit` event keeps it live without a reload.
  */
-export function UsageMeters({ usage, channelUnavailable }: UsageMetersProps) {
+export function UsageMeters({ usage, channelUnavailable, variant = "card" }: UsageMetersProps) {
+  // The panel variant only changes presentation; the honest-state logic
+  // below is shared verbatim with the card variant.
+  const chrome = variant === "panel" ? "gc-usage gc-usage--panel" : "gc-usage";
   // The channel-unavailable state (T3 correction) reuses the same
   // honest-note path as the provider statuses below — one note, same
   // styling mechanism, distinct meaning: this says OUR control channel to
@@ -55,7 +62,7 @@ export function UsageMeters({ usage, channelUnavailable }: UsageMetersProps) {
   // is visibly a failure and not a quiet empty block.
   if (channelUnavailable) {
     return (
-      <section className="gc-usage" aria-label="Subscription usage">
+      <section className={chrome} aria-label="Subscription usage">
         <p className="gc-usage__note gc-usage__note--channel-unavailable">
           Channel unavailable — this child has no desktop control channel, so usage cannot be read.
         </p>
@@ -67,7 +74,7 @@ export function UsageMeters({ usage, channelUnavailable }: UsageMetersProps) {
   if (providers.length === 0) return null;
 
   return (
-    <section className="gc-usage" aria-label="Subscription usage">
+    <section className={chrome} aria-label="Subscription usage">
       {providers.map((provider) => (
         <UsageProviderBlock key={provider.provider} provider={provider} />
       ))}

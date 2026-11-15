@@ -17,6 +17,22 @@
   font-size: 0.85rem;
 }
 
+/* Panel variant (T3 InspectorPanel): the chat-stack card's chrome is the
+ * inspector section's job, so the flat rendering drops border, background,
+ * radius and padding and always shows its rows. */
+.gc-todo-card--panel {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.gc-todo-card__rows--panel {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
 .gc-todo-card__toggle {
   display: flex;
   align-items: center;

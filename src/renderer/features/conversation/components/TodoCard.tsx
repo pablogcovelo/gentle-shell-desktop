@@ -4,6 +4,32 @@ import "./TodoCard.css";
 
 export interface TodoCardProps {
   readonly todo: TodoPanelState;
+  /** `"card"` (default) is the chat-stack card with its toggle button;
+   * `"panel"` is the flat InspectorPanel rendering: no toggle and no
+   * summary line — the task rows are always visible. */
+  readonly variant?: "card" | "panel";
+}
+
+/**
+ * Pure progress fact (T3): the counts shared by the card's summary line
+ * and the InspectorPanel's Todo head, so the two can never drift.
+ * `planned` mirrors the TUI: dropped tasks are off the list on purpose
+ * and no longer count as open; `percent` is derived here, never stored,
+ * and null when nothing is planned — an empty plan must show no
+ * percentage rather than a fabricated 0 %.
+ */
+export function todoProgress(todo: TodoPanelState): {
+  done: number;
+  planned: number;
+  percent: number | null;
+} {
+  const tasks = todo.tasks;
+  // Terminal statuses (dropped) are excluded from the planned denominator,
+  // exactly like todoWorkSummary's planned = total - dropped.
+  const done = tasks.filter((task) => task.status === DONE).length;
+  const planned = tasks.length - tasks.filter((task) => task.status === DROPPED).length;
+  const percent = planned > 0 ? Math.round((done / planned) * 100) : null;
+  return { done, planned, percent };
 }
 
 /**
@@ -22,11 +48,7 @@ function summarize(todo: TodoPanelState): {
   percent: number | null;
 } {
   const tasks = todo.tasks;
-  // Terminal statuses (dropped) are excluded from the planned denominator,
-  // exactly like todoWorkSummary's planned = total - dropped.
-  const done = tasks.filter((task) => task.status === DONE).length;
-  const planned = tasks.length - tasks.filter((task) => task.status === DROPPED).length;
-  const percent = planned > 0 ? Math.round((done / planned) * 100) : null;
+  const { done, planned, percent } = todoProgress(todo);
   const current = tasks.find((task) => task.status === IN_PROGRESS) ?? tasks.find((task) => task.status === PENDING) ?? tasks.find((task) => task.status === BLOCKED);
   if (current) {
     return { marker: glyphFor(current.status), text: `${current.title}${current.note ? ` · ${current.note}` : ""}`, done, planned, percent };
@@ -76,11 +98,29 @@ function rowClass(status: string): string {
  * Renders nothing at all when the chat has no tasks — the TUI clears the
  * widget entirely in that case (extensions/gentle-todo.ts:252).
  */
-export function TodoCard({ todo }: TodoCardProps) {
+export function TodoCard({ todo, variant = "card" }: TodoCardProps) {
   const [expanded, setExpanded] = useState(false);
   const rowsId = useId();
 
   if (todo.tasks.length === 0) return null;
+
+  if (variant === "panel") {
+    return (
+      <aside className="gc-todo-card gc-todo-card--panel" data-testid="gc-todo-card" aria-label="Todo">
+        <ul className="gc-todo-card__rows gc-todo-card__rows--panel">
+          {todo.tasks.map((task) => (
+            <li key={task.id} className={rowClass(task.status)}>
+              <span className="gc-todo-card__marker" aria-hidden="true">
+                {glyphFor(task.status)}
+              </span>
+              <span className="gc-todo-card__title">{task.title}</span>
+              {task.note ? <span className="gc-todo-card__note">{task.note}</span> : null}
+            </li>
+          ))}
+        </ul>
+      </aside>
+    );
+  }
 
   const summary = summarize(todo);
 

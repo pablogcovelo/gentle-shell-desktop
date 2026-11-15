@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { TodoPanelState, TodoTaskView } from "@shared/bridge-types";
-import { TodoCard } from "./TodoCard";
+import { TodoCard, todoProgress } from "./TodoCard";
 
 function task(overrides: Partial<TodoTaskView> = {}): TodoTaskView {
   return { id: 1, title: "Plan the work", status: "pending", ...overrides };
@@ -92,6 +92,62 @@ describe("TodoCard", () => {
     expect(toggle).toHaveTextContent("◐");
     expect(toggle).toHaveTextContent("Render the card");
     expect(toggle).toHaveTextContent("0/2");
+  });
+});
+
+describe("TodoCard panel variant (T3 inspector)", () => {
+  it("renders the task rows always visible with no toggle and no summary line", () => {
+    render(
+      <TodoCard
+        variant="panel"
+        todo={state([
+          task({ id: 1, title: "Wire the codec", status: "done" }),
+          task({ id: 2, title: "Render the card", status: "in_progress" }),
+        ])}
+      />,
+    );
+
+    expect(screen.getByTestId("gc-todo-card")).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(screen.getByText("Wire the codec")).toBeInTheDocument();
+    // No toggle button and no summary line in the panel variant.
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByText(/todos/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the glyph and dimmed row rules unchanged in the panel variant", () => {
+    render(<TodoCard variant="panel" todo={state([task({ id: 1, title: "All finished", status: "done" })])} />);
+
+    const row = screen.getByRole("listitem");
+    expect(row).toHaveClass("gc-todo-card__row--dimmed");
+    expect(row).toHaveTextContent("✓");
+  });
+});
+
+describe("todoProgress (shared with InspectorPanel, T3)", () => {
+  it("counts done and planned (planned excludes dropped) with a rounded percent", () => {
+    expect(todoProgress(state([
+      task({ id: 1, status: "done" }),
+      task({ id: 2, status: "done" }),
+      task({ id: 3, status: "pending" }),
+      task({ id: 4, status: "in_progress" }),
+      task({ id: 5, status: "dropped" }),
+    ]))).toEqual({ done: 2, planned: 4, percent: 50 });
+  });
+
+  it("returns null percent when nothing is planned — never a fabricated 0%", () => {
+    expect(todoProgress(state([task({ id: 1, status: "dropped" })]))).toEqual({ done: 0, planned: 0, percent: null });
+  });
+
+  it("is consistent with the card's own summary count", () => {
+    const tasks = state([
+      task({ id: 1, status: "done" }),
+      task({ id: 2, status: "pending" }),
+    ]);
+    render(<TodoCard todo={tasks} />);
+
+    const progress = todoProgress(tasks);
+    expect(screen.getByTestId("gc-todo-card")).toHaveTextContent(`${progress.done}/${progress.planned}`);
   });
 });
 
