@@ -1,24 +1,63 @@
+/*
+ * Composer (artboard `.composer`): one bordered box that owns the accent focus
+ * boundary, the prompt eyebrow, the field and the send action, with the
+ * shortcut hint underneath. The field itself stays the shared TextField atom;
+ * inside the box it drops its own chrome so there is a single boundary.
+ */
+
 .gc-composer {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
-  padding: 0.75rem;
-  border-top: 1px solid var(--line);
+  gap: 0;
+  flex: none;
+  padding: 12px 28px 16px;
+}
+
+.gc-composer__box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
   background: var(--panel);
 }
 
-.gc-composer__row {
-  display: flex;
-  align-items: flex-end;
-  gap: 0.5rem;
+.gc-composer__box:focus-within {
+  border-color: var(--accent);
 }
 
+.gc-composer__eyebrow {
+  margin: 2px 4px 0;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+}
+
+/* The box is the boundary; the atom keeps only its text metrics. */
 .gc-composer .gc-text-field {
-  flex: 1;
+  min-height: 48px;
+  max-height: min(32dvh, 260px);
+  padding: 4px;
+  border-color: transparent;
+  background: transparent;
+  overflow-y: auto;
+}
+
+.gc-composer .gc-text-field:focus {
+  border-color: transparent;
+}
+
+.gc-composer__foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .gc-composer__hints {
-  margin: 0;
-  font-size: 0.75rem;
+  margin: 8px 4px 0;
   color: var(--muted);
+  font-size: 10px;
 }

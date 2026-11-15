@@ -50,7 +50,8 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
 
   return (
     <form className="gc-composer" aria-label="Composer" onSubmit={handleSubmit}>
-      <div className="gc-composer__row">
+      <div className="gc-composer__box">
+        <p className="gc-composer__eyebrow">Your next move</p>
         <TextField
           multiline
           rows={2}
@@ -60,9 +61,11 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
           onChange={handleChange}
           onKeyDown={handleKeyDown}
         />
-        <Button type="submit" disabled={!canSend}>
-          Send
-        </Button>
+        <div className="gc-composer__foot">
+          <Button type="submit" disabled={!canSend}>
+            Send
+          </Button>
+        </div>
       </div>
       <p className="gc-composer__hints">Enter to send · Shift+Enter for a new line · Esc to stop</p>
     </form>

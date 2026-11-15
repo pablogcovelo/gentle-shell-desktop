@@ -1,15 +1,33 @@
+/* Thread column (artboard `.thread`): roomy padding, messages that read as
+ * rows rather than a wall, and the same thin scrollbar as the panel. */
+
 .gc-thread {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
-  padding: 1rem;
-  overflow-y: auto;
+  gap: 1rem;
   min-height: 0;
+  padding: 24px 32px 16px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.gc-thread::-webkit-scrollbar {
+  width: 6px;
+}
+
+.gc-thread::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.gc-thread::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
 }
 
 .gc-thread__empty {
+  margin: auto;
   color: var(--muted);
   font-size: 0.9rem;
-  margin: auto;
 }

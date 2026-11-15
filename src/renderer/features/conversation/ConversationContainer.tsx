@@ -7,10 +7,9 @@ import { ActionRows } from "./components/ActionRows";
 import { Footer } from "./components/Footer";
 import { CONVERSATION_PANE, ConversationHeader, type ConversationPane } from "./components/ConversationHeader";
 import { HelpersStrip } from "./components/HelpersStrip";
+import { InspectorPanel } from "./components/InspectorPanel";
 import { MessageThread } from "./components/MessageThread";
 import { StatusLine } from "./components/StatusLine";
-import { TodoCard } from "./components/TodoCard";
-import { UsageMeters } from "./components/UsageMeters";
 import "./ConversationContainer.css";
 
 /**
@@ -390,7 +389,6 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
         notifications={chatState.notifications}
         session={chatState.session}
       />
-      <Footer workspace={chatState.workspace} workspacePath={workspacePath} />
       {pane === CONVERSATION_PANE.HELPERS ? (
         <HelpersContainer
           activity={chatState.helpers}
@@ -413,19 +411,6 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
               welcomeKey={welcomeKey}
             />
             <ActionRows toolCalls={chatState.toolCalls} vocabulary={chatState.toolVocabulary} />
-            {/* The chat's own ODD task card (M3: S5). It lives INSIDE the
-            stack and above the composer so the narrow layout keeps the TUI's
-            order — its bottom widget renders above the prompt, never below
-            it — while the wide layout lifts the same node into a right rail
-            with CSS grid. Fed strictly from the pushed ChatState.todo of the
-            open chat (S1), never a global list, and absent from Helpers. */}
-            {chatState.todo ? <TodoCard todo={chatState.todo} /> : null}
-            {/* Subscription-usage meters (desktop-rpc T3): fed strictly from
-            the pushed ChatState.usage of the open chat — one block per
-            provider, honest states for pending/failed/unavailable, and
-            nothing at all when there is no usage data. Never a transcript
-            entry, like TodoCard above. */}
-            <UsageMeters usage={chatState.usage} channelUnavailable={chatState.usageChannelUnavailable} />
             <Composer
               value={draft}
               working={chatState.working}
@@ -437,8 +422,23 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
               onAbort={handleAbort}
             />
           </div>
+          {/* The artboard's fixed three-section inspector (T3): the chat's own
+          ODD tasks, its subscription usage and its delegated agents, each in
+          its own scrolling section, fed strictly from the pushed ChatState of
+          the open chat (never a global list). Absent from the Helpers pane,
+          which is itself the full agent view. */}
+          <InspectorPanel
+            todo={chatState.todo}
+            usage={chatState.usage}
+            usageChannelUnavailable={chatState.usageChannelUnavailable}
+            helpers={chatState.helpers}
+            onOpenHelpers={() => setPane(CONVERSATION_PANE.HELPERS)}
+          />
         </div>
       )}
+      {/* Footer last: it is the conversation column's bottom strip, never a row
+      between the context bar and the thread. */}
+      <Footer workspace={chatState.workspace} workspacePath={workspacePath} />
     </section>
   );
 }

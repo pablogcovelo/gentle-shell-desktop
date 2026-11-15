@@ -71,3 +71,34 @@
 .gc-status-line__notification--error {
   color: var(--red);
 }
+
+/* Session identity (desktop-rpc T4): one compact mono row, the shape the
+ * artboard gives its identity group. Each field keeps its label and value on
+ * the same line, and the row wraps only when it truly must. */
+.gc-status-identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 16px;
+  margin: 0.5rem 28px 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.gc-status-identity__field {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.gc-status-identity dt {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.gc-status-identity dd {
+  margin: 0;
+  color: var(--text-2);
+}

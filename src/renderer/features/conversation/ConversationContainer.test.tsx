@@ -838,7 +838,7 @@ describe("ConversationContainer", () => {
     expect(screen.queryByText("Disk full", { selector: ".gc-message__text" })).not.toBeInTheDocument();
   });
 
-  it("keeps the todo card above the composer, mirroring the TUI bottom widget", async () => {
+  it("puts the task panel in the inspector beside the conversation, keeping the composer last", async () => {
     let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({
       onState: vi.fn((callback: (state: ChatState) => void) => {
@@ -861,10 +861,17 @@ describe("ConversationContainer", () => {
 
     const card = await screen.findByTestId("gc-todo-card");
     const composer = screen.getByRole("form", { name: "Composer" });
+    const inspector = screen.getByLabelText("Plan, usage and delegated agents");
+    const stack = composer.closest(".gc-conversation__stack");
 
-    // The card must come BEFORE the composer in document order: gentle-pi's
-    // bottom widget renders above the prompt, never below it (S5).
-    expect(card.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The artboard's "Workspace" layout supersedes the TUI's above-the-prompt
+    // rail (desktop-m3-odd-panel S5): the three-section inspector sits BESIDE
+    // the conversation, so the task panel no longer precedes the composer in
+    // document order. The rule's intent still holds — the composer is the last
+    // element of the conversation column, so the prompt stays within reach.
+    expect(inspector).toContainElement(card);
+    expect(stack).not.toContainElement(card);
+    expect(stack?.lastElementChild).toBe(composer);
   });
 
   // T5b — routing by workspace-host identity. The `as` cast below only

@@ -1,7 +1,7 @@
 .gc-conversation {
-  /* Single source of truth for the rail width: consumed by the 1100px grid
-   * column below and by the card's own width, so the two cannot drift. */
-  --gc-todo-card-width: 280px;
+  /* Single source of truth for the inspector width: the body grid column and
+   * the panel's own width cannot drift. Matches the artboard's 280px. */
+  --gc-inspector-width: 280px;
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -11,68 +11,51 @@
 }
 
 /*
- * Chat-pane body: the thread/composer stack, which also hosts the TodoCard
- * when the chat has ODD tasks. Mirrors the TUI's sidebarPart(tui, "todo",
- * bottom, rail): narrow windows keep the card above the composer, exactly
- * where the TUI renders its bottom widget (above the prompt, never below
- * it); wide windows lift that same node into a right rail through the grid
- * below. Pure CSS — no JS width measurement.
+ * Conversation body (the artboard's `.content`): the thread/composer column
+ * plus the fixed three-section inspector beside it. The grid gives the panel
+ * its width, and keeps the composer as the last thing in the conversation
+ * column, so the prompt stays within reach.
  */
 .gc-conversation__body {
   flex: 1;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--gc-inspector-width);
+  min-width: 0;
   min-height: 0;
 }
 
 .gc-conversation__stack {
-  flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
 }
 
-.gc-conversation__body .gc-todo-card {
-  margin: 0 1rem 1rem;
-  /* Cap the narrow (stacked) card at 40% of the stack height: a long task
-   * list must scroll inside the card rather than push the composer below
-   * the visible work area. In the wide rail the grid column caps it and
-   * max-height resets to 100% below. */
-  max-height: var(--gc-todo-card-narrow-max-height, 40%);
-  overflow-y: auto;
-}
-
-@media (min-width: 1100px) {
-  .gc-conversation__stack {
-    display: grid;
-    grid-template-columns: 1fr var(--gc-todo-card-width);
-    grid-template-rows: auto 1fr auto;
-    grid-template-areas:
-      "strip card"
-      "thread card"
-      "composer card";
+/* Narrow windows stack the panel under the conversation and let the whole
+ * body scroll, the way the artboard's `.show-tasks .content` does: the thread
+ * keeps a readable height instead of being squeezed to a strip between the
+ * status blocks and the composer. */
+@media (max-width: 1099px) {
+  .gc-conversation__body {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
   }
 
-  .gc-conversation__stack .gc-helpers-strip {
-    grid-area: strip;
+  .gc-conversation__stack {
+    flex: 0 0 auto;
   }
 
   .gc-conversation__stack .gc-thread {
-    grid-area: thread;
+    flex: 0 0 auto;
+    min-height: 360px;
+    overflow-y: visible;
   }
 
-  .gc-conversation__stack .gc-composer {
-    grid-area: composer;
-  }
-
-  .gc-conversation__stack .gc-todo-card {
-    grid-area: card;
-    width: var(--gc-todo-card-width);
-    margin: 0 1rem 1rem 0;
-    align-self: flex-start;
-    max-height: 100%;
-    overflow-y: auto;
-    border-left: none;
+  .gc-conversation__body .gc-inspector {
+    flex: 0 0 auto;
+    height: min(72dvh, 620px);
+    border-left: 0;
+    border-top: 1px solid var(--line);
   }
 }

@@ -1,30 +1,47 @@
-/* Composed footer (desktop-rpc T8): one quiet line, wrapping only when it must,
- * with the same tokens and separators as the rest of the conversation chrome. */
+/*
+ * Session footer (artboard `.footer`): one quiet mono line of grouped facts
+ * under the conversation, with thin separators between the groups. It wraps
+ * before it overflows — a narrow window must never hide a fact.
+ */
 
 .gc-footer {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 14px;
-  padding: 6px 32px 10px;
-  border-top: 1px solid var(--gc-line, #2a1720);
-  font-family: var(--gc-mono, "SFMono-Regular", Consolas, monospace);
+  flex: none;
+  gap: 0;
+  padding: 8px 18px;
+  border-top: 1px solid var(--line-strong);
+  background: var(--panel);
+  font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--gc-text-2, #d2cbd0);
+  line-height: 1.5;
+  color: var(--text-2);
 }
 
 .gc-footer__field {
   display: inline-flex;
   align-items: baseline;
   gap: 5px;
+  padding: 0 14px;
+  border-right: 1px solid var(--line-strong);
   white-space: nowrap;
 }
 
+.gc-footer__field:first-child {
+  padding-left: 0;
+}
+
+.gc-footer__field:last-child {
+  border-right: 0;
+}
+
 .gc-footer__label {
-  color: var(--gc-muted, #a78e9b);
+  color: var(--muted);
   font-size: 10px;
 }
 
 .gc-footer__value {
   overflow-wrap: anywhere;
+  white-space: normal;
 }
