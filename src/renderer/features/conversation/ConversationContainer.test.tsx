@@ -687,6 +687,43 @@ describe("ConversationContainer", () => {
     expect(screen.queryByText("late answer")).not.toBeInTheDocument();
   });
 
+  it("keeps refusing a closed host's late refresh after many closes", async () => {
+    let pushClosed: (hostId: string) => void = () => {};
+    let pushState: (state: ChatState) => void = () => {};
+    const bridge = makeBridge({
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+      onClosed: vi.fn((callback: (hostId: string) => void) => {
+        pushClosed = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} {...({ activeHostId: "host-1" } as Record<string, unknown>)} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+    await act(async () => {});
+
+    // More closes than the renderer remembers: the trimming must never drop
+    // the most recent ones, or a late answer would repaint a dead host.
+    for (let index = 1; index <= 40; index += 1) pushClosed(`host-${index}`);
+    await act(async () => {});
+
+    pushState({
+      hostId: "host-40",
+      messages: [{ id: "late-2", role: MESSAGE_ROLE.ASSISTANT, text: "after many closes", streaming: false }],
+      working: false,
+      pendingDialogs: [],
+      activity: 0,
+      helpers: { summary: { running: 0, queued: 0, waiting: 0, finished: 0 }, tasks: [] },
+    } as ChatState);
+    await act(async () => {});
+
+    expect(screen.queryByText("after many closes")).not.toBeInTheDocument();
+  });
+
   it("keeps the todo card out of the Helpers pane", async () => {
     let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({

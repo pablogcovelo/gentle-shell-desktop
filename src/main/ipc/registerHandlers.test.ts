@@ -120,6 +120,8 @@ describe("WorkspaceHostRouter close cleanup", () => {
     };
 
     const router = new WorkspaceHostRouter(source);
+    const closed: string[] = [];
+    router.onClosed((hostId) => closed.push(hostId));
     const opened = await router.openChat("chat-1");
     expect(opened.hostId).toBe("host-1");
 
@@ -127,7 +129,10 @@ describe("WorkspaceHostRouter close cleanup", () => {
     await expect(router.closeChat("host-1")).rejects.toThrow("stop failed");
 
     // The host is gone from the source either way: the router must not keep
-    // its wiring or reuse entry, and the next open has to mint a fresh host.
+    // its wiring or reuse entry, and it must still report the close so the
+    // renderer forgets the host (the cleanup lives in a finally for exactly
+    // this case).
+    expect(closed).toEqual(["host-1"]);
     stopRejects = false;
     const reopened = await router.openChat("chat-1");
     expect(reopened.hostId).toBe("host-2");

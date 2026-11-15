@@ -59,7 +59,11 @@ const hostByChatKey = new Map<string, string>();
 /** Hosts a reported close already evicted (T5d). A `chat.refresh` issued
  * before the close can still resolve afterwards; that late answer must not
  * re-add the snapshot and repaint a host nothing owns any more, which would
- * quietly undo the eviction. */
+ * quietly undo the eviction. BOUNDED on purpose: a refresh is one IPC round
+ * trip, so remembering the most recent closes is enough to refuse a late
+ * answer, while an ever-growing set would be a monotonic leak in a renderer
+ * that opens and closes chats all session. */
+const CLOSED_HOST_MEMORY = 32;
 const closedHosts = new Set<string>();
 
 /** Clears the T5c snapshot cache between tests (same reason as
@@ -90,8 +94,17 @@ function rememberSnapshot(hostId: string, state: ChatState): void {
  * one of those chats resolves through chat.open again instead of painting
  * the snapshot of a dead host (main also answers a closed id with its
  * unknown-host refusal, so nothing can be routed there either way). */
-function forgetClosedHost(closedHostId: string): void {
+function rememberClosedHost(closedHostId: string): void {
   closedHosts.add(closedHostId);
+  while (closedHosts.size > CLOSED_HOST_MEMORY) {
+    const oldest = closedHosts.values().next().value;
+    if (oldest === undefined) break;
+    closedHosts.delete(oldest);
+  }
+}
+
+function forgetClosedHost(closedHostId: string): void {
+  rememberClosedHost(closedHostId);
   snapshotsByHost.delete(closedHostId);
   for (const [chatKey, owner] of hostByChatKey) {
     if (owner === closedHostId) hostByChatKey.delete(chatKey);
