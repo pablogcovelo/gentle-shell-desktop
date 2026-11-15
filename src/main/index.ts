@@ -10,7 +10,7 @@ import {
 } from "./adapters";
 import { boundedStop } from "./domain/lifecycle/boundedStop";
 import { homeDirFor, resolveHomeMode } from "./domain/home/home";
-import { ChatHost } from "./domain/session/ChatHost";
+import { WorkspaceHostRegistry } from "./domain/session/WorkspaceHostRegistry";
 import { registerHandlers } from "./ipc/registerHandlers";
 
 // `import.meta.dirname` directly (not a manually computed
@@ -57,14 +57,26 @@ const setupService = createSetupService(configStore);
 // once at startup) so it reflects a home choice made mid-session, exactly
 // like homeSettings.homeArgs() above — see createDynamicPiSessionStore's
 // doc comment.
-const chatHost = new ChatHost({
-  spawner: createNodeProcessSpawner(),
-  locator: createLauncherLocator(),
-  sessionStore: createDynamicPiSessionStore(() => homeDirFor(resolveHomeMode(configStore.read()), process.env)),
-  env: process.env,
-  homeSettings,
-  log: logPiLine,
+//
+// T5a: hosts are created through the WorkspaceHostRegistry instead of
+// constructed directly, so the main process can hold more than one live
+// workspace host (each with its own `gentle-shell --mode rpc` child). The
+// registry mints the opaque host id; the window below is still wired to
+// exactly one host, so behaviour is unchanged. The deps factory runs once per
+// host creation, so every host gets its own adapters and its own
+// home-dependent session store — nothing is shared between hosts except this
+// closure's own configuration reads.
+const hostRegistry = new WorkspaceHostRegistry({
+  createHostDeps: () => ({
+    spawner: createNodeProcessSpawner(),
+    locator: createLauncherLocator(),
+    sessionStore: createDynamicPiSessionStore(() => homeDirFor(resolveHomeMode(configStore.read()), process.env)),
+    env: process.env,
+    homeSettings,
+    log: logPiLine,
+  }),
 });
+const chatHost = hostRegistry.createHost();
 
 // M1 T1 was just the window shell; T2 added the PiSession child process;
 // T3 wires IPC handlers so the renderer can list/open/send for real; T5
@@ -125,15 +137,17 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-// Stops the current PiSession's child process cleanly instead of leaving
-// it orphaned when the app quits, bounded to STOP_ON_QUIT_TIMEOUT_MS so a
-// child that refuses to exit never hangs shutdown. `quitting` guards
-// against the re-entrant app.quit() below re-triggering this handler in a
-// loop (before-quit fires again for that quit() call too).
+// Stops every registered host's child process cleanly instead of leaving
+// any orphaned when the app quits (T5a: through the registry, so every
+// workspace host is covered, including hosts created beyond the one the
+// window is wired to), bounded to STOP_ON_QUIT_TIMEOUT_MS so a child that
+// refuses to exit never hangs shutdown. `quitting` guards against the
+// re-entrant app.quit() below re-triggering this handler in a loop
+// (before-quit fires again for that quit() call too).
 let quitting = false;
 app.on("before-quit", (event) => {
   if (quitting) return;
   quitting = true;
   event.preventDefault();
-  void boundedStop(() => chatHost.stop(), STOP_ON_QUIT_TIMEOUT_MS).finally(() => app.quit());
+  void boundedStop(() => hostRegistry.stopAll(), STOP_ON_QUIT_TIMEOUT_MS).finally(() => app.quit());
 });

@@ -371,6 +371,34 @@ describe("ChatHost", () => {
     // including the one the queued newChat produced.
     expect(events).toEqual(["spawn:0", "endStdin:0", "spawn:1", "endStdin:1"]);
   });
+it("carries its host id on its state and error events so a registry can fan out per host (T5a)", async () => {
+  const { spawner, handles } = createFakeSpawner();
+  const host = new ChatHost({
+    spawner,
+    locator: fakeLocator,
+    sessionStore: fakeSessionStore([]),
+    env: {},
+    hostId: "host-9",
+  });
+
+  expect(host.hostId).toBe("host-9");
+
+  const stateHostIds: string[] = [];
+  const errorHostIds: string[] = [];
+  host.onState((_state, hostId) => stateHostIds.push(hostId));
+  host.onError((_message, hostId) => errorHostIds.push(hostId));
+
+  await host.newChat();
+  handles[0]?.emitStdout(JSON.stringify({ type: "agent_start" }));
+  expect(stateHostIds.length).toBeGreaterThan(0);
+  expect(stateHostIds.every((id) => id === "host-9")).toBe(true);
+
+  handles[0]?.resolveExited({ code: 1, signal: null });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(errorHostIds.length).toBeGreaterThan(0);
+  expect(errorHostIds.every((id) => id === "host-9")).toBe(true);
+});
+
 it("stopHelper routes through the current session's cancel path (desktop-rpc T6)", async () => {
     vi.useFakeTimers();
     try {

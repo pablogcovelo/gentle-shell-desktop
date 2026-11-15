@@ -52,10 +52,27 @@ export interface ChatHostDeps {
    * unchanged from PiSessionOptions.onLog (T5 host follow-up). Defaults to
    * a no-op. */
   readonly log?: (line: string) => void;
+  /** This host's opaque identity, minted by the WorkspaceHostRegistry when
+   * it creates the host (T5a: `host-1`, `host-2`, … — a counter, never a
+   * cwd, pid or session file, see desktop-rpc-client.md L22). The registry
+   * always supplies it; the fallback only exists so a ChatHost can be
+   * constructed bare (existing tests), and that fallback can never collide
+   * with a registry-minted `host-N` id. */
+  readonly hostId?: string;
 }
 
-type StateListener = (state: ChatState) => void;
-type ErrorListener = (message: string) => void;
+/** The value a bare-constructed ChatHost reports instead of a registry id
+ * (see ChatHostDeps.hostId). Deliberately outside the `host-N` id space the
+ * registry owns. */
+const NO_REGISTRY_HOST_ID = "host";
+
+/** Listeners receive the emitting host's id as their second argument
+ * (T5a), so a registry can fan events out per host without guessing which
+ * host a payload came from. registerHandlers forwards the first argument
+ * unchanged, so the `chat.state`/`chat.error` IPC payloads stay
+ * byte-identical. */
+type StateListener = (state: ChatState, hostId: string) => void;
+type ErrorListener = (message: string, hostId: string) => void;
 
 /**
  * Owns the one PiSession the desktop window can have open at a time (M1
@@ -80,6 +97,13 @@ export class ChatHost {
 
   constructor(deps: ChatHostDeps) {
     this.deps = deps;
+  }
+
+  /** This host's opaque identity (read-only): the id the
+   * WorkspaceHostRegistry minted for it, or the bare-construction fallback
+   * when no registry assigned one. */
+  get hostId(): string {
+    return this.deps.hostId ?? NO_REGISTRY_HOST_ID;
   }
 
   onState(listener: StateListener): () => void {
@@ -198,10 +222,10 @@ export class ChatHost {
   }
 
   private emitState(state: ChatState): void {
-    for (const listener of this.stateListeners) listener(state);
+    for (const listener of this.stateListeners) listener(state, this.hostId);
   }
 
   private emitError(message: string): void {
-    for (const listener of this.errorListeners) listener(message);
+    for (const listener of this.errorListeners) listener(message, this.hostId);
   }
 }
