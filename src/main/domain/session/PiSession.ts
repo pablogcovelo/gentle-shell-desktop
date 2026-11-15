@@ -107,6 +107,14 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
 
   private state: ChatState = INITIAL_CHAT_STATE;
   private process: SpawnedProcess | undefined;
+
+  /** Whether this session still owns a live child. `process` is cleared by
+   * handleExit (and stop), so it is the same live-child signal the late-reply
+   * guards already rely on — exposed for the registry, which must not hand a
+   * dead host's directory back as if it were still open. */
+  get isAlive(): boolean {
+    return this.process !== undefined && !this.stopping;
+  }
   private stopping = false;
   private rpcClient: DesktopRpcClient | undefined;
   private historyRequestCounter = 0;

@@ -133,6 +133,8 @@ export class WorkspaceHostRouter {
   /** Per-host push unsubscriptions, keyed by host id. A host outlives the
    * windows that listen to it, so unwiring happens only for failed starts. */
   private readonly hostUnsubscribers = new Map<string, () => void>();
+  /** In-flight workspace creations keyed by directory (see createWorkspace). */
+  private readonly pendingWorkspaceCreates = new Map<string, Promise<OpenChatResult>>();
   /** The latest state each live host pushed, tagged by withHostId. Main
    * learns a host's state only through that host's own tagged pushes, so
    * this record IS the host's current state as main holds it — what
@@ -255,16 +257,34 @@ export class WorkspaceHostRouter {
       throw new Error("WorkspaceHostRouter: no directory validator is configured");
     }
     await this.deps.validateDirectory(directory);
+    // Serialized per directory: two clicks on the same folder share one start
+    // instead of racing (the loser used to see a host whose chat had not
+    // reported a state yet and was refused).
+    const inFlight = this.pendingWorkspaceCreates.get(directory);
+    if (inFlight) return inFlight;
+    const started = this.createOrReuseWorkspace(directory).finally(() => {
+      this.pendingWorkspaceCreates.delete(directory);
+    });
+    this.pendingWorkspaceCreates.set(directory, started);
+    return started;
+  }
 
+  private async createOrReuseWorkspace(directory: string): Promise<OpenChatResult> {
+    // Live only: the registry drops a host whose child exited, so a dead one
+    // can never answer a directory as if it were still open.
     const existing = this.registry.findByDirectory(directory);
     if (existing) {
-      const state = this.lastStateByHost.get(existing.hostId);
-      if (!state) {
-        throw new Error(
-          `Workspace "${directory}" is already open on host "${existing.hostId}", which has not reported a state yet`,
-        );
+      // Only a host that still owns a live child may answer for its directory:
+      // a child can exit on its own and leaves the host constructed, and a
+      // live host that never reported a state has nothing to hand over. Both
+      // are replaced instead of being answered with a dead or empty workspace.
+      const state = existing.isAlive ? this.lastStateByHost.get(existing.hostId) : undefined;
+      if (state) return { hostId: existing.hostId, state };
+      try {
+        await this.registry.stopHost?.(existing.hostId);
+      } catch {
+        // nothing left to clean up
       }
-      return { hostId: existing.hostId, state };
     }
 
     const host = this.spawnHost(directory);

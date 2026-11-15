@@ -114,6 +114,13 @@ export class ChatHost {
     return this.deps.hostId ?? NO_REGISTRY_HOST_ID;
   }
 
+  /** Whether this host still owns a live child (see PiSession.isAlive). A host
+   * whose child exited stays constructed — nothing clears it — so the
+   * registry needs this to tell "open" from "was open once". */
+  get isAlive(): boolean {
+    return this.current?.isAlive === true;
+  }
+
   /** T11: the absolute workspace directory this host's child runs in
    * (read-only), or undefined when the host was created without one. The
    * registry's findByDirectory matches on this, and the push layer attaches

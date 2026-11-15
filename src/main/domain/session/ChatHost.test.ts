@@ -118,6 +118,27 @@ async function respondToHistoryRequest(
 }
 
 describe("ChatHost", () => {
+  it("reports isAlive only while its child is running", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const store = fakeSessionStore([session({ id: "sess-1", path: "/home/sessions/proj/sess-1.jsonl" })]);
+    const host = new ChatHost({ spawner, locator: fakeLocator, sessionStore: store, env: {} });
+
+    // Nothing started yet: a host that never opened a chat owns no child.
+    expect(host.isAlive).toBe(false);
+
+    const openPromise = host.openChat("sess-1");
+    await respondToHistoryRequest(handles, 0);
+    await openPromise;
+    expect(host.isAlive).toBe(true);
+
+    // The child can exit on its own; the host object stays, so the registry
+    // must be able to tell that its directory is no longer being served.
+    handles[0]?.resolveExited({ code: 0, signal: null });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(host.isAlive).toBe(false);
+  });
+
   it("openChat resolves the session path from the store, starts it, and pushes state", async () => {
     const { spawner, handles } = createFakeSpawner();
     const store = fakeSessionStore([session({ id: "sess-1", path: "/home/sessions/proj/sess-1.jsonl" })]);

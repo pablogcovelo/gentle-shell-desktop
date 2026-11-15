@@ -102,6 +102,47 @@ function fakeWebContents(): { webContents: WebContents; send: ReturnType<typeof 
   return { webContents: { send } as unknown as WebContents, send };
 }
 
+describe("WorkspaceHostRouter workspace creation races", () => {
+  it("shares one start between two concurrent creates of the same directory", async () => {
+    const byId = new Map<string, ChatHost>();
+    let nextNumber = 1;
+    let releaseNewChat: (() => void) | undefined;
+    const hostNewChat = vi.fn(
+      () =>
+        new Promise<ChatState>((resolve) => {
+          releaseNewChat = () => resolve({ messages: [], working: false, pendingDialogs: [], activity: 0, helpers: emptyHelpers() } as ChatState);
+        }),
+    );
+    const source: WorkspaceHostSource = {
+      get: (hostId) => byId.get(hostId),
+      createHost: (cwd?: string) => {
+        const host = fakeHost({ hostId: `host-${nextNumber++}`, cwd, newChat: hostNewChat });
+        byId.set(host.hostId, host);
+        return host;
+      },
+      list: () => [...byId.values()],
+      findByDirectory: (directory: string) => [...byId.values()].find((host) => host.cwd === directory),
+    };
+    const router = new WorkspaceHostRouter(source, {
+      chooseDirectory: vi.fn(),
+      validateDirectory: vi.fn().mockResolvedValue(undefined),
+    });
+
+    const first = router.createWorkspace("/tmp/ws-shared");
+    const second = router.createWorkspace("/tmp/ws-shared");
+    await vi.waitFor(() => expect(hostNewChat).toHaveBeenCalled());
+    releaseNewChat?.();
+    const [a, b] = await Promise.all([first, second]);
+
+    // One spawn, one answer: the loser of the race must not be refused nor
+    // start a second child for the same folder.
+    // One spawn per directory: the loser of the race shares the winner's start.
+    expect(byId.size).toBe(1);
+    expect(a.hostId).toBe(b.hostId);
+    expect(hostNewChat).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("WorkspaceHostRouter close cleanup", () => {
   it("still unwires a host whose stop rejects, so a later open mints a fresh host", async () => {
     const byId = new Map<string, ChatHost>();
