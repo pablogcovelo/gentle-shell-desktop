@@ -73,6 +73,7 @@ export class WorkspaceHostRouter {
   private readonly chatHosts = new Map<string, string>();
   private readonly stateListeners = new Set<(state: ChatState, hostId: string) => void>();
   private readonly errorListeners = new Set<(message: string, hostId: string) => void>();
+  private readonly closeListeners = new Set<(hostId: string) => void>();
   /** Per-host push unsubscriptions, keyed by host id. A host outlives the
    * windows that listen to it, so unwiring happens only for failed starts. */
   private readonly hostUnsubscribers = new Map<string, () => void>();
@@ -102,6 +103,15 @@ export class WorkspaceHostRouter {
   onError(listener: (message: string, hostId: string) => void): () => void {
     this.errorListeners.add(listener);
     return () => this.errorListeners.delete(listener);
+  }
+
+  /** Subscribes to close reports (T5d): invoked with the closed host's id
+   * whenever a workspace host is closed through chat.close, which is what
+   * makes the renderer forget that host's snapshot and chat→host
+   * mapping. */
+  onClosed(listener: (hostId: string) => void): () => void {
+    this.closeListeners.add(listener);
+    return () => this.closeListeners.delete(listener);
   }
 
   /** Opens a chat on the host that already owns it (reuse), or on a newly
@@ -154,6 +164,30 @@ export class WorkspaceHostRouter {
       }
       throw cause;
     }
+  }
+
+  /** Closes the addressed workspace host (T5d): stops exactly that host's
+   * child through the registry and forgets it. requireHost refuses an
+   * unknown or already-stopped id before anything is touched — no child is
+   * reached, and a live host is never stopped twice. Only on a successful
+   * stop is the close then REPORTED to the onClosed listeners
+   * (registerHandlers forwards it as the chat.closed push), which is what
+   * makes the renderer forget the host's snapshot and chat→host mapping.
+   * Quit is unaffected: the registry's stopAll covers every host still in
+   * it, and a closed host is no longer in it. */
+  async closeChat(hostId: string): Promise<void> {
+    this.requireHost(hostId);
+    // Bound: the registry's method must run with the registry as `this`.
+    const stop = this.registry.stopHost?.bind(this.registry);
+    if (!stop) throw new Error(`WorkspaceHostRouter: the host source cannot stop hosts (no stopHost), host "${hostId}" stays open`);
+    await stop(hostId);
+    this.forgetHostWiring(hostId);
+    // A chat this host owned must resolve through a FRESH host on its next
+    // chat.open: the stale reuse entry must never resurrect the closed id.
+    for (const [chatId, owner] of this.chatHosts) {
+      if (owner === hostId) this.chatHosts.delete(chatId);
+    }
+    for (const listener of this.closeListeners) listener(hostId);
   }
 
   /** Answers the addressed host's current state WITHOUT starting or
@@ -285,6 +319,10 @@ export function registerHandlers(router: WorkspaceHostRouter, setup: SetupServic
   // T5c: asks the addressed host for its current state (no child round
   // trip, no restart); an unknown id is rejected like every other request.
   registerRequestHandler(ipc, IPC_CHANNELS.REFRESH_CHAT, (_event, hostId: string) => router.refreshChat(hostId));
+  // T5d: closes exactly the addressed workspace host — its child is
+  // stopped through the registry and the host is forgotten; an unknown or
+  // already-stopped id is rejected without touching any child.
+  registerRequestHandler(ipc, IPC_CHANNELS.CLOSE_CHAT, (_event, hostId: string) => router.closeChat(hostId));
   // From here on every request carries the host id first (T5b): the
   // address the request must be delivered to, never inferred.
   registerRequestHandler(ipc, IPC_CHANNELS.SEND_MESSAGE, (_event, hostId: string, text: string) => router.sendMessage(hostId, text));
@@ -302,10 +340,15 @@ export function registerHandlers(router: WorkspaceHostRouter, setup: SetupServic
   // it as a second argument, mirroring the request channels.
   const unsubscribeState = router.onState((state) => webContents.send(IPC_CHANNELS.STATE_PUSH, state));
   const unsubscribeError = router.onError((message, hostId) => webContents.send(IPC_CHANNELS.ERROR_PUSH, message, hostId));
+  // T5d: a successful chat.close is REPORTED as its own push, carrying the
+  // closed host's id, so the renderer can forget that host's snapshot and
+  // chat→host mapping instead of painting a dead host's state again.
+  const unsubscribeClosed = router.onClosed((hostId) => webContents.send(IPC_CHANNELS.CLOSED_PUSH, hostId));
 
   return () => {
     unsubscribeState();
     unsubscribeError();
+    unsubscribeClosed();
   };
 }
 

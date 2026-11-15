@@ -16,6 +16,11 @@ export const IPC_CHANNELS = {
    * current ChatState — without starting or restarting its child. Answers
    * that host's latest known state; an unknown or stopped id is rejected. */
   REFRESH_CHAT: "chat.refresh",
+  /** Closes the workspace host addressed by the leading host id (T5d):
+   * stops exactly that host's child through the registry and forgets the
+   * host. An unknown or already-stopped id is rejected and no child is
+   * touched. */
+  CLOSE_CHAT: "chat.close",
   /** Carries the host id first (T5b): the request is delivered to that
    * host's child only; an unknown id is rejected. */
   SEND_MESSAGE: "chat.send",
@@ -31,6 +36,10 @@ export const IPC_CHANNELS = {
   /** webContents.send push: an error was surfaced for a workspace host;
    * the second argument is that host's id (T5b). */
   ERROR_PUSH: "chat.error",
+  /** webContents.send push: a workspace host was closed (T5d); the payload
+   * is the closed host's id, so the renderer can forget that host's
+   * snapshot and chat→host mapping. */
+  CLOSED_PUSH: "chat.closed",
   /** First-run status (T5): whether to show the home-choice screen. */
   SETUP_STATUS: "setup.status",
   /** Persists the chosen home mode (T5). */

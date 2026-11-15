@@ -78,6 +78,18 @@ function rememberSnapshot(hostId: string, state: ChatState): void {
   snapshotsByHost.set(hostId, state);
 }
 
+/** T5d: a reported close makes the renderer FORGET the host — its snapshot
+ * and every chat→host mapping that pointed at it — so a later selection of
+ * one of those chats resolves through chat.open again instead of painting
+ * the snapshot of a dead host (main also answers a closed id with its
+ * unknown-host refusal, so nothing can be routed there either way). */
+function forgetClosedHost(closedHostId: string): void {
+  snapshotsByHost.delete(closedHostId);
+  for (const [chatKey, owner] of hostByChatKey) {
+    if (owner === closedHostId) hostByChatKey.delete(chatKey);
+  }
+}
+
 /** An error push lands in the snapshot of the host that emitted it (T5c):
  * it renders only while that host is focused and never in another
  * workspace's status line. A host with no snapshot yet gets nothing here —
@@ -164,9 +176,20 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
       if (isForeignPush(errorHostId)) return;
       setBridgeError(message);
     });
+    // T5d: a close report (the chat.closed push for a host closed through
+    // bridge.closeChat — there is deliberately no close button in the UI)
+    // evicts that host's snapshot and chat→host mapping. When the closed
+    // host is the one this pane is addressing, say so in the status line:
+    // the pane keeps painting its last known state, but every request from
+    // now on is refused by the bridge's unknown-host error.
+    const unsubscribeClosed = bridge.onClosed?.((closedHostId) => {
+      forgetClosedHost(closedHostId);
+      if (closedHostId === hostId) setBridgeError("This workspace's host was closed");
+    });
     return () => {
       unsubscribeState();
       unsubscribeError();
+      unsubscribeClosed?.();
     };
   }, [bridge, hostId]);
 
@@ -219,10 +242,8 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
     // restarting the child through chat.open — the background child keeps
     // running, and the refresh's answer then replaces the snapshot. A chat
     // with no retained snapshot (never opened here, or a fresh unsaved
-    // pane) resolves through chat.open/chat.new as today. The same
-    // fallback covers a bridge without refreshChat (older test fakes) and
-    // a refresh whose host no longer answers (stopped or removed):
-    // reopening is the only recovery then.
+    // pane) resolves through chat.open/chat.new as today. The
+    // refreshChat-less-bridge fallback covers older test fakes only.
     const knownHostId = hostByChatKey.get(currentKey);
     const snapshot = knownHostId !== undefined ? snapshotsByHost.get(knownHostId) : undefined;
     if (knownHostId !== undefined && snapshot) {
@@ -237,8 +258,18 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
             rememberSnapshot(knownHostId, state);
             setChatState(state);
           })
-          .catch(() => {
-            if (!cancelled) resolveThroughOpenOrNew();
+          .catch((cause: unknown) => {
+            if (cancelled) return;
+            // T5d: a failed refresh NO LONGER falls back to chat.open/
+            // chat.new — starting a `gentle-shell --mode rpc` child must
+            // never be an implicit consequence of focusing a chat. The
+            // retained snapshot stays painted and the failure is surfaced
+            // instead; the chat→host mapping is dropped so the only reopen
+            // path left is an explicit user selection, which resolves
+            // through chat.open (main reuses a still-live host there, so
+            // the reopen costs no child either).
+            if (hostByChatKey.get(currentKey) === knownHostId) hostByChatKey.delete(currentKey);
+            setBridgeError(errorText(cause));
           });
       } else {
         resolveThroughOpenOrNew();

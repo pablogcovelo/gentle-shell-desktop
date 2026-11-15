@@ -238,6 +238,9 @@ const hostIdByChat = new Map<string, string>();
 
 const stateListeners = new Set<(state: ChatState) => void>();
 const errorListeners = new Set<(message: string, hostId: string) => void>();
+/** T5d: listeners told when a host is closed, so the renderer can forget
+ * that host's snapshot and chat→host mapping. */
+const closeListeners = new Set<(hostId: string) => void>();
 
 function mintHostId(): string {
   return `mock-host-${nextHostNumber++}`;
@@ -273,6 +276,7 @@ export function resetMockBridge(): void {
   hostIdByChat.clear();
   stateListeners.clear();
   errorListeners.clear();
+  closeListeners.clear();
 }
 
 function setState(state: ChatState): void {
@@ -662,6 +666,26 @@ export const mockBridge: GentleBridge = {
   async refreshChat(hostId: string): Promise<ChatState> {
     requireHost(hostId);
     return currentState;
+  },
+
+  // T5d: closes exactly the addressed host — it stops answering every
+  // request, its chat reuse entries are evicted so a re-open mints a
+  // FRESH host, and the close is reported to onClosed listeners (the
+  // renderer forgets the host on that report). No close button exists in
+  // the UI; this is reachable through the bridge only.
+  async closeChat(hostId: string): Promise<void> {
+    requireHost(hostId);
+    helpersScenarioToken += 1; // invalidate any growth loop for the closed chat
+    for (const [chatId, owner] of hostIdByChat) {
+      if (owner === hostId) hostIdByChat.delete(chatId);
+    }
+    currentHostId = "";
+    for (const listener of closeListeners) listener(hostId);
+  },
+
+  onClosed(callback: (hostId: string) => void): () => void {
+    closeListeners.add(callback);
+    return () => closeListeners.delete(callback);
   },
 
   onState(callback: (state: ChatState) => void): () => void {

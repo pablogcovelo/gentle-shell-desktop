@@ -916,13 +916,19 @@ describe("ConversationContainer", () => {
   const CHAT_1 = chatOf("chat-1", "First chat");
   const CHAT_2 = chatOf("chat-2", "Second chat");
 
-  function twoHostBridge(overrides: Partial<GentleBridge> = {}): { bridge: GentleBridge; pushState: (state: ChatState) => void; pushError: (message: string, hostId: string) => void } {
+  function twoHostBridge(overrides: Partial<GentleBridge> = {}): {
+    bridge: GentleBridge;
+    pushState: (state: ChatState) => void;
+    pushError: (message: string, hostId: string) => void;
+    pushClosed: (hostId: string) => void;
+  } {
     // The push emitters are read through `sinks` at CALL time, so a later
     // subscription (the effect re-subscribes on host-id changes) is the
     // one the test drives.
-    const sinks: { pushState: (state: ChatState) => void; pushError: (message: string, hostId: string) => void } = {
+    const sinks: { pushState: (state: ChatState) => void; pushError: (message: string, hostId: string) => void; pushClosed: (hostId: string) => void } = {
       pushState: () => undefined,
       pushError: () => undefined,
+      pushClosed: () => undefined,
     };
     const bridge = makeBridge({
       openChat: vi.fn((id: string) => Promise.resolve({ hostId: id === "chat-1" ? "host-1" : "host-2", state: emptyState() })),
@@ -934,9 +940,19 @@ describe("ConversationContainer", () => {
         sinks.pushError = callback;
         return () => {};
       }),
+      // T5d: the close-report emitter, read at CALL time like the others.
+      onClosed: vi.fn((callback: (hostId: string) => void) => {
+        sinks.pushClosed = callback;
+        return () => {};
+      }),
       ...overrides,
     });
-    return { bridge, pushState: (state: ChatState) => sinks.pushState(state), pushError: (message: string, hostId: string) => sinks.pushError(message, hostId) };
+    return {
+      bridge,
+      pushState: (state: ChatState) => sinks.pushState(state),
+      pushError: (message: string, hostId: string) => sinks.pushError(message, hostId),
+      pushClosed: (hostId: string) => sinks.pushClosed(hostId),
+    };
   }
 
   it("a push for a background host updates only that host's snapshot and does not change the focused chat's rendered state", async () => {
@@ -1073,23 +1089,87 @@ describe("ConversationContainer", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("No live workspace host");
   });
 
-  it("falls back to chat.open when the retained host no longer answers chat.refresh", async () => {
+  // T5d — lifecycle. Two contract changes land here: a failed refresh no
+  // longer falls back to chat.open (starting a child must never be an
+  // implicit consequence of focusing a chat), and a reported close makes
+  // the renderer forget the host so a later selection reopens it.
+  it("a failed chat.refresh keeps the retained snapshot, surfaces the failure, and does not call openChat/newChat; an explicit re-selection then reopens through chat.open", async () => {
     const onHostResolved = vi.fn();
+    let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({
-      openChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: emptyState() }),
+      openChat: vi.fn((id: string) => Promise.resolve({ hostId: id === "chat-1" ? "host-1" : "host-2", state: emptyState() })),
       refreshChat: vi.fn().mockRejectedValue(new Error('No live workspace host for id "host-1" (unknown or already stopped)')),
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
     });
     window.gentle = bridge;
 
     const { rerender } = render(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_1 }} {...({ onHostResolved } as Record<string, unknown>)} />);
     await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledTimes(1));
+    await act(async () => {}); // let the open resolution settle before any push
+    pushState(stateForHost("host-1", { messages: [{ id: "m1", role: MESSAGE_ROLE.ASSISTANT, text: "cached reply", streaming: false }] }));
+    expect(await screen.findByText("cached reply")).toBeInTheDocument();
 
-    // Re-selecting goes through chat.refresh first; when the host no
-    // longer answers it, the pane falls back to the open resolution
-    // instead of staying stuck on the painted snapshot.
-    rerender(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_1 }} />);
+    // Re-selecting runs the refresh; when it fails, the retained snapshot
+    // stays painted and the failure is surfaced — no child is started
+    // behind the user's back.
+    await act(async () => {
+      rerender(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_1 }} {...({ onHostResolved } as Record<string, unknown>)} />);
+    });
     await vi.waitFor(() => expect(bridge.refreshChat).toHaveBeenCalledWith("host-1"));
+    await act(async () => {}); // let the rejection settle
+    expect(screen.getByText("cached reply")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("No live workspace host");
+    expect(bridge.openChat).toHaveBeenCalledTimes(1);
+    expect(bridge.newChat).not.toHaveBeenCalled();
+
+    // The only reopen path left is an explicit user action: re-selecting
+    // the chat again resolves through chat.open (which reuses a still-live
+    // host on main's side, so the reopen costs no child either).
+    await act(async () => {
+      rerender(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_1 }} {...({ onHostResolved } as Record<string, unknown>)} />);
+    });
     await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledTimes(2));
-    expect(onHostResolved).toHaveBeenCalledWith("host-1");
+    expect(bridge.refreshChat).toHaveBeenCalledTimes(1); // never loops the dead refresh
+  });
+
+  it("a reported close evicts the closed host's snapshot and chat mapping: re-selecting that chat resolves through chat.open again instead of painting the dead snapshot", async () => {
+    // The refresh never resolves, so only the cached snapshot can paint —
+    // the same arrangement the T5c snapshot tests use.
+    const { bridge, pushState, pushClosed } = twoHostBridge({ refreshChat: vi.fn(() => new Promise<ChatState>(() => {})) });
+    window.gentle = bridge;
+
+    const { rerender } = render(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_1 }} />);
+    await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledWith("chat-1"));
+    await act(async () => {}); // let the open resolution settle before any push
+    pushState(stateForHost("host-1", { messages: [{ id: "m1", role: MESSAGE_ROLE.ASSISTANT, text: "cached reply", streaming: false }] }));
+    expect(await screen.findByText("cached reply")).toBeInTheDocument();
+
+    // Leave and come back: the cached snapshot paints and the still-live
+    // host is asked for its state (the T5c refresh path, one call).
+    rerender(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_2 }} />);
+    await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledWith("chat-2"));
+    await act(async () => {}); // let chat-2's adoption settle
+    await act(async () => {
+      rerender(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_1 }} />);
+    });
+    await vi.waitFor(() => expect(bridge.refreshChat).toHaveBeenCalledWith("host-1"));
+    expect(screen.getByText("cached reply")).toBeInTheDocument();
+
+    // The close is reported: the snapshot and the chat→host mapping are
+    // evicted, so the next selection of that chat resolves through
+    // chat.open again instead of the dead host's refresh path.
+    await act(async () => {
+      pushClosed("host-1");
+    });
+    await act(async () => {
+      rerender(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_1 }} />);
+    });
+    await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledTimes(3));
+    await act(async () => {}); // let the reopen resolution paint
+    expect(bridge.refreshChat).toHaveBeenCalledTimes(1); // never asked the dead host again
+    expect(screen.queryByText("cached reply")).not.toBeInTheDocument();
   });
 });

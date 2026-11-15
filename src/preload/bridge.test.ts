@@ -111,6 +111,19 @@ describe("createBridge", () => {
     expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.REFRESH_CHAT, "host-1");
   });
 
+  it("closeChat invokes chat.close with the host id (T5d)", async () => {
+    const { ipc, invoke } = createFakeIpc();
+    const bridge = createBridge(ipc);
+
+    // closeChat is optional on the interface (both real bridges implement
+    // it); guard the optional call instead of asserting non-null.
+    const close = bridge.closeChat?.bind(bridge);
+    if (!close) throw new Error("createBridge did not implement closeChat");
+
+    await expect(close("host-1")).resolves.toBeUndefined();
+    expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.CLOSE_CHAT, "host-1");
+  });
+
   it("onState subscribes to the state push channel and forwards pushed state", () => {
     const { ipc, listeners } = createFakeIpc();
     const bridge = createBridge(ipc);
@@ -143,6 +156,23 @@ describe("createBridge", () => {
     listeners.get(IPC_CHANNELS.ERROR_PUSH)?.[0]?.(undefined, "boom", "host-1");
 
     expect(pushes).toEqual([{ message: "boom", hostId: "host-1" }]);
+  });
+
+  it("onClosed subscribes to the chat.closed push and forwards the closed host's id (T5d)", () => {
+    const { ipc, listeners } = createFakeIpc();
+    const bridge = createBridge(ipc);
+    const closed: string[] = [];
+
+    // onClosed is optional on the interface (both real bridges implement
+    // it); guard the optional call instead of asserting non-null.
+    const unsubscribe = bridge.onClosed?.((hostId) => closed.push(hostId));
+    if (!unsubscribe) throw new Error("createBridge did not implement onClosed");
+
+    listeners.get(IPC_CHANNELS.CLOSED_PUSH)?.[0]?.(undefined, "host-1");
+    expect(closed).toEqual(["host-1"]);
+
+    unsubscribe();
+    expect(listeners.get(IPC_CHANNELS.CLOSED_PUSH)).toHaveLength(0);
   });
 
   it("setupStatus invokes setup.status with no payload", async () => {

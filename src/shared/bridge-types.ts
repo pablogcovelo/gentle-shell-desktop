@@ -725,6 +725,20 @@ export interface GentleBridge {
    * renderer uses to ignore other hosts' errors. Returns an unsubscribe
    * function. */
   onError(callback: (message: string, hostId: string) => void): () => void;
+  /** Closes the workspace host addressed by the leading host id (T5d):
+   * stops exactly that host's child through the registry and forgets the
+   * host. An unknown or already-stopped host id is rejected by the main
+   * process — no child is touched, and no other live host is affected.
+   * There is deliberately no close button in the UI: this is reachable
+   * through the bridge only. Optional: both real bridges implement it
+   * (src/preload/bridge.ts, the mock bridge). */
+  closeChat?(hostId: string): Promise<void>;
+  /** Subscribes to close reports (T5d): invoked with the closed host's id
+   * whenever a workspace host is closed through chat.close, which is what
+   * makes the renderer forget that host's snapshot and chat→host mapping.
+   * Returns an unsubscribe function. Optional: both real bridges
+   * implement it (src/preload/bridge.ts, the mock bridge). */
+  onClosed?(callback: (hostId: string) => void): () => void;
   /** Whether to show the first-run home-choice screen, and what pi
    * detection found. */
   setupStatus(): Promise<SetupStatus>;

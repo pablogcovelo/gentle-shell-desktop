@@ -47,6 +47,10 @@ export function createBridge(ipc: RendererIpc): GentleBridge {
     // round-trip, no restart); the answer is the ChatState the renderer
     // reconciles its focus-painted snapshot against.
     refreshChat: (hostId: string) => ipc.invoke(IPC_CHANNELS.REFRESH_CHAT, hostId) as Promise<ChatState>,
+    // T5d: closes exactly the addressed workspace host (no close button in
+    // the UI — this is reachable through the bridge only); an unknown or
+    // already-stopped id is rejected by main without touching any child.
+    closeChat: (hostId: string) => ipc.invoke(IPC_CHANNELS.CLOSE_CHAT, hostId) as Promise<void>,
     setupStatus: () => ipc.invoke(IPC_CHANNELS.SETUP_STATUS) as Promise<SetupStatus>,
     chooseHome: (mode: HomeMode) => ipc.invoke(IPC_CHANNELS.CHOOSE_HOME, mode) as Promise<void>,
 
@@ -61,6 +65,15 @@ export function createBridge(ipc: RendererIpc): GentleBridge {
         callback(message as string, hostId as string);
       ipc.on(IPC_CHANNELS.ERROR_PUSH, listener);
       return () => ipc.removeListener(IPC_CHANNELS.ERROR_PUSH, listener);
+    },
+
+    // T5d: the close report carries the closed host's id, which is what
+    // makes the renderer forget that host's snapshot and chat→host
+    // mapping.
+    onClosed(callback: (hostId: string) => void): () => void {
+      const listener = (_event: unknown, hostId: unknown): void => callback(hostId as string);
+      ipc.on(IPC_CHANNELS.CLOSED_PUSH, listener);
+      return () => ipc.removeListener(IPC_CHANNELS.CLOSED_PUSH, listener);
     },
   };
 }

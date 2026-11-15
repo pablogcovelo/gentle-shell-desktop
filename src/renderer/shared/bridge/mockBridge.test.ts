@@ -167,6 +167,29 @@ describe("mockBridge", () => {
     await expect(mockBridge.refreshChat?.("mock-host-999")).rejects.toThrow(/No live workspace host/);
   });
 
+  // T5d — the mock implements the same chat.close contract as the real
+  // bridge: the addressed host stops answering, close listeners are told,
+  // and the chat's reuse entry is evicted so a re-open mints a fresh host.
+  it("closeChat stops the addressed host: later requests are refused, close listeners are notified, and the chat reopens on a fresh host", async () => {
+    const closedHosts: string[] = [];
+    mockBridge.onClosed?.((hostId) => closedHosts.push(hostId));
+
+    const opened = await mockBridge.openChat("chat-readme");
+    await mockBridge.sendMessage(opened.hostId, "hello close");
+
+    await mockBridge.closeChat?.(opened.hostId);
+
+    expect(closedHosts).toEqual([opened.hostId]);
+    await expect(mockBridge.sendMessage(opened.hostId, "hello again")).rejects.toThrow(/No live workspace host/);
+    await expect(mockBridge.refreshChat?.(opened.hostId)).rejects.toThrow(/No live workspace host/);
+    await expect(mockBridge.closeChat?.("mock-host-999")).rejects.toThrow(/No live workspace host/);
+    await expect(mockBridge.closeChat?.(opened.hostId)).rejects.toThrow(/No live workspace host/);
+
+    // The closed chat's reuse entry was evicted: reopening mints a FRESH host.
+    const reopened = await mockBridge.openChat("chat-readme");
+    expect(reopened.hostId).not.toBe(opened.hostId);
+  });
+
   it("tags every pushed state, every dialog and every error push with the emitting host id", async () => {
     const states: ChatState[] = [];
     const errorPushes: Array<{ message: string; hostId: string }> = [];

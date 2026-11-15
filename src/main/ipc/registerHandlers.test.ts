@@ -5,6 +5,7 @@ import { IPC_CHANNELS } from "@shared/ipc-channels";
 import { ChatHost } from "../domain/session/ChatHost";
 import type { LauncherLocator, ProcessSpawner, SessionInfoLike, SessionStore, SpawnedProcess } from "../ports";
 import type { SetupService } from "../ports";
+import { WorkspaceHostRegistry } from "../domain/session/WorkspaceHostRegistry";
 import { WorkspaceHostRouter, registerHandlers, type WorkspaceHostSource } from "./registerHandlers";
 
 function fakeHost(overrides: Partial<ChatHost> = {}): ChatHost {
@@ -57,6 +58,14 @@ function realHostSource(
       return host;
     },
     list: () => [...byId.values()],
+    // Mirrors WorkspaceHostRegistry.stopHost exactly: stop exactly this
+    // host's child, forget the host, and refuse an id no live host owns.
+    stopHost: async (hostId: string) => {
+      const host = byId.get(hostId);
+      if (!host) throw new Error(`no host for id "${hostId}"`);
+      byId.delete(hostId);
+      await host.stop();
+    },
   };
 }
 
@@ -560,5 +569,119 @@ describe("workspace host routing (T5b)", () => {
 
     emitError("pi exited unexpectedly", "host-1");
     expect(send).toHaveBeenCalledWith(IPC_CHANNELS.ERROR_PUSH, "pi exited unexpectedly", "host-1");
+  });
+
+  // ---------------------------------------------------------------------------
+  // T5d — lifecycle: chat.close stops exactly its own host, quit stops every
+  // remaining one, and a closed host is never resurrected or double-stopped.
+  // ---------------------------------------------------------------------------
+
+/** Closes one host through the chat.close handler, resolving the child's
+ * exit the way a real child only exits because its stdin was ended (same
+ * pattern as the chat.open reuse test above). */
+async function closeHostThroughIpc(
+  close: (...args: unknown[]) => unknown,
+  handles: readonly FakeProcessHandle[],
+  events: string[],
+  hostId: string,
+  childIndex: number,
+): Promise<void> {
+  const closing = close({}, hostId);
+  await vi.waitFor(() => expect(events.filter((event) => event === `endStdin:${childIndex}`)).toHaveLength(1));
+  handles[childIndex]!.resolveExited({ code: 0, signal: null });
+  await closing;
+}
+
+describe("workspace host lifecycle (T5d)", () => {
+  it("chat.close stops exactly the addressed host's child; the other live host keeps running and still receives its requests", async () => {
+    const { ipc, handles, events } = setup({
+      sessions: [
+        session({ id: "sess-1", path: "/home/sessions/proj/sess-1.jsonl" }),
+        session({ id: "sess-2", path: "/home/sessions/proj/sess-2.jsonl" }),
+      ],
+    });
+    await openLiveChat(ipc, handles, "sess-1", 0);
+    await openLiveChat(ipc, handles, "sess-2", 1);
+    expect(handles).toHaveLength(2); // both hosts live at once
+
+    await closeHostThroughIpc(registeredHandler(ipc, IPC_CHANNELS.CLOSE_CHAT), handles, events, "host-1", 0);
+
+    // host-1 is gone: a request addressed to it is refused, never routed to host-2.
+    await expect(registeredHandler(ipc, IPC_CHANNELS.SEND_MESSAGE)({}, "host-1", "hello A")).rejects.toThrow(
+      /No live workspace host/,
+    );
+
+    // host-2 keeps running and still receives its requests.
+    await expect(registeredHandler(ipc, IPC_CHANNELS.SEND_MESSAGE)({}, "host-2", "hello B")).resolves.toEqual({ queued: true });
+    expect(handles[1]!.writes.some((write) => write.includes('"message":"hello B"'))).toBe(true);
+    // Nothing addressed to host-2 (or anything else) ever reached host-1's child.
+    expect(handles[0]!.writes.some((write) => write.includes("hello"))).toBe(false);
+  });
+
+  it("chat.close of an unknown or already-stopped host id is refused and reaches no child", async () => {
+    const { ipc, handles, events } = setup();
+    await openLiveChat(ipc, handles, "sess-1", 0);
+    const writesBefore = handles[0]!.writes.length;
+
+    // Unknown id: refused before any child is touched.
+    await expect(registeredHandler(ipc, IPC_CHANNELS.CLOSE_CHAT)({}, "host-999")).rejects.toThrow(/No live workspace host/);
+    expect(handles[0]!.writes.length).toBe(writesBefore);
+
+    // Already-stopped id: refused too, and the stopped host is never stopped twice.
+    await closeHostThroughIpc(registeredHandler(ipc, IPC_CHANNELS.CLOSE_CHAT), handles, events, "host-1", 0);
+    const writesAfterClose = handles[0]!.writes.length;
+    await expect(registeredHandler(ipc, IPC_CHANNELS.CLOSE_CHAT)({}, "host-1")).rejects.toThrow(/No live workspace host/);
+    expect(events.filter((event) => event === "endStdin:0")).toHaveLength(1);
+    expect(handles[0]!.writes.length).toBe(writesAfterClose);
+  });
+
+  it("a successful close reports the closed host's id through the chat.closed push", async () => {
+    const { ipc, send, handles, events } = setup();
+    await openLiveChat(ipc, handles, "sess-1", 0);
+
+    await closeHostThroughIpc(registeredHandler(ipc, IPC_CHANNELS.CLOSE_CHAT), handles, events, "host-1", 0);
+
+    expect(send).toHaveBeenCalledWith(IPC_CHANNELS.CLOSED_PUSH, "host-1");
+  });
+
+  it("chat.open of a chat owned by a closed host mints a fresh host instead of resurrecting the closed one", async () => {
+    const { ipc, handles, events } = setup();
+    await openLiveChat(ipc, handles, "sess-1", 0);
+    await closeHostThroughIpc(registeredHandler(ipc, IPC_CHANNELS.CLOSE_CHAT), handles, events, "host-1", 0);
+
+    const reopened = (await openLiveChat(ipc, handles, "sess-1", 1)) as { hostId: string };
+    expect(reopened.hostId).toBe("host-2"); // never host-1 again
+  });
+
+  it("app quit (registry.stopAll) stops every remaining host and never double-stops or resurrects a closed one", async () => {
+    const { spawner, handles, events } = createFakeSpawner();
+    const store = fakeSessionStore([
+      session({ id: "sess-1", path: "/home/sessions/proj/sess-1.jsonl" }),
+      session({ id: "sess-2", path: "/home/sessions/proj/sess-2.jsonl" }),
+    ]);
+    const ipc = fakeIpcMain();
+    const { webContents } = fakeWebContents();
+    // The REAL registry — the same object src/main/index.ts passes to the
+    // router and whose stopAll() app quit awaits — so this exercises the
+    // actual quit path over close, not a stand-in for either.
+    const registry = new WorkspaceHostRegistry({ createHostDeps: () => ({ spawner, locator: fakeLocator, sessionStore: store, env: {} }) });
+    registerHandlers(new WorkspaceHostRouter(registry), fakeSetup(), webContents, ipc);
+
+    await openLiveChat(ipc, handles, "sess-1", 0);
+    await openLiveChat(ipc, handles, "sess-2", 1);
+    await closeHostThroughIpc(registeredHandler(ipc, IPC_CHANNELS.CLOSE_CHAT), handles, events, "host-1", 0);
+
+    const quitting = registry.stopAll();
+    await vi.waitFor(() => expect(events).toContain("endStdin:1"));
+    handles[1]!.resolveExited({ code: 0, signal: null });
+    await quitting;
+
+    // host-2's child was stopped by quit; host-1's was stopped exactly once
+    // (by its own close) and was neither stopped again nor brought back.
+    expect(events).toContain("endStdin:1");
+    expect(events.filter((event) => event === "endStdin:0")).toHaveLength(1);
+    expect(registry.get("host-1")).toBeUndefined();
+    expect(registry.get("host-2")).toBeUndefined();
+    });
   });
 });
