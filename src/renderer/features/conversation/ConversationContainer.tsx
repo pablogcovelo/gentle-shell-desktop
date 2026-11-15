@@ -56,6 +56,11 @@ const snapshotsByHost = new Map<string, ChatState>();
  * resolved to which host: how a re-selected chat finds its host — and its
  * snapshot — before any open/new resolves. */
 const hostByChatKey = new Map<string, string>();
+/** Hosts a reported close already evicted (T5d). A `chat.refresh` issued
+ * before the close can still resolve afterwards; that late answer must not
+ * re-add the snapshot and repaint a host nothing owns any more, which would
+ * quietly undo the eviction. */
+const closedHosts = new Set<string>();
 
 /** Clears the T5c snapshot cache between tests (same reason as
  * resetWelcomeHeroIntrosForTests): module-level maps would otherwise leak
@@ -63,6 +68,7 @@ const hostByChatKey = new Map<string, string>();
 export function resetWorkspaceSnapshotsForTests(): void {
   snapshotsByHost.clear();
   hostByChatKey.clear();
+  closedHosts.clear();
 }
 
 /** The cache key of a selection: an existing chat's id, or `new-<epoch>`
@@ -75,6 +81,7 @@ function chatKeyOf(activeChat: ActiveChat): string {
 /** Stores one pushed state as its host's snapshot (T5c): called for every
  * addressed push, focused or not, so a background workspace accumulates. */
 function rememberSnapshot(hostId: string, state: ChatState): void {
+  if (closedHosts.has(hostId)) return;
   snapshotsByHost.set(hostId, state);
 }
 
@@ -84,6 +91,7 @@ function rememberSnapshot(hostId: string, state: ChatState): void {
  * the snapshot of a dead host (main also answers a closed id with its
  * unknown-host refusal, so nothing can be routed there either way). */
 function forgetClosedHost(closedHostId: string): void {
+  closedHosts.add(closedHostId);
   snapshotsByHost.delete(closedHostId);
   for (const [chatKey, owner] of hostByChatKey) {
     if (owner === closedHostId) hostByChatKey.delete(chatKey);
@@ -255,6 +263,9 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
         refreshing
           .then((state) => {
             if (cancelled) return;
+            // A close reported while this refresh was in flight wins: the
+            // late answer must not repaint a host the renderer already forgot.
+            if (closedHosts.has(knownHostId)) return;
             rememberSnapshot(knownHostId, state);
             setChatState(state);
           })

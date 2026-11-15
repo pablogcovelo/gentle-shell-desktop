@@ -180,14 +180,21 @@ export class WorkspaceHostRouter {
     // Bound: the registry's method must run with the registry as `this`.
     const stop = this.registry.stopHost?.bind(this.registry);
     if (!stop) throw new Error(`WorkspaceHostRouter: the host source cannot stop hosts (no stopHost), host "${hostId}" stays open`);
-    await stop(hostId);
-    this.forgetHostWiring(hostId);
-    // A chat this host owned must resolve through a FRESH host on its next
-    // chat.open: the stale reuse entry must never resurrect the closed id.
-    for (const [chatId, owner] of this.chatHosts) {
-      if (owner === hostId) this.chatHosts.delete(chatId);
+    // The cleanup runs even when the stop fails: a source drops the host
+    // before awaiting its child, so a rejected stop still leaves a host the
+    // router must stop believing in. Keeping the wiring or the reuse entry
+    // would point later opens at a host nothing owns any more.
+    try {
+      await stop(hostId);
+    } finally {
+      this.forgetHostWiring(hostId);
+      // A chat this host owned must resolve through a FRESH host on its next
+      // chat.open: the stale reuse entry must never resurrect the closed id.
+      for (const [chatId, owner] of this.chatHosts) {
+        if (owner === hostId) this.chatHosts.delete(chatId);
+      }
+      for (const listener of this.closeListeners) listener(hostId);
     }
-    for (const listener of this.closeListeners) listener(hostId);
   }
 
   /** Answers the addressed host's current state WITHOUT starting or

@@ -96,6 +96,44 @@ function fakeWebContents(): { webContents: WebContents; send: ReturnType<typeof 
   return { webContents: { send } as unknown as WebContents, send };
 }
 
+describe("WorkspaceHostRouter close cleanup", () => {
+  it("still unwires a host whose stop rejects, so a later open mints a fresh host", async () => {
+    const byId = new Map<string, ChatHost>();
+    let nextNumber = 1;
+    let stopRejects = false;
+    const openChat = vi.fn(async () => ({ messages: [], working: false, pendingDialogs: [], activity: 0, helpers: emptyHelpers() }) as ChatState);
+    const source: WorkspaceHostSource = {
+      get: (hostId) => byId.get(hostId),
+      createHost: () => {
+        const host = fakeHost({ hostId: `host-${nextNumber++}`, openChat });
+        byId.set(host.hostId, host);
+        return host;
+      },
+      list: () => [...byId.values()],
+      stopHost: async (hostId: string) => {
+        const host = byId.get(hostId);
+        if (!host) throw new Error(`no host for id "${hostId}"`);
+        // The registry drops the host before awaiting its stop.
+        byId.delete(hostId);
+        if (stopRejects) throw new Error("stop failed");
+      },
+    };
+
+    const router = new WorkspaceHostRouter(source);
+    const opened = await router.openChat("chat-1");
+    expect(opened.hostId).toBe("host-1");
+
+    stopRejects = true;
+    await expect(router.closeChat("host-1")).rejects.toThrow("stop failed");
+
+    // The host is gone from the source either way: the router must not keep
+    // its wiring or reuse entry, and the next open has to mint a fresh host.
+    stopRejects = false;
+    const reopened = await router.openChat("chat-1");
+    expect(reopened.hostId).toBe("host-2");
+  });
+});
+
 describe("registerHandlers", () => {
   it("can be called again for a new window without throwing (window closed, then re-registered on activate)", () => {
     const ipc = fakeIpcMain();

@@ -649,6 +649,44 @@ describe("ConversationContainer", () => {
     expect(stopHelper).toHaveBeenCalledWith("host-1", "helper-a");
   });
 
+  it("does not resurrect a closed host when its refresh resolves late", async () => {
+    let pushClosed: (hostId: string) => void = () => {};
+    let resolveRefresh: ((state: ChatState) => void) | undefined;
+    const bridge = makeBridge({
+      refreshChat: vi.fn(
+        () =>
+          new Promise<ChatState>((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+      onClosed: vi.fn((callback: (hostId: string) => void) => {
+        pushClosed = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    // Resolve the chat once so its host and snapshot are known, then make the
+    // replay path go through the pending refresh.
+    const first = render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+    await act(async () => {});
+    first.unmount();
+
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await vi.waitFor(() => expect(bridge.refreshChat).toHaveBeenCalled());
+    await act(async () => {});
+
+    // The host is closed while its refresh is still in flight; the answer
+    // that arrives afterwards must not repaint the closed host's state.
+    pushClosed("host-1");
+    await act(async () => {});
+    resolveRefresh?.({ ...emptyState(), messages: [{ id: "late", role: MESSAGE_ROLE.ASSISTANT, text: "late answer", streaming: false }] } as ChatState);
+    await act(async () => {});
+
+    expect(screen.queryByText("late answer")).not.toBeInTheDocument();
+  });
+
   it("keeps the todo card out of the Helpers pane", async () => {
     let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({
