@@ -654,6 +654,16 @@ export const mockBridge: GentleBridge = {
     });
   },
 
+  // T5c: the mock keeps ONE live host's state (see the module comment at
+  // the top); the refresh answers exactly that state — the same contract
+  // main's router implements, the addressed host's current state as the
+  // bridge holds it. requireHost refuses any other id, so a refresh never
+  // falls back to "whichever chat is open".
+  async refreshChat(hostId: string): Promise<ChatState> {
+    requireHost(hostId);
+    return currentState;
+  },
+
   onState(callback: (state: ChatState) => void): () => void {
     stateListeners.add(callback);
     return () => stateListeners.delete(callback);

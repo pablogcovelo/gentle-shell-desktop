@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { CHAT_STATE, MESSAGE_ROLE, type ChatState, type ChatSummary, type Dialog, type GentleBridge, type SubscriptionUsage } from "@shared/bridge-types";
-import { ConversationContainer, type ActiveChat } from "./ConversationContainer";
+import { ConversationContainer, resetWorkspaceSnapshotsForTests, type ActiveChat } from "./ConversationContainer";
 import { resetWelcomeHeroIntrosForTests } from "./components/WelcomeHero";
 
 const NEW_CHAT: ActiveChat = { kind: "new", epoch: 0 };
@@ -55,6 +55,9 @@ function makeBridge(overrides: Partial<GentleBridge> = {}): GentleBridge {
     answerDialog: vi.fn().mockResolvedValue(undefined),
     onState: vi.fn().mockReturnValue(() => {}),
     onError: vi.fn().mockReturnValue(() => {}),
+    // T5c: the fake answers the chat.refresh path; tests that need to hold
+    // the resolution open (or replace it) override this.
+    refreshChat: vi.fn().mockResolvedValue(emptyState()),
     setupStatus: vi.fn().mockResolvedValue({ needsChoice: false, detection: { found: false, dir: "", hasAuth: false, hasModels: false } }),
     chooseHome: vi.fn().mockResolvedValue(undefined),
     ...overrides,
@@ -63,6 +66,10 @@ function makeBridge(overrides: Partial<GentleBridge> = {}): GentleBridge {
 
 beforeEach(() => {
   resetWelcomeHeroIntrosForTests();
+  // The T5c snapshot cache is module-level (the pane persists across
+  // selection changes); without this reset, one test's chats, hosts and
+  // states would leak into the next.
+  resetWorkspaceSnapshotsForTests();
 });
 
 afterEach(() => {
@@ -109,7 +116,7 @@ describe("ConversationContainer", () => {
     const hero = () => screen.getByTestId("gc-welcome-hero");
     const settle = async (): Promise<void> => {
       await act(async () => {
-        animations.forEach((animation) => animation.resolve());
+        for (const animation of animations) animation.resolve();
         await Promise.all(animations.map((animation) => animation.finished));
       });
       await waitFor(() => expect(hero()).toHaveAttribute("data-intro", "complete"));
@@ -785,9 +792,9 @@ describe("ConversationContainer", () => {
     expect(card.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  // T5b — routing by workspace-host identity. The `as` casts and the
-  // Record spread below exist ONLY so these tests compile before the
-  // hostId contract exists (RED) and are removed once the contract lands.
+  // T5b — routing by workspace-host identity. The `as` cast below only
+  // trims the test's literal down to the fields each assertion needs; the
+  // pushed ChatState's real shape is wider.
   const stateForHost = (hostId: string, patch: Partial<ChatState> = {}): ChatState =>
     ({ ...emptyState(), ...patch, hostId }) as ChatState;
 
@@ -900,5 +907,189 @@ describe("ConversationContainer", () => {
     fireEvent.change(screen.getByPlaceholderText("Tell Gentle what you need…"), { target: { value: "hi" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await vi.waitFor(() => expect(bridge.sendMessage).toHaveBeenCalledWith("host-1", "hi"));
+  });
+
+  // T5c — focus and background discipline. The two-chats helper resolves
+  // each chat to its own host, so a re-selected chat can take the refresh
+  // path while the other host accumulates in the background.
+  const chatOf = (id: string, title: string): ChatSummary => ({ ...EXISTING_CHAT, id, title });
+  const CHAT_1 = chatOf("chat-1", "First chat");
+  const CHAT_2 = chatOf("chat-2", "Second chat");
+
+  function twoHostBridge(overrides: Partial<GentleBridge> = {}): { bridge: GentleBridge; pushState: (state: ChatState) => void; pushError: (message: string, hostId: string) => void } {
+    // The push emitters are read through `sinks` at CALL time, so a later
+    // subscription (the effect re-subscribes on host-id changes) is the
+    // one the test drives.
+    const sinks: { pushState: (state: ChatState) => void; pushError: (message: string, hostId: string) => void } = {
+      pushState: () => undefined,
+      pushError: () => undefined,
+    };
+    const bridge = makeBridge({
+      openChat: vi.fn((id: string) => Promise.resolve({ hostId: id === "chat-1" ? "host-1" : "host-2", state: emptyState() })),
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        sinks.pushState = callback;
+        return () => {};
+      }),
+      onError: vi.fn((callback: (message: string, hostId: string) => void) => {
+        sinks.pushError = callback;
+        return () => {};
+      }),
+      ...overrides,
+    });
+    return { bridge, pushState: (state: ChatState) => sinks.pushState(state), pushError: (message: string, hostId: string) => sinks.pushError(message, hostId) };
+  }
+
+  it("a push for a background host updates only that host's snapshot and does not change the focused chat's rendered state", async () => {
+    // The refresh never resolves: only the cached snapshots can paint.
+    const { bridge, pushState } = twoHostBridge({ refreshChat: vi.fn(() => new Promise<ChatState>(() => {})) });
+    window.gentle = bridge;
+
+    const { rerender } = render(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_1 }} />);
+    await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledWith("chat-1"));
+    await act(async () => {}); // let the open resolution settle before any push
+
+    // Open chat-2 once, so the pane knows which host owns it, then focus
+    // chat-1 again: from now on its host is known and its snapshot is
+    // cached, so pushes accumulate per host while it stays focused.
+    rerender(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_2 }} />);
+    await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledWith("chat-2"));
+    await act(async () => {}); // let chat-2's adoption settle
+    rerender(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_1 }} />);
+    await vi.waitFor(() => expect(bridge.refreshChat).toHaveBeenCalledWith("host-1"));
+    await act(async () => {}); // let the refresh-path paint settle before any push
+    pushState(stateForHost("host-1", { messages: [{ id: "m1", role: MESSAGE_ROLE.ASSISTANT, text: "focused reply", streaming: false }] }));
+    expect(await screen.findByText("focused reply")).toBeInTheDocument();
+
+    // A push from the BACKGROUND host-2 goes into host-2's snapshot only:
+    // the focused workspace neither renders it nor loses its own state.
+    pushState(stateForHost("host-2", { messages: [{ id: "m2", role: MESSAGE_ROLE.ASSISTANT, text: "background reply", streaming: false }] }));
+    await act(async () => {});
+    expect(screen.queryByText("background reply")).not.toBeInTheDocument();
+    expect(screen.getByText("focused reply")).toBeInTheDocument();
+
+    // The background snapshot accumulated: focusing chat-2 paints it.
+    rerender(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_2 }} />);
+    expect(await screen.findByText("background reply")).toBeInTheDocument();
+    expect(screen.queryByText("focused reply")).not.toBeInTheDocument();
+  });
+
+  it("focusing a host with a cached snapshot renders it before the refresh resolves, then the refresh's answer replaces it", async () => {
+    const onHostResolved = vi.fn();
+    let pushState: (state: ChatState) => void = () => {};
+    let resolveRefresh: ((state: ChatState) => void) | undefined;
+    const bridge = makeBridge({
+      openChat: vi.fn((id: string) => Promise.resolve({ hostId: id === "chat-1" ? "host-1" : "host-2", state: emptyState() })),
+      refreshChat: vi.fn(
+        () =>
+          new Promise<ChatState>((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      ),
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    const { rerender } = render(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_1 }} {...({ onHostResolved } as Record<string, unknown>)} />);
+    await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledWith("chat-1"));
+    await act(async () => {}); // let the open resolution settle before any push
+    pushState(stateForHost("host-1", { messages: [{ id: "m1", role: MESSAGE_ROLE.ASSISTANT, text: "cached reply", streaming: false }] }));
+    expect(await screen.findByText("cached reply")).toBeInTheDocument();
+
+    // Leave and come back: the cached snapshot paints BEFORE the refresh
+    // resolves, and the pane re-reports the host id immediately.
+    rerender(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_2 }} />);
+    await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledWith("chat-2"));
+    await act(async () => {}); // let chat-2's adoption settle
+    await act(async () => {
+      rerender(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_1 }} />);
+    });
+    expect(screen.getByText("cached reply")).toBeInTheDocument();
+    expect(onHostResolved).toHaveBeenCalledWith("host-1");
+    expect(bridge.refreshChat).toHaveBeenCalledWith("host-1");
+
+    // The refresh's answer then replaces the snapshot.
+    resolveRefresh?.(stateForHost("host-1", { messages: [{ id: "m9", role: MESSAGE_ROLE.ASSISTANT, text: "refreshed reply", streaming: false }] }));
+    expect(await screen.findByText("refreshed reply")).toBeInTheDocument();
+    expect(screen.queryByText("cached reply")).not.toBeInTheDocument();
+  });
+
+  it("an error pushed by a background host does not surface in the focused workspace's status line; it surfaces when that host is focused", async () => {
+    const { bridge, pushError } = twoHostBridge({ refreshChat: vi.fn(() => new Promise<ChatState>(() => {})) });
+    window.gentle = bridge;
+
+    const { rerender } = render(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_1 }} />);
+    await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledWith("chat-1"));
+    await act(async () => {}); // let chat-1's adoption settle
+    rerender(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_1 }} />);
+    await vi.waitFor(() => expect(bridge.refreshChat).toHaveBeenCalledWith("host-1"));
+    await act(async () => {}); // let the refresh-path paint settle
+    rerender(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_2 }} />);
+    await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledWith("chat-2"));
+    await act(async () => {}); // let chat-2's adoption settle
+    rerender(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_1 }} />);
+    await act(async () => {});
+
+    // The failure belongs to the host that emitted it: while chat-1 is
+    // focused, host-2's error must not surface in its status line.
+    pushError("host-2 exploded", "host-2");
+    await act(async () => {});
+    expect(screen.queryByText("host-2 exploded")).not.toBeInTheDocument();
+
+    // It does land in host-2's snapshot, so focusing that workspace
+    // surfaces it.
+    rerender(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_2 }} />);
+    expect(await screen.findByText("host-2 exploded")).toBeInTheDocument();
+  });
+
+  it("a request made in the window between a selection change and the new host id resolution is refused, not sent with the previous host id", async () => {
+    const bridge = makeBridge({
+      openChat: vi.fn((id: string) =>
+        id === "chat-1" ? Promise.resolve({ hostId: "host-1", state: emptyState() }) : new Promise<{ hostId: string; state: ChatState }>(() => {}),
+      ),
+      sendMessage: vi.fn().mockRejectedValue(new Error('No live workspace host for id "" (unknown or already stopped)')),
+    });
+    window.gentle = bridge;
+
+    const { rerender } = render(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_1 }} />);
+    await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledWith("chat-1"));
+    await act(async () => {}); // host-1 adopted
+
+    // The rerender and the send share one act: the click lands in the
+    // render window BEFORE the selection-change effects have run, which is
+    // exactly the window where the previously resolved host id must not be
+    // an address.
+    act(() => {
+      rerender(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_2 }} />);
+      fireEvent.change(screen.getByPlaceholderText("Tell Gentle what you need…"), { target: { value: "hello" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    });
+
+    expect(bridge.sendMessage).not.toHaveBeenCalledWith("host-1", "hello");
+    expect(bridge.sendMessage).toHaveBeenCalledWith("", "hello");
+    // The refusal is explicit, not a silent misroute.
+    expect(await screen.findByRole("status")).toHaveTextContent("No live workspace host");
+  });
+
+  it("falls back to chat.open when the retained host no longer answers chat.refresh", async () => {
+    const onHostResolved = vi.fn();
+    const bridge = makeBridge({
+      openChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: emptyState() }),
+      refreshChat: vi.fn().mockRejectedValue(new Error('No live workspace host for id "host-1" (unknown or already stopped)')),
+    });
+    window.gentle = bridge;
+
+    const { rerender } = render(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_1 }} {...({ onHostResolved } as Record<string, unknown>)} />);
+    await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledTimes(1));
+
+    // Re-selecting goes through chat.refresh first; when the host no
+    // longer answers it, the pane falls back to the open resolution
+    // instead of staying stuck on the painted snapshot.
+    rerender(<ConversationContainer activeChat={{ kind: "existing", chat: CHAT_1 }} />);
+    await vi.waitFor(() => expect(bridge.refreshChat).toHaveBeenCalledWith("host-1"));
+    await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledTimes(2));
+    expect(onHostResolved).toHaveBeenCalledWith("host-1");
   });
 });

@@ -43,6 +43,10 @@ export function createBridge(ipc: RendererIpc): GentleBridge {
     answerDialog: (hostId: string, id: string, answer: DialogAnswer) =>
       ipc.invoke(IPC_CHANNELS.ANSWER_DIALOG, hostId, id, answer) as Promise<void>,
     stopHelper: (hostId: string, id: string) => ipc.invoke(IPC_CHANNELS.STOP_HELPER, hostId, id) as Promise<StopHelperOutcome>,
+    // T5c: asks the addressed host for its current state (no child
+    // round-trip, no restart); the answer is the ChatState the renderer
+    // reconciles its focus-painted snapshot against.
+    refreshChat: (hostId: string) => ipc.invoke(IPC_CHANNELS.REFRESH_CHAT, hostId) as Promise<ChatState>,
     setupStatus: () => ipc.invoke(IPC_CHANNELS.SETUP_STATUS) as Promise<SetupStatus>,
     chooseHome: (mode: HomeMode) => ipc.invoke(IPC_CHANNELS.CHOOSE_HOME, mode) as Promise<void>,
 

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { App } from "./App";
 import { resetWelcomeHeroIntrosForTests } from "../features/conversation/components/WelcomeHero";
+import { resetWorkspaceSnapshotsForTests } from "../features/conversation/ConversationContainer";
 
 // `?firstRun=0` forces mockBridge.setupStatus() to needsChoice: false (see
 // mockBridge's firstRunOverride), so these tests exercise the normal chat
@@ -12,6 +13,10 @@ describe("App", () => {
   beforeEach(() => {
     window.history.pushState({}, "", "?firstRun=0");
     resetWelcomeHeroIntrosForTests();
+    // ConversationContainer's T5c snapshot cache is module-level; without
+    // this reset, one test's chats, hosts and states would leak into the
+    // next through the focus/refresh path.
+    resetWorkspaceSnapshotsForTests();
   });
 
   afterEach(() => {

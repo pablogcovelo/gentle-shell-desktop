@@ -710,6 +710,16 @@ export interface GentleBridge {
    * state carries its emitting host's id (ChatState.hostId), which the
    * renderer uses to ignore other hosts. Returns an unsubscribe function. */
   onState(callback: (state: ChatState) => void): () => void;
+  /** Asks the workspace host addressed by the leading host id for its
+   * current ChatState — without starting or restarting its child (T5c).
+   * The renderer calls it when it regains focus on a chat it already
+   * resolved, after painting the snapshot it cached from that host's
+   * pushes. An unknown or stopped host id is rejected by the main
+   * process, never routed to a different live host. Optional: both real
+   * bridges implement it (src/preload/bridge.ts, the mock bridge); a
+   * bridge without it makes the conversation container resolve the chat
+   * through chat.open/chat.new instead. */
+  refreshChat?(hostId: string): Promise<ChatState>;
   /** Subscribes to error messages surfaced by any workspace host; the
    * second callback argument is the emitting host's id (T5b), which the
    * renderer uses to ignore other hosts' errors. Returns an unsubscribe

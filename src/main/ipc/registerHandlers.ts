@@ -76,6 +76,12 @@ export class WorkspaceHostRouter {
   /** Per-host push unsubscriptions, keyed by host id. A host outlives the
    * windows that listen to it, so unwiring happens only for failed starts. */
   private readonly hostUnsubscribers = new Map<string, () => void>();
+  /** The latest state each live host pushed, tagged by withHostId. Main
+   * learns a host's state only through that host's own tagged pushes, so
+   * this record IS the host's current state as main holds it — what
+   * chat.refresh (T5c) answers when the renderer regains focus, so the
+   * pane can reconcile without restarting the child through chat.open. */
+  private readonly lastStateByHost = new Map<string, ChatState>();
 
   constructor(registry: WorkspaceHostSource) {
     this.registry = registry;
@@ -114,12 +120,14 @@ export class WorkspaceHostRouter {
     const host = this.spawnHost();
     try {
       const state = await host.openChat(chatId);
+      this.lastStateByHost.set(host.hostId, withHostId(state, host.hostId));
       this.chatHosts.set(chatId, host.hostId);
       return { hostId: host.hostId, state: withHostId(state, host.hostId) };
     } catch (cause) {
       // A failed open leaves the fresh host childless (or with a child it
       // failed to finish starting); forget it so failed opens never
       // accumulate empty hosts.
+      this.forgetHostWiring(host.hostId); // T5c: the stored unsubscriber must fire too, or the router stays subscribed to a host the registry is dropping
       try {
         await this.registry.stopHost?.(host.hostId);
       } catch {
@@ -135,8 +143,10 @@ export class WorkspaceHostRouter {
     const host = this.spawnHost();
     try {
       const state = await host.newChat();
+      this.lastStateByHost.set(host.hostId, withHostId(state, host.hostId));
       return { hostId: host.hostId, state: withHostId(state, host.hostId) };
     } catch (cause) {
+      this.forgetHostWiring(host.hostId); // same failed-start unwiring as openChat (T5c)
       try {
         await this.registry.stopHost?.(host.hostId);
       } catch {
@@ -144,6 +154,23 @@ export class WorkspaceHostRouter {
       }
       throw cause;
     }
+  }
+
+  /** Answers the addressed host's current state WITHOUT starting or
+   * restarting its child (T5c): the renderer calls this when it regains
+   * focus on a chat it already resolved, after painting the snapshot it
+   * cached from that host's pushes, so the child keeps running instead of
+   * being restarted through chat.open. The host must still be live
+   * (requireHost), so an unknown or stopped id is refused and no child is
+   * touched; a live host whose chat never reported a state is refused
+   * too, because there is nothing to answer with. */
+  async refreshChat(hostId: string): Promise<ChatState> {
+    this.requireHost(hostId);
+    const state = this.lastStateByHost.get(hostId);
+    if (!state) {
+      throw new Error(`No known state for host "${hostId}" (its chat has not reported any state yet)`);
+    }
+    return state;
   }
 
   /** The session list is host-independent: every host reads the same
@@ -202,6 +229,9 @@ export class WorkspaceHostRouter {
     const hostId = host.hostId;
     this.hostUnsubscribers.get(hostId)?.();
     const unsubscribeState = host.onState((state, emittingHostId) => {
+      // The record chat.refresh answers from (T5c): the latest tagged push
+      // per host, before fanning out to the router's listeners.
+      this.lastStateByHost.set(hostId, withHostId(state, emittingHostId));
       for (const listener of this.stateListeners) listener(withHostId(state, emittingHostId), emittingHostId);
     });
     const unsubscribeError = host.onError((message, emittingHostId) => {
@@ -211,6 +241,17 @@ export class WorkspaceHostRouter {
       unsubscribeState();
       unsubscribeError();
     });
+  }
+
+  /** Invokes and drops one host's stored push unsubscriber (T5c, L24
+   * follow-up): a failed start removes the host from the registry, so the
+   * router must stop hearing it too — without this, the router stays
+   * subscribed to a host that no longer exists. Also drops the host's
+   * recorded state: no live host owns it any more. */
+  private forgetHostWiring(hostId: string): void {
+    this.hostUnsubscribers.get(hostId)?.();
+    this.hostUnsubscribers.delete(hostId);
+    this.lastStateByHost.delete(hostId);
   }
 }
 
@@ -241,6 +282,9 @@ export function registerHandlers(router: WorkspaceHostRouter, setup: SetupServic
   registerRequestHandler(ipc, IPC_CHANNELS.LIST_CHATS, () => router.listChats());
   registerRequestHandler(ipc, IPC_CHANNELS.OPEN_CHAT, (_event, chatId: string) => router.openChat(chatId));
   registerRequestHandler(ipc, IPC_CHANNELS.NEW_CHAT, () => router.newChat());
+  // T5c: asks the addressed host for its current state (no child round
+  // trip, no restart); an unknown id is rejected like every other request.
+  registerRequestHandler(ipc, IPC_CHANNELS.REFRESH_CHAT, (_event, hostId: string) => router.refreshChat(hostId));
   // From here on every request carries the host id first (T5b): the
   // address the request must be delivered to, never inferred.
   registerRequestHandler(ipc, IPC_CHANNELS.SEND_MESSAGE, (_event, hostId: string, text: string) => router.sendMessage(hostId, text));

@@ -97,6 +97,20 @@ describe("createBridge", () => {
     expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.STOP_HELPER, "host-1", "m3a1-worker");
   });
 
+  it("refreshChat invokes chat.refresh with the host id (T5c)", async () => {
+    const { ipc, invoke } = createFakeIpc();
+    invoke.mockResolvedValue({ messages: [] });
+    const bridge = createBridge(ipc);
+
+    // refreshChat is optional on the interface (both real bridges implement
+    // it); guard the optional call instead of asserting non-null.
+    const refresh = bridge.refreshChat?.bind(bridge);
+    if (!refresh) throw new Error("createBridge did not implement refreshChat");
+
+    await expect(refresh("host-1")).resolves.toEqual({ messages: [] });
+    expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.REFRESH_CHAT, "host-1");
+  });
+
   it("onState subscribes to the state push channel and forwards pushed state", () => {
     const { ipc, listeners } = createFakeIpc();
     const bridge = createBridge(ipc);

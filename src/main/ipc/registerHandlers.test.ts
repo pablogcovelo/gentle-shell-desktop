@@ -5,7 +5,7 @@ import { IPC_CHANNELS } from "@shared/ipc-channels";
 import { ChatHost } from "../domain/session/ChatHost";
 import type { LauncherLocator, ProcessSpawner, SessionInfoLike, SessionStore, SpawnedProcess } from "../ports";
 import type { SetupService } from "../ports";
-import { WorkspaceHostRouter, registerHandlers, type WorkspaceHostSource } from "./registerHandlers"; // RED: not exported yet
+import { WorkspaceHostRouter, registerHandlers, type WorkspaceHostSource } from "./registerHandlers";
 
 function fakeHost(overrides: Partial<ChatHost> = {}): ChatHost {
   return {
@@ -405,6 +405,144 @@ describe("workspace host routing (T5b)", () => {
         ),
       ).toBe(true),
     );
+  });
+
+  // T5c — focus and background discipline: chat.refresh answers a host's
+  // current state without touching its child, and a failed start unwires
+  // the host it spawned (the L24 follow-up).
+  it("chat.refresh answers the addressed host's latest state without touching any child, and refuses an unknown host id", async () => {
+    const { ipc, handles } = setup();
+    const opened = (await openLiveChat(ipc, handles, "sess-1", 0)) as { hostId: string };
+    expect(opened.hostId).toBe("host-1");
+    const writesBefore = handles[0]!.writes.length;
+
+    const refreshed = (await registeredHandler(ipc, IPC_CHANNELS.REFRESH_CHAT)({}, "host-1")) as ChatState;
+    expect(refreshed.hostId).toBe("host-1");
+    // A refresh is a read of main's own per-host record, never a child
+    // round-trip: not one extra stdin write.
+    expect(handles[0]!.writes.length).toBe(writesBefore);
+
+    // The answer tracks the host's LATEST state: after a prompt, the user
+    // message is part of the refreshed state (PiSession appends and pushes
+    // it synchronously, so the router's record already holds it).
+    await expect(registeredHandler(ipc, IPC_CHANNELS.SEND_MESSAGE)({}, "host-1", "hello refresh")).resolves.toEqual({ queued: true });
+    const afterPrompt = (await registeredHandler(ipc, IPC_CHANNELS.REFRESH_CHAT)({}, "host-1")) as ChatState;
+    expect(afterPrompt.messages.some((message) => message.role === "user" && message.text === "hello refresh")).toBe(true);
+
+    // An unknown id is refused before any child is touched.
+    const writesAfter = handles[0]!.writes.length;
+    await expect(registeredHandler(ipc, IPC_CHANNELS.REFRESH_CHAT)({}, "host-999")).rejects.toThrow(/No live workspace host/);
+    expect(handles[0]!.writes.length).toBe(writesAfter);
+  });
+
+  it("chat.refresh refuses a live host whose chat has never reported a state", async () => {
+    const ipc = fakeIpcMain();
+    // fakeHost's default onState/onError already wire a childless host:
+    // the router subscribes to it at construction, but no chat was ever
+    // opened on it, so main holds no state to answer a refresh with.
+    const host = fakeHost({ hostId: "host-1" });
+
+    registerHandlers(new WorkspaceHostRouter(fakeHostSource(host)), fakeSetup(), fakeWebContents().webContents, ipc);
+
+    await expect(registeredHandler(ipc, IPC_CHANNELS.REFRESH_CHAT)({}, "host-1")).rejects.toThrow(/No known state/);
+  });
+
+  it("a failed openChat invokes and drops that host's stored unsubscriber, so the router stops hearing a host the registry dropped", async () => {
+    const ipc = fakeIpcMain();
+    const { webContents, send } = fakeWebContents();
+    let emitState: (state: ChatState, hostId: string) => void = () => undefined;
+    let emitError: (message: string, hostId: string) => void = () => undefined;
+    // These unsubscribers honour the real ChatHost contract (removing the
+    // listener from its Set), so "the host's listeners receive nothing
+    // afterwards" is a statement about actual delivery, not about spies.
+    const unsubscribeState = vi.fn(() => {
+      emitState = () => undefined;
+    });
+    const unsubscribeError = vi.fn(() => {
+      emitError = () => undefined;
+    });
+    const stopHost = vi.fn().mockResolvedValue(undefined);
+    // The source mints a FRESH host per createHost call (as the real
+    // registry does), so the router wires it exactly once — at spawn.
+    const byId = new Map<string, ChatHost>();
+    let nextNumber = 1;
+    const source: WorkspaceHostSource = {
+      get: (hostId) => byId.get(hostId),
+      createHost: () => {
+        const created = fakeHost({
+          hostId: `host-${nextNumber++}`,
+          openChat: vi.fn().mockRejectedValue(new Error("spawn failed")),
+          onState: vi.fn((listener: (state: ChatState, hostId: string) => void) => {
+            emitState = listener;
+            return unsubscribeState;
+          }),
+          onError: vi.fn((listener: (message: string, hostId: string) => void) => {
+            emitError = listener;
+            return unsubscribeError;
+          }),
+        });
+        byId.set(created.hostId, created);
+        return created;
+      },
+      list: () => [...byId.values()],
+      stopHost,
+    };
+
+    const router = new WorkspaceHostRouter(source);
+    const lateStates: ChatState[] = [];
+    router.onState((state) => lateStates.push(state));
+    registerHandlers(router, fakeSetup(), webContents, ipc);
+
+    await expect(registeredHandler(ipc, IPC_CHANNELS.OPEN_CHAT)({}, "sess-1")).rejects.toThrow("spawn failed");
+
+    // The stored unsubscriber was invoked and its entry dropped: exactly
+    // one invocation each (the host was wired once, at spawn), so a repeat
+    // start cannot unwire someone else.
+    expect(unsubscribeState).toHaveBeenCalledTimes(1);
+    expect(unsubscribeError).toHaveBeenCalledTimes(1);
+    expect(stopHost).toHaveBeenCalledWith("host-1");
+
+    // The router is no longer subscribed: the dropped host's pushes reach
+    // neither this router's own listeners nor the window.
+    emitState({ messages: [], working: false, pendingDialogs: [], activity: 0, helpers: emptyHelpers() }, "host-1");
+    emitError("late error", "host-1");
+    expect(lateStates).toHaveLength(0);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("a failed newChat unwires its host the same way", async () => {
+    const ipc = fakeIpcMain();
+    const { webContents, send } = fakeWebContents();
+    let emitState: (state: ChatState, hostId: string) => void = () => undefined;
+    const unsubscribeState = vi.fn(() => {
+      emitState = () => undefined;
+    });
+    const byId = new Map<string, ChatHost>();
+    let nextNumber = 1;
+    const source: WorkspaceHostSource = {
+      get: (hostId) => byId.get(hostId),
+      createHost: () => {
+        const created = fakeHost({
+          hostId: `host-${nextNumber++}`,
+          newChat: vi.fn().mockRejectedValue(new Error("spawn failed")),
+          onState: vi.fn((listener: (state: ChatState, hostId: string) => void) => {
+            emitState = listener;
+            return unsubscribeState;
+          }),
+        });
+        byId.set(created.hostId, created);
+        return created;
+      },
+      list: () => [...byId.values()],
+    };
+
+    registerHandlers(new WorkspaceHostRouter(source), fakeSetup(), webContents, ipc);
+
+    await expect(registeredHandler(ipc, IPC_CHANNELS.NEW_CHAT)({})).rejects.toThrow("spawn failed");
+    expect(unsubscribeState).toHaveBeenCalledTimes(1);
+
+    emitState({ messages: [], working: false, pendingDialogs: [], activity: 0, helpers: emptyHelpers() }, "host-1");
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("forwards error pushes with the emitting host's id, so the renderer can ignore other hosts' errors", () => {

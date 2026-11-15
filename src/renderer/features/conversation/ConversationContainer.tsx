@@ -29,15 +29,63 @@ export interface ConversationContainerProps {
   /** T5b: the active chat's workspace host id, OWNED BY App — set from
    * the open/new resolution (see onHostResolved) and reset on every
    * selection change. Every request the container sends is addressed to
-   * it and pushes for other hosts are ignored. Falls back to the
-   * container's own open/new resolution when App does not supply it
-   * (bare usage/tests), and to the empty string while nothing has been
-   * resolved yet — a request sent that early is rejected by the bridge
-   * with its clear unknown-host error instead of being silently routed. */
+   * it; pushes for other hosts are not ignored any more (T5c) — they
+   * accumulate in that host's snapshot. Falls back to the container's own
+   * resolution, kept PAIRED with the selection it was resolved for (T5c):
+   * a re-rendered selection without App's id still addresses its own
+   * host, but the first render after a selection change carries the empty
+   * string — a request sent that early is refused by the bridge with its
+   * clear unknown-host error instead of being silently routed to the old
+   * host. */
   readonly activeHostId?: string;
-  /** Reports the host id the open/new resolution returned, so App can
-   * keep it and pass it back down. */
+  /** Reports the host id the open/new or refresh resolution returned, so
+   * App can keep it and pass it back down. */
   readonly onHostResolved?: (hostId: string) => void;
+}
+
+/**
+ * T5c (desktop-rpc-client.md L25): the renderer's per-host snapshot cache,
+ * fed by every state push main fans out for every live host — a background
+ * host's states accumulate here instead of being dropped, so its state is
+ * observable the moment its workspace is focused. Module-level (like the
+ * welcome-hero registry) because the pane persists across selection
+ * changes while App holds only the currently active host id.
+ */
+const snapshotsByHost = new Map<string, ChatState>();
+/** Which chat key (chat id, or `new-<epoch>` for an unsaved chat) was last
+ * resolved to which host: how a re-selected chat finds its host — and its
+ * snapshot — before any open/new resolves. */
+const hostByChatKey = new Map<string, string>();
+
+/** Clears the T5c snapshot cache between tests (same reason as
+ * resetWelcomeHeroIntrosForTests): module-level maps would otherwise leak
+ * chats, hosts and states across tests. Only tests need it. */
+export function resetWorkspaceSnapshotsForTests(): void {
+  snapshotsByHost.clear();
+  hostByChatKey.clear();
+}
+
+/** The cache key of a selection: an existing chat's id, or `new-<epoch>`
+ * for an unsaved chat (App's epoch counter makes every "New chat" click a
+ * distinct pane, T9b). */
+function chatKeyOf(activeChat: ActiveChat): string {
+  return activeChat.kind === "existing" ? activeChat.chat.id : `new-${activeChat.epoch}`;
+}
+
+/** Stores one pushed state as its host's snapshot (T5c): called for every
+ * addressed push, focused or not, so a background workspace accumulates. */
+function rememberSnapshot(hostId: string, state: ChatState): void {
+  snapshotsByHost.set(hostId, state);
+}
+
+/** An error push lands in the snapshot of the host that emitted it (T5c):
+ * it renders only while that host is focused and never in another
+ * workspace's status line. A host with no snapshot yet gets nothing here —
+ * PiSession's surfaceError always follows the error event with a state
+ * push carrying the same lastError, which the cache then holds. */
+function rememberError(hostId: string, message: string): void {
+  const snapshot = snapshotsByHost.get(hostId);
+  if (snapshot) snapshotsByHost.set(hostId, { ...snapshot, lastError: message });
 }
 
 function emptyChatState(): ChatState {
@@ -66,12 +114,20 @@ function errorText(cause: unknown): string {
 export function ConversationContainer({ activeChat, activeHostId, onHostResolved }: ConversationContainerProps) {
   const bridge = useBridge();
   const [chatState, setChatState] = useState<ChatState>(emptyChatState());
-  // The host id this container resolved for the current activeChat from
-  // its own open/new call — the fallback when no activeHostId comes from
-  // above. Reset whenever the selection changes, together with App's own
-  // reset below, so a stale host id can never answer for the new chat.
-  const [resolvedHostId, setResolvedHostId] = useState<string | undefined>(undefined);
-  const hostId = activeHostId ?? resolvedHostId ?? "";
+  // The host id this container resolved for the current activeChat, kept
+  // PAIRED with the selection it was resolved for (T5c fix of the L24
+  // follow-up; it also serves bare usage where no activeHostId comes from
+  // above). Because the pair is checked against the CURRENT selection at
+  // render time, during the first render after a selection change the old
+  // resolution no longer matches: the previously resolved host id is not
+  // an address at all, so a request sent in that window carries the empty
+  // string and is refused by the bridge with its clear unknown-host error
+  // — visible in the status line, never silently misrouted to the old
+  // host. (Resetting this state in an effect cannot do the same: effects
+  // run only after the render in which the stale id would be used.)
+  const [resolved, setResolved] = useState<{ readonly key: string; readonly hostId: string } | undefined>(undefined);
+  const currentKey = chatKeyOf(activeChat);
+  const hostId = activeHostId ?? (resolved?.key === currentKey ? resolved.hostId : "");
   const [bridgeError, setBridgeError] = useState<string | undefined>(undefined);
   const [draft, setDraft] = useState("");
   const [pane, setPane] = useState<ConversationPane>(CONVERSATION_PANE.CHAT);
@@ -92,10 +148,19 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
     pushedHostId === undefined ? hostId !== "" : pushedHostId !== hostId;
   useEffect(() => {
     const unsubscribeState = bridge.onState((state) => {
+      // T5c: every addressed push accumulates under its host id, focused
+      // or not; only the focused host's also renders. An unaddressed push
+      // has no host to accumulate under — the T5b gate below still decides
+      // whether it may render.
+      if (state.hostId !== undefined) rememberSnapshot(state.hostId, state);
       if (isForeignPush(state.hostId)) return;
       setChatState(state);
     });
     const unsubscribeError = bridge.onError((message, errorHostId) => {
+      // T5c: the error lands in the snapshot of the host that emitted it,
+      // so a child failure stays local to its workspace (see rememberError
+      // for the no-snapshot-yet case).
+      if (errorHostId !== undefined) rememberError(errorHostId, message);
       if (isForeignPush(errorHostId)) return;
       setBridgeError(message);
     });
@@ -112,37 +177,82 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   // the newer selection.
   // Reset to the chat pane whenever the selected chat changes — a helper
   // tab left open on the previous chat must never bleed into the next one.
-  // The previous chat's host id is dropped with it (T5b): until the new
-  // open/new resolves, no request may route to the old host.
+  // The previous chat's host id needs no reset here: the resolved pair is
+  // checked against the current selection at render time (see `resolved`),
+  // so it stops being an address the moment the selection changes.
   useEffect(() => {
     setPane(CONVERSATION_PANE.CHAT);
     setHelpersOpenedAt(new Date().toISOString());
-    setResolvedHostId(undefined);
   }, [activeChat]);
 
   useEffect(() => {
     setBridgeError(undefined);
     let cancelled = false;
-    const opening = activeChat.kind === "existing" ? bridge.openChat(activeChat.chat.id) : bridge.newChat();
-    opening
-      .then((result) => {
-        if (cancelled) return;
-        // T5b: the answer names the host this chat was routed to. It is
-        // reported up (App keeps it) and kept locally for bare usage;
-        // every later request is addressed to it.
-        setResolvedHostId(result.hostId);
-        onHostResolved?.(result.hostId);
-        setChatState(result.state);
-      })
-      .catch((cause: unknown) => {
-        if (!cancelled) setBridgeError(errorText(cause));
-      });
+
+    // Adopts the resolution of the chat this effect opened (T5b + T5c):
+    // remembers which host owns it, caches its state as that host's
+    // snapshot, reports the host id up (App keeps it; also kept paired
+    // locally for bare usage), and renders the state.
+    const adopt = (resolvedHostId: string, state: ChatState): void => {
+      hostByChatKey.set(currentKey, resolvedHostId);
+      rememberSnapshot(resolvedHostId, state);
+      setResolved({ key: currentKey, hostId: resolvedHostId });
+      onHostResolved?.(resolvedHostId);
+      setChatState(state);
+    };
+
+    const resolveThroughOpenOrNew = (): void => {
+      const opening = activeChat.kind === "existing" ? bridge.openChat(activeChat.chat.id) : bridge.newChat();
+      opening
+        .then((result) => {
+          if (cancelled) return;
+          adopt(result.hostId, result.state);
+        })
+        .catch((cause: unknown) => {
+          if (!cancelled) setBridgeError(errorText(cause));
+        });
+    };
+
+    // T5c focus discipline: a chat this pane already resolved keeps its
+    // host. Re-selecting it paints the retained snapshot immediately and
+    // asks THAT host (chat.refresh) for its current state instead of
+    // restarting the child through chat.open — the background child keeps
+    // running, and the refresh's answer then replaces the snapshot. A chat
+    // with no retained snapshot (never opened here, or a fresh unsaved
+    // pane) resolves through chat.open/chat.new as today. The same
+    // fallback covers a bridge without refreshChat (older test fakes) and
+    // a refresh whose host no longer answers (stopped or removed):
+    // reopening is the only recovery then.
+    const knownHostId = hostByChatKey.get(currentKey);
+    const snapshot = knownHostId !== undefined ? snapshotsByHost.get(knownHostId) : undefined;
+    if (knownHostId !== undefined && snapshot) {
+      setResolved({ key: currentKey, hostId: knownHostId });
+      onHostResolved?.(knownHostId);
+      setChatState(snapshot);
+      const refreshing = bridge.refreshChat?.(knownHostId);
+      if (refreshing) {
+        refreshing
+          .then((state) => {
+            if (cancelled) return;
+            rememberSnapshot(knownHostId, state);
+            setChatState(state);
+          })
+          .catch(() => {
+            if (!cancelled) resolveThroughOpenOrNew();
+          });
+      } else {
+        resolveThroughOpenOrNew();
+      }
+    } else {
+      resolveThroughOpenOrNew();
+    }
+
     return () => {
       cancelled = true;
     };
     // onHostResolved is deliberately NOT a dependency: it is a stable
     // state setter from App, and re-running this effect on identity churn
-    // would re-open the chat on every render.
+    // would re-resolve the chat on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bridge, activeChat]);
 

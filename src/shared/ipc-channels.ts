@@ -12,6 +12,10 @@ export const IPC_CHANNELS = {
   OPEN_CHAT: "chat.open",
   /** Starts a fresh chat on a newly minted workspace host (T5b). */
   NEW_CHAT: "chat.new",
+  /** Asks the workspace host addressed by the leading host id (T5c) for its
+   * current ChatState — without starting or restarting its child. Answers
+   * that host's latest known state; an unknown or stopped id is rejected. */
+  REFRESH_CHAT: "chat.refresh",
   /** Carries the host id first (T5b): the request is delivered to that
    * host's child only; an unknown id is rejected. */
   SEND_MESSAGE: "chat.send",

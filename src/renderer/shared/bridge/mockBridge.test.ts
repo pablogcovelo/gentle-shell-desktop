@@ -144,6 +144,29 @@ describe("mockBridge", () => {
     expect(states).toHaveLength(0);
   });
 
+  // T5c — the mock implements the same chat.refresh contract as the real
+  // bridge: the addressed host's current state, without any restart, and a
+  // clear refusal for an id no live host owns.
+  it("refreshChat answers the current host's state without pushing anything new, and refuses an unknown host id", async () => {
+    const { states } = collectStates();
+    const { hostId } = await mockBridge.newChat();
+    await mockBridge.sendMessage(hostId, "hello refresh");
+    const pushesBefore = states.length;
+
+    // refreshChat is optional on the interface (both real bridges implement
+    // it); guard the optional call instead of asserting non-null.
+    const refresh = mockBridge.refreshChat?.bind(mockBridge);
+    if (!refresh) throw new Error("mockBridge did not implement refreshChat");
+
+    const refreshed = await refresh(hostId);
+    expect(refreshed.hostId).toBe(hostId);
+    expect(refreshed.messages.some((message) => message.role === "user" && message.text === "hello refresh")).toBe(true);
+    // A refresh is a read, not a round-trip: no extra state push.
+    expect(states.length).toBe(pushesBefore);
+
+    await expect(mockBridge.refreshChat?.("mock-host-999")).rejects.toThrow(/No live workspace host/);
+  });
+
   it("tags every pushed state, every dialog and every error push with the emitting host id", async () => {
     const states: ChatState[] = [];
     const errorPushes: Array<{ message: string; hostId: string }> = [];
