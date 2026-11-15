@@ -1,4 +1,4 @@
-import type { McpStatus, WorkspaceInfo } from "@shared/bridge-types";
+import type { McpStatus, WorktreeChanges, WorkspaceInfo } from "@shared/bridge-types";
 import "./Footer.css";
 
 export interface FooterProps {
@@ -29,19 +29,38 @@ export interface FooterProps {
  * MCP is inventory, never health: the label says what is configured and how
  * many tool groups exist, and no wording here may ever say a server is
  * connected, because pi does not expose that.
+ *
+ * The worktree group (T8b) renders only when a root is known — no root, no
+ * group, nothing invented — and only what the child supplied: the branch
+ * when it reports one, the changed-file count and the added/deleted counts.
+ * `countsUnavailable` (a failed or unborn root, a refused answer, a file
+ * the child has not measured) renders as unavailable, never as zero files
+ * and zero lines.
  */
 export function Footer({ workspace, workspacePath }: FooterProps) {
   const profile = workspace?.profile?.label;
   const mcp = workspace?.mcp;
   const mcpSummary = mcp ? describeMcp(mcp) : undefined;
+  const worktree = workspacePath !== undefined ? workspace?.worktree : undefined;
 
   return (
     <section className="gc-footer" aria-label="Session footer">
       <Field label="path" value={workspacePath ?? "~/"} />
       {profile ? <Field label="profile" value={profile} /> : null}
       {mcpSummary ? <Field label="MCP" value={mcpSummary} /> : null}
+      {worktree?.branch ? <Field label="branch" value={worktree.branch} /> : null}
+      {worktree ? <Field label="changes" value={describeWorktree(worktree)} /> : null}
     </section>
   );
+}
+
+/** The child's own counts, or the unavailable word when it supplied none:
+ * `countsUnavailable` covers a failed or unborn root, a refused answer and
+ * a partial count (an unmeasured untracked file), and none of those may
+ * render as zero files and zero lines. */
+function describeWorktree(worktree: WorktreeChanges): string {
+  if (worktree.countsUnavailable) return "unavailable";
+  return `${worktree.files.length} files · +${worktree.added ?? 0}/-${worktree.deleted ?? 0}`;
 }
 
 function Field({ label, value }: { label: string; value: string }) {

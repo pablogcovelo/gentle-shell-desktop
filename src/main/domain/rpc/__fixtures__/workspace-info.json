@@ -3,6 +3,30 @@
     "root": "/home/pablo/Projects/GentlemanProgramming/gentle-shell-desktop",
     "model": { "files": [], "added": 0, "deleted": 0, "digest": "811c9dc51f2be47c" }
   },
+  "worktreeDocumentedExample": {
+    "root": "/home/dev/project",
+    "branch": "main",
+    "model": {
+      "files": [{ "path": "src/index.ts", "added": 12, "deleted": 3, "status": "modified" }],
+      "added": 12,
+      "deleted": 3,
+      "digest": "1a2b3c4d5e6f7081"
+    }
+  },
+  "worktreeFailedRoot": { "root": "/home/dev/project", "failed": true },
+  "worktreeUnbornRoot": { "root": "/home/dev/project", "unborn": true },
+  "worktreeLabeledUntracked": {
+    "root": "/home/dev/project",
+    "model": {
+      "files": [
+        { "path": "src/index.ts", "added": 12, "deleted": 3, "status": "modified" },
+        { "path": "scratch/notes.md", "status": "untracked", "countsUnavailable": true }
+      ],
+      "added": 12,
+      "deleted": 3,
+      "digest": "1a2b3c4d5e6f7081"
+    }
+  },
   "mcp": {
     "health": "unknown",
     "configured": { "status": "absent", "names": [] },

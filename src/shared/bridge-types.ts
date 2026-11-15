@@ -306,13 +306,16 @@ export interface ToolVocabulary {
 
 /** The worktree state gentle-pi computes for a root (desktop-rpc T8).
  * `countsUnavailable` is carried because a root it could not read must render
- * as "unavailable", never as zero files and zero lines. */
+ * as "unavailable", never as zero files and zero lines. When it is set the
+ * child supplied no complete counts (a failed or unborn root, or a file it
+ * has not measured), so `added`/`deleted` are absent too: a number the child
+ * did not supply is never invented. */
 export interface WorktreeChanges {
   readonly root: string;
   readonly branch?: string;
   readonly files: readonly string[];
-  readonly added: number;
-  readonly deleted: number;
+  readonly added?: number;
+  readonly deleted?: number;
   readonly countsUnavailable?: boolean;
 }
 

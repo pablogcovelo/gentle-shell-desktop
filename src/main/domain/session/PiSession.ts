@@ -15,7 +15,12 @@ import { applyAgentState, mergeAgentEntry, parseAgentEntry, parseAgentList } fro
 import { DESKTOP_RPC_WIDGET_KEY, DesktopRpcClient, parseDesktopRpcWidget } from "../rpc/desktopRpc";
 import { parseSessionState, parseSessionStats } from "../rpc/sessionStats";
 import { parseToolVocabulary } from "../rpc/toolVocabulary";
-import { parseActiveProfile, parseMcpStatus } from "../rpc/workspaceInfo";
+import {
+  parseActiveProfile,
+  parseMcpStatus,
+  parseWorktreeChanges,
+  unavailableWorktreeChanges,
+} from "../rpc/workspaceInfo";
 import { mergeUsageProviders, parseRateLimitEvent, parseSubscriptionUsage } from "../rpc/usage";
 import { extractHistoryMessages, historyToMessages } from "../rpc/history";
 import { extractTodoPanel } from "../rpc/todoPanel";
@@ -124,6 +129,12 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
    * answer that arrives after the chat was replaced) must never overwrite
    * the current usage. */
   private usageRequestEpoch = 0;
+  /** Counts the worktree-changes requests this session has sent (desktop-rpc
+   * T8b). A worktree answer folds only while it is the NEWEST request's
+   * answer: the same binding rule the usage read applies, so a late answer
+   * for an older request — or for a replaced chat — never overwrites the
+   * current footer. */
+  private worktreeRequestEpoch = 0;
   /** The desktop control channel's adoption state for THIS child's
    * lifetime (T3 correction). S10: `capabilities` is the only support
    * probe — until it succeeds for the live child, NOTHING is written to
@@ -332,6 +343,7 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
         this.requestIdentity();
         this.requestVocabulary();
         this.requestWorkspace();
+        this.requestWorktree();
         this.requestUsage();
         this.requestAgentSnapshot();
       } else {
@@ -458,6 +470,55 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
     };
     adopt("mcp_status");
     adopt("get_active_profile");
+  }
+
+  /**
+   * Reads the worktree's changed counts for THIS session's workspace root
+   * (desktop-rpc T8b): `get_worktree_changes` takes `{ root }` and answers
+   * with the branch, the changed files and the added/deleted line counts the
+   * child itself measured. The root is this session's own `cwd` — the
+   * directory the child actually runs in, the one the workspace unit gave
+   * it. The child answers only for a root of its own session, and guessing
+   * one would report someone else's tree (the T8 rule that parked this
+   * until T11 supplied a root), so no root known means NO request at all.
+   *
+   * Gated like every other control write: no adopted channel, no
+   * advertisement of `get_worktree_changes`, no request.
+   *
+   * Triggers — the same lifecycle boundaries the other stats refresh at,
+   * never a timer: the probe's success and each settled turn (changes
+   * happen during turns, so a settled turn is when the counts move).
+   *
+   * Binding: the answer folds only while it is BOTH the newest request's
+   * answer (epoch) AND still this session's client — stop()/exit dispose
+   * and clear the client, so a late answer for a replaced chat can never
+   * overwrite the current footer. A refused or failed answer folds as
+   * unavailable (never zeros, the T8 honesty rule); a malformed ok-reply
+   * folds nothing, keeping the last-known counts.
+   */
+  private requestWorktree(): void {
+    const rpc = this.rpcClient;
+    if (!rpc || this.probeState !== "ok") return;
+    const root = this.cwd;
+    if (!root) return;
+    if (!this.advertisedMethods?.has("get_worktree_changes")) return;
+    const epoch = ++this.worktreeRequestEpoch;
+    void rpc.request("get_worktree_changes", { root }).then(
+      (reply) => {
+        if (this.rpcClient !== rpc || epoch !== this.worktreeRequestEpoch) return;
+        // A refused or failed answer is still an answer about this root:
+        // fold it as unavailable so the footer says so instead of showing
+        // the last-known counts as if they were current.
+        const worktree = reply.ok ? parseWorktreeChanges(reply.data) : unavailableWorktreeChanges(root);
+        if (!worktree) return;
+        this.state = { ...this.state, workspace: { ...this.state.workspace, worktree } };
+        this.emit("state", this.state);
+      },
+      // A transport rejection (the child exiting between request and reply
+      // is the realistic case) must degrade to "not supplied" — never an
+      // unhandled rejection in the main process.
+      () => undefined,
+    );
   }
 
   /**
@@ -749,6 +810,7 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
       if (decoded.type === "agent_settled") {
         if (this.probeState === "ok") {
           this.requestIdentity();
+          this.requestWorktree();
           this.requestUsage();
         } else this.probeChannel();
       }

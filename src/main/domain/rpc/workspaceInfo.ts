@@ -8,8 +8,12 @@ import type { ActiveProfile, McpStatus, WorktreeChanges } from "@shared/bridge-t
  * Every payload below was captured from a live `gentle-shell --mode rpc` child
  * and is kept in `__fixtures__/workspace-info.json`, so the shapes here are
  * read off the wire rather than guessed:
- * - `get_worktree_changes` takes `{ root }` and answers
- *   `{ root, model: { files, added, deleted, digest } }`;
+ * - `get_worktree_changes` takes `{ root }` and answers `{ root, branch?,
+ *   model: { files: [{ path, added, deleted, status, countsUnavailable? }],
+ *   added, deleted, digest } }`; a root whose scan failed answers
+ *   `{ root, failed: true }` and a root with no commits yet answers
+ *   `{ root, unborn: true }` — each with no model, never zero files or zero
+ *   lines (docs/desktop-rpc.md "get_worktree_changes");
  * - `mcp_status` answers `{ health, configured: { status, names },
  *   registered, namespaces }` with `health` always `"unknown"` — pi does not
  *   expose connection state, so nothing may imply it;
@@ -22,22 +26,61 @@ import type { ActiveProfile, McpStatus, WorktreeChanges } from "@shared/bridge-t
  */
 export function parseWorktreeChanges(data: unknown): WorktreeChanges | undefined {
   if (!isRecord(data) || typeof data.root !== "string" || data.root.length === 0) return undefined;
+
+  // The child's own truthful labels ("Truthful labels, real shapes",
+  // docs/desktop-rpc.md): a failed or unborn root carries no model, and an
+  // answer without a model at all is the same fact. Counts are unavailable —
+  // never zeros, because zero would claim a measurement nobody made.
+  if (data.failed === true || data.unborn === true) return unavailableWorktreeChanges(data.root);
+
   const model = data.model;
-  if (!isRecord(model)) return undefined;
-  if (typeof model.added !== "number" || !Number.isFinite(model.added)) return undefined;
-  if (typeof model.deleted !== "number" || !Number.isFinite(model.deleted)) return undefined;
-  const files = toStrings(model.files);
+  if (!isRecord(model)) return unavailableWorktreeChanges(data.root);
+  if (typeof model.added !== "number" || !Number.isFinite(model.added)) return unavailableWorktreeChanges(data.root);
+  if (typeof model.deleted !== "number" || !Number.isFinite(model.deleted)) return unavailableWorktreeChanges(data.root);
+
+  const files = parseFilePaths(model.files);
+  // A file the child has not measured (an untracked file's lines are not in
+  // `diff --numstat`) makes the sums PARTIAL: labelled, with no numbers
+  // carried, so the footer cannot present a partial count as complete.
+  const countsUnavailable = files.labeled || model.countsUnavailable === true;
+  if (countsUnavailable) return { root: data.root, files: files.paths, countsUnavailable: true };
 
   return {
     root: data.root,
-    ...(typeof model.branch === "string" && model.branch.length > 0 ? { branch: model.branch } : {}),
-    files: files ?? [],
+    // `branch` sits beside `model` in the documented answer, and is
+    // "unknown" when the root's own branch cannot be read — that is the
+    // child's own word and is rendered as supplied.
+    ...(typeof data.branch === "string" && data.branch.length > 0 ? { branch: data.branch } : {}),
+    files: files.paths,
     added: model.added,
     deleted: model.deleted,
-    // gentle-pi reports counts as unavailable for a root it could not read;
-    // keeping the flag is what lets the footer say so instead of showing zero.
-    ...(model.countsUnavailable === true ? { countsUnavailable: true } : {}),
   };
+}
+
+/** The unavailable shape shared by every "the child supplied no counts"
+ * answer: no numbers at all, only the flag the footer renders as such. */
+export function unavailableWorktreeChanges(root: string): WorktreeChanges {
+  return { root, files: [], countsUnavailable: true };
+}
+
+/** The per-file projection: `file.path` is relative to `root`, and a file
+ * labelled `countsUnavailable` (an unmeasured untracked file) marks the
+ * sums partial. Entries that are neither are dropped, not coerced. */
+function parseFilePaths(value: unknown): { paths: readonly string[]; labeled: boolean } {
+  if (!Array.isArray(value)) return { paths: [], labeled: false };
+  const paths: string[] = [];
+  let labeled = false;
+  for (const entry of value) {
+    if (typeof entry === "string") {
+      paths.push(entry);
+      continue;
+    }
+    if (isRecord(entry) && typeof entry.path === "string") {
+      paths.push(entry.path);
+      if (entry.countsUnavailable === true) labeled = true;
+    }
+  }
+  return { paths, labeled };
 }
 
 export function parseMcpStatus(data: unknown): McpStatus | undefined {

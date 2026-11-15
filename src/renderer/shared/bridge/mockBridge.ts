@@ -23,6 +23,7 @@ import {
   type PromptResult,
   type SetupStatus,
   type StopHelperOutcome,
+  type WorkspaceInfo,
 } from "@shared/bridge-types";
 
 /**
@@ -189,9 +190,12 @@ function emptyState(): ChatState {
         { category: "rdd", glyph: "🌹", patterns: ["gentle_review*"], heading: "rdd" },
       ],
     },
-    // desktop-rpc T8 demo workspace facts: a session-effective profile label
-    // and an MCP inventory. `health` never renders: the footer says what is
-    // configured, never that a server is connected.
+    // desktop-rpc T8 demo workspace facts: a session-effective profile label,
+    // an MCP inventory, and — T8b — a plausible worktree so the footer's
+    // worktree group is exercisable in the preview without a child. The group
+    // renders only when a root is known (a created workspace, or an example
+    // chat's own cwd); for a plain new chat the footer shows `~/` and no
+    // group, exactly like the real app with no root.
     workspace: {
       profile: { label: "opensourcing", active: "opensourcing" },
       mcp: {
@@ -201,9 +205,25 @@ function emptyState(): ChatState {
         registered: [],
         namespaces: ["mcp__github__search", "mcp__linear__issues"],
       },
+      worktree: {
+        root: "/Users/dev/gentle-shell-desktop",
+        branch: "main",
+        files: ["src/renderer/app/App.tsx", "src/shared/bridge-types.ts"],
+        added: 34,
+        deleted: 7,
+      },
     },
   };
 }
+
+/** T8b: the demo worktree of the working chat (chat-migration) is the
+ * unavailable case — the child could not read that root, so the footer
+ * renders "unavailable", never zero files and zero lines. Mirrors the usage
+ * demo's pending provider: one honest unavailable state beside the count.
+ * The root is that chat's own demo cwd (EXAMPLE_CHATS). */
+const UNAVAILABLE_WORKTREE_DEMO: WorkspaceInfo = {
+  worktree: { root: "/Users/dev/pi", files: [], countsUnavailable: true },
+};
 
 /** Severity cycle for the mock "notify" keyword, so all three severities are reachable in the preview. */
 const NOTIFY_SEVERITY_CYCLE: readonly NotificationSeverity[] = [
@@ -614,7 +634,11 @@ export const mockBridge: GentleBridge = {
     const hostId = hostIdByChat.get(id) ?? mintHostId();
     hostIdByChat.set(id, hostId);
     currentHostId = hostId;
-    setState({ ...emptyState(), hostId });
+    setState({
+      ...emptyState(),
+      hostId,
+      ...(id === "chat-migration" ? { workspace: UNAVAILABLE_WORKTREE_DEMO } : {}),
+    });
     if (id === "chat-migration") startHelpersScenario();
     return { hostId, state: currentState };
   },

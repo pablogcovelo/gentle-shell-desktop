@@ -259,6 +259,29 @@ describe("mockBridge", () => {
   // without a real gentle-agents process — including two already finished
   // days ago, so the "Earlier" group (format.ts's partitionHelpers) has
   // something to show in the preview.
+  // T8b — the demo worktree: the preview shows the footer's worktree group
+  // for every workspace whose directory is known, and one scenario (the
+  // working chat) carries the unavailable case, like the usage demo's
+  // pending provider.
+  it("the demo state carries a plausible worktree so the footer group is exercisable without a child", async () => {
+    const { states } = collectStates();
+    await mockBridge.newChat();
+
+    const worktree = states.at(-1)?.workspace?.worktree;
+    expect(worktree).toMatchObject({ root: "/Users/dev/gentle-shell-desktop", branch: "main", added: 34, deleted: 7 });
+    expect(worktree?.files.length).toBeGreaterThan(0);
+  });
+
+  it("the working chat's demo worktree is the unavailable case, never zeros", async () => {
+    const { state } = await mockBridge.openChat("chat-migration");
+
+    expect(state.workspace?.worktree).toEqual({
+      root: "/Users/dev/pi",
+      files: [],
+      countsUnavailable: true,
+    });
+  });
+
   describe("helpers scenario (chat-migration)", () => {
     it("seeds five helper tasks (running, waiting, done, and two earlier-finished) with a matching summary when opened", async () => {
       const { state } = await mockBridge.openChat("chat-migration");

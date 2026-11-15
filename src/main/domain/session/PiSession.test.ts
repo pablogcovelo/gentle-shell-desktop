@@ -1981,3 +1981,226 @@ describe("session identity (desktop-rpc T4)", () => {
     expect(session.getState().session).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Worktree group (desktop-rpc T8b): the footer's changed counts, read from
+// the child through `get_worktree_changes` for the session's own workspace
+// root — PiSession's `cwd`, the directory the child actually runs in. Gated
+// on the same capabilities probe as every other control write, and only
+// ever asked with a root that is actually known: guessing one would report
+// someone else's tree (the T8 rule that parked this until T11).
+// ---------------------------------------------------------------------------
+
+describe("worktree group (desktop-rpc T8b)", () => {
+  function desktopWidgetFrame(requestId: string, data: unknown): string {
+    return JSON.stringify({
+      type: "extension_ui_request",
+      id: "ui-desktop",
+      method: "setWidget",
+      widgetKey: "gentle-desktop-rpc",
+      widgetLines: [JSON.stringify({ schema: "gentle-shell.desktop-rpc/v1", kind: "response", requestId, data })],
+    });
+  }
+
+  function desktopErrorWidgetFrame(requestId: string, code: string): string {
+    return JSON.stringify({
+      type: "extension_ui_request",
+      id: "ui-desktop-error",
+      method: "setWidget",
+      widgetKey: "gentle-desktop-rpc",
+      widgetLines: [
+        JSON.stringify({
+          schema: "gentle-shell.desktop-rpc/v1",
+          kind: "response",
+          requestId,
+          ok: false,
+          error: { code, message: `the server said ${code}` },
+        }),
+      ],
+    });
+  }
+
+  function controlRequestId(write: string): string {
+    const prompt = JSON.parse(write) as { type: string; message: string };
+    if (prompt.type !== "prompt" || !prompt.message.startsWith("/gentle:desktop ")) {
+      throw new Error(`expected a /gentle:desktop prompt command, got: ${write}`);
+    }
+    return (JSON.parse(prompt.message.slice("/gentle:desktop ".length)) as { requestId: string }).requestId;
+  }
+
+  async function flushReplies(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  const WORKTREE_CAPABILITIES = {
+    schema: "gentle-shell.desktop-rpc/v1",
+    command: "gentle:desktop",
+    widget: "gentle-desktop-rpc",
+    methods: ["capabilities", "get_worktree_changes", "get_subscription_usage"],
+    events: ["rate_limit"],
+  };
+
+  async function adoptChannel(handle: FakeProcessHandle): Promise<void> {
+    const probeWrite = handle.writes.find((write) => write.includes("capabilities"));
+    if (!probeWrite) throw new Error("expected a capabilities probe write");
+    handle.emitStdout(desktopWidgetFrame(controlRequestId(probeWrite), WORKTREE_CAPABILITIES));
+    await flushReplies();
+  }
+
+  function worktreeWrites(handle: FakeProcessHandle): string[] {
+    return handle.writes.filter((write) => write.includes("get_worktree_changes"));
+  }
+
+  // The documented get_worktree_changes example payload (docs/desktop-rpc.md).
+  function worktreeData(added: number, deleted: number): unknown {
+    return {
+      root: "/home/dev/project",
+      branch: "main",
+      model: {
+        files: [{ path: "src/index.ts", added, deleted, status: "modified" }],
+        added,
+        deleted,
+        digest: "1a2b3c4d5e6f7081",
+      },
+    };
+  }
+
+  it("asks for the known root behind the adopted channel and at each settled turn, and folds the answer into workspace", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {}, cwd: "/home/dev/project" });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+
+    // The channel advertised the method and the root is known: the request
+    // names exactly that root — never a guessed one.
+    const requests = worktreeWrites(handle);
+    expect(requests).toHaveLength(1);
+    const prompt = JSON.parse(requests[0] ?? "{}") as { type: string; message: string };
+    expect(prompt.type).toBe("prompt");
+    expect(JSON.parse(prompt.message.slice("/gentle:desktop ".length))).toMatchObject({
+      method: "get_worktree_changes",
+      params: { root: "/home/dev/project" },
+    });
+
+    handle.emitStdout(desktopWidgetFrame(controlRequestId(requests[0] ?? ""), worktreeData(12, 3)));
+    await flushReplies();
+
+    expect(session.getState().workspace?.worktree).toEqual({
+      root: "/home/dev/project",
+      branch: "main",
+      files: ["src/index.ts"],
+      added: 12,
+      deleted: 3,
+    });
+    // Nothing reaches the conversation transcript.
+    expect(session.getState().messages).toEqual([]);
+
+    // A settled turn is a refresh trigger, the same boundary the other
+    // stats refresh at — never a timer.
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    expect(worktreeWrites(handle)).toHaveLength(2);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("no root known, no worktree request — even when the method is advertised", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+
+    expect(worktreeWrites(handle)).toEqual([]);
+    expect(session.getState().workspace?.worktree).toBeUndefined();
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("a child that does not advertise get_worktree_changes is never asked", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {}, cwd: "/home/dev/project" });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    // The usage-only capabilities payload of the sibling describes above:
+    // adopted, but without the worktree method.
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    const probeWrite = handle.writes.find((write) => write.includes("capabilities"));
+    if (!probeWrite) throw new Error("expected a capabilities probe write");
+    handle.emitStdout(
+      desktopWidgetFrame(
+        controlRequestId(probeWrite),
+        {
+          schema: "gentle-shell.desktop-rpc/v1",
+          command: "gentle:desktop",
+          widget: "gentle-desktop-rpc",
+          methods: ["capabilities", "get_subscription_usage"],
+          events: ["rate_limit"],
+        },
+      ),
+    );
+    await flushReplies();
+
+    expect(worktreeWrites(handle)).toEqual([]);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("a refused or failed answer renders unavailable, never as zero files and zero lines", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {}, cwd: "/home/dev/project" });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+    const requestId = controlRequestId(worktreeWrites(handle)[0] ?? "");
+
+    // The wire's typed refusal for a root the child will not read.
+    handle.emitStdout(desktopErrorWidgetFrame(requestId, "unknown_root"));
+    await flushReplies();
+
+    const worktree = session.getState().workspace?.worktree;
+    expect(worktree).toEqual({ root: "/home/dev/project", files: [], countsUnavailable: true });
+    expect(worktree).not.toHaveProperty("added");
+    expect(worktree).not.toHaveProperty("deleted");
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("a late answer for an older worktree request never overwrites the newest answer's data", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {}, cwd: "/home/dev/project" });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+
+    // Two settled turns trigger requests 2 and 3 (request 1 at adoption
+    // stays unanswered); the child answers them OUT OF ORDER: request 3
+    // (the newest) first, request 2 late. The late older answer must lose.
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    const secondRequestId = controlRequestId(worktreeWrites(handle)[1] ?? "");
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    const thirdRequestId = controlRequestId(worktreeWrites(handle)[2] ?? "");
+
+    handle.emitStdout(desktopWidgetFrame(thirdRequestId, worktreeData(30, 5)));
+    handle.emitStdout(desktopWidgetFrame(secondRequestId, worktreeData(1, 1)));
+    await flushReplies();
+
+    expect(session.getState().workspace?.worktree).toMatchObject({ added: 30, deleted: 5 });
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+});

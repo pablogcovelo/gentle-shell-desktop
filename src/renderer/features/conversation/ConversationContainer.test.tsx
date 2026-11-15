@@ -1337,4 +1337,60 @@ describe("ConversationContainer created workspace (T11)", () => {
     await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledWith("chat-1"));
     expect(screen.getByLabelText("Session footer")).toHaveTextContent("/tmp/project");
   });
+
+  // T8b — the worktree group rides the same pushed ChatState as every other
+  // workspace fact: nothing is derived or fetched by the renderer itself.
+  it("renders the footer's worktree group from the pushed workspace state", async () => {
+    let pushState: (state: ChatState) => void = () => {};
+    const bridge = makeBridge({
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+    await act(async () => {});
+    pushState({
+      ...emptyState(),
+      workspacePath: "/home/dev/projects/gentle",
+      hostId: "host-1",
+      workspace: {
+        worktree: { root: "/home/dev/projects/gentle", branch: "main", files: ["a.ts"], added: 4, deleted: 1 },
+      },
+    });
+
+    const footer = await screen.findByLabelText("Session footer");
+    expect(footer).toHaveTextContent("main");
+    expect(footer).toHaveTextContent("+4/-1");
+  });
+
+  it("renders no worktree group while no workspace directory is known", async () => {
+    let pushState: (state: ChatState) => void = () => {};
+    const bridge = makeBridge({
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+    await act(async () => {});
+    pushState({
+      ...emptyState(),
+      hostId: "host-1",
+      workspace: {
+        worktree: { root: "/home/dev/projects/gentle", branch: "main", files: ["a.ts"], added: 4, deleted: 1 },
+      },
+    });
+
+    const footer = await screen.findByLabelText("Session footer");
+    expect(footer).toHaveTextContent("~/");
+    expect(footer.textContent).not.toContain("main");
+    expect(footer.textContent).not.toContain("+4/-1");
+  });
 });

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
+import type { WorktreeChanges } from "@shared/bridge-types";
 import { Footer } from "./Footer";
 
 const MCP = {
@@ -64,6 +65,57 @@ describe("Footer (desktop-rpc T8, T11 path)", () => {
     );
 
     expect(screen.getByLabelText("Session footer")).toHaveTextContent("none configured");
+  });
+
+  // T8b — the worktree group, fed by get_worktree_changes for the open
+  // workspace's root. Every number is the child's own; nothing is derived.
+  const WORKTREE: WorktreeChanges = {
+    root: "/home/dev/gentle",
+    branch: "main",
+    files: ["src/a.ts", "src/b.ts"],
+    added: 12,
+    deleted: 3,
+  };
+
+  it("renders the worktree group from the child's own answer when a root is known (T8b)", () => {
+    render(<Footer workspace={{ worktree: WORKTREE }} workspacePath="/home/dev/gentle" />);
+
+    const footer = screen.getByLabelText("Session footer");
+    expect(within(footer).getByText("branch")).toBeInTheDocument();
+    expect(footer).toHaveTextContent("main");
+    expect(footer).toHaveTextContent("2 files");
+    expect(footer).toHaveTextContent("+12/-3");
+  });
+
+  it("renders unavailable for countsUnavailable — never as zero files and zero lines (T8b)", () => {
+    render(
+      <Footer
+        workspace={{ worktree: { root: "/home/dev/gentle", files: [], countsUnavailable: true } }}
+        workspacePath="/home/dev/gentle"
+      />,
+    );
+
+    const footer = screen.getByLabelText("Session footer");
+    expect(footer).toHaveTextContent("unavailable");
+    expect(footer.textContent).not.toContain("0 files");
+    expect(footer.textContent).not.toContain("+0");
+    expect(footer.textContent).not.toContain("-0");
+  });
+
+  it("renders no worktree group at all when no root is known (T8b)", () => {
+    render(<Footer workspace={{ worktree: WORKTREE }} />);
+
+    const footer = screen.getByLabelText("Session footer");
+    expect(within(footer).queryByText("branch")).not.toBeInTheDocument();
+    expect(within(footer).queryByText("changes")).not.toBeInTheDocument();
+  });
+
+  it("renders nothing invented before the child answers (T8b)", () => {
+    render(<Footer workspacePath="/home/dev/gentle" />);
+
+    const footer = screen.getByLabelText("Session footer");
+    expect(within(footer).queryByText("branch")).not.toBeInTheDocument();
+    expect(within(footer).queryByText("changes")).not.toBeInTheDocument();
   });
 
 });
