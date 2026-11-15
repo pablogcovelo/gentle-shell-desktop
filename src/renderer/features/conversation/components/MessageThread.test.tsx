@@ -66,11 +66,12 @@ describe("MessageThread", () => {
     expect(onAnswerDialog).toHaveBeenCalledWith("d1", { confirmed: true });
   });
 
-  it("scrolls to the bottom when messages change", () => {
+  it("scrolls to the bottom only once there is something to follow", () => {
     const { rerender } = render(<MessageThread messages={[]} dialogs={[]} onAnswerDialog={vi.fn()} />);
-    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+    // An empty chat must not scroll: the welcome hero is the first thing the
+    // reader meets there, and scrolling would hide it.
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
 
-    (Element.prototype.scrollIntoView as ReturnType<typeof vi.fn>).mockClear();
     rerender(
       <MessageThread
         messages={[{ id: "m1", role: MESSAGE_ROLE.USER, text: "hi" }]}
@@ -80,5 +81,16 @@ describe("MessageThread", () => {
     );
 
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+  });
+
+  it("shows the welcome hero only when the caller owns a chat identity", () => {
+    const { rerender } = render(<MessageThread messages={[]} dialogs={[]} onAnswerDialog={vi.fn()} />);
+    expect(screen.queryByTestId("gc-welcome-hero")).not.toBeInTheDocument();
+
+    rerender(
+      <MessageThread messages={[]} dialogs={[]} onAnswerDialog={vi.fn()} welcomeKey="chat-hero" />,
+    );
+
+    expect(screen.getByTestId("gc-welcome-hero")).toBeInTheDocument();
   });
 });

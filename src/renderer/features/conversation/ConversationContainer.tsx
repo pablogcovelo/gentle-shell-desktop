@@ -122,6 +122,10 @@ export function ConversationContainer({ activeChat }: ConversationContainerProps
   };
 
   const title = activeChat.kind === "existing" ? activeChat.chat.title : "New chat";
+  // One welcome intro per chat (T9b): an existing chat keeps its identity, a
+  // not-yet-saved chat shares the "new" identity, so the intro plays when the
+  // chat opens and never again on restore.
+  const welcomeKey = activeChat.kind === "existing" ? activeChat.chat.id : "new";
   const error = bridgeError ?? chatState.lastError;
 
   return (
@@ -150,7 +154,12 @@ export function ConversationContainer({ activeChat }: ConversationContainerProps
         <div className="gc-conversation__body">
           <div className="gc-conversation__stack">
             <HelpersStrip helpers={chatState.helpers} onOpen={() => setPane(CONVERSATION_PANE.HELPERS)} />
-            <MessageThread messages={chatState.messages} dialogs={chatState.pendingDialogs} onAnswerDialog={handleAnswerDialog} />
+            <MessageThread
+              messages={chatState.messages}
+              dialogs={chatState.pendingDialogs}
+              onAnswerDialog={handleAnswerDialog}
+              welcomeKey={welcomeKey}
+            />
             <ActionRows toolCalls={chatState.toolCalls} vocabulary={chatState.toolVocabulary} />
             {/* The chat's own ODD task card (M3: S5). It lives INSIDE the
             stack and above the composer so the narrow layout keeps the TUI's

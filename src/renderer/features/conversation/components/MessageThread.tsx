@@ -2,24 +2,27 @@ import { useEffect, useRef } from "react";
 import { MESSAGE_ROLE, type ChatMessage, type Dialog, type DialogAnswer } from "@shared/bridge-types";
 import { DialogCard } from "./DialogCard";
 import { MessageBubble } from "./MessageBubble";
+import { WelcomeHero } from "./WelcomeHero";
 import "./MessageThread.css";
 
 export interface MessageThreadProps {
   readonly messages: readonly ChatMessage[];
   readonly dialogs: readonly Dialog[];
   readonly onAnswerDialog: (id: string, answer: DialogAnswer) => void;
+  /**
+   * Identity of the open chat for the welcome hero's one-intro-per-chat rule
+   * (T9b). Omitted means no hero: the thread stays a plain message list for
+   * callers that do not own a chat identity.
+   */
+  readonly welcomeKey?: string;
 }
 
 // Presentational: renders message bubbles in order, then any pending
 // dialog cards (pi blocks on these, so they read as the newest thing in
 // the thread), and auto-scrolls to the bottom whenever either changes.
-export function MessageThread({ messages, dialogs, onAnswerDialog }: MessageThreadProps) {
+export function MessageThread({ messages, dialogs, onAnswerDialog, welcomeKey }: MessageThreadProps) {
   // React 19: ref is a normal prop/hook value, no forwardRef needed.
   const bottomRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "auto" });
-  }, [messages, dialogs]);
 
   // Safety net for the domain-level fix in chatReducer.ts/history.ts: an
   // assistant message that finalized (streaming !== true) with nothing but
@@ -33,8 +36,20 @@ export function MessageThread({ messages, dialogs, onAnswerDialog }: MessageThre
   );
   const isEmpty = visibleMessages.length === 0 && dialogs.length === 0;
 
+  // Scrolling to the bottom is about following a conversation. An empty chat
+  // has nothing to follow, and scrolling there would push the welcome hero
+  // (T9b) — the first thing the reader should meet — out of view.
+  useEffect(() => {
+    if (isEmpty) return;
+    bottomRef.current?.scrollIntoView({ behavior: "auto" });
+  }, [messages, dialogs, isEmpty]);
+
   return (
     <div className="gc-thread" data-testid="gc-message-thread">
+      {/* Chat-start welcome (T9b): persistent at the top of the thread like the
+      artboard, so it is what the reader meets in an empty chat and scrolls
+      away naturally once the conversation grows. */}
+      {welcomeKey ? <WelcomeHero chatKey={welcomeKey} /> : null}
       {isEmpty ? (
         <p className="gc-thread__empty">Start a conversation with Gentle.</p>
       ) : (
