@@ -110,6 +110,36 @@ describe("parseSessionState (get_state, docs/rpc.md)", () => {
     expect(parseSessionState({ ...documented, model: undefined })).toEqual({ thinkingLevel: "medium" });
   });
 
+  // S5 (desktop-workspace-registry-and-diagnostics): the isolated home with
+  // no signed-in model answers "model":{"id":"unknown","name":"unknown"}.
+  // That literal wire value must never reach the UI's label: the parser
+  // normalizes it (and the documented null) into NO model identity, and —
+  // because a successful get_state reply is an explicit statement about the
+  // model — a reply that says "no model" also clears a previously folded one.
+  it("normalizes the literal unknown model (isolated home) into NO model identity, never the word unknown", () => {
+    const documented = readFixtureLine(1).data as Record<string, unknown>;
+
+    const unknownModel = parseSessionState({
+      ...documented,
+      model: { id: "unknown", name: "unknown", provider: "anthropic" },
+    });
+    expect(unknownModel).toEqual({ thinkingLevel: "medium" });
+  });
+
+  it("clears a previously folded model when a later get_state answers model null (an explicit no-model statement)", () => {
+    const documented = readFixtureLine(1).data as Record<string, unknown>;
+
+    // The parser itself cannot see the previous identity; the CLEARS are the
+    // mechanism the caller's merge uses (PiSession spreads the parsed
+    // partial over state.session), so the null-model answer carries explicit
+    // undefined model fields instead of silently omitting them.
+    const noModel = parseSessionState({ ...documented, model: null });
+    expect(noModel?.modelId).toBeUndefined();
+    expect(noModel?.modelName).toBeUndefined();
+    expect(noModel?.modelProvider).toBeUndefined();
+    expect(noModel?.thinkingLevel).toBe("medium");
+  });
+
   it("keeps a model with only an id, and drops a wrongly typed model instead of guessing", () => {
     const documented = readFixtureLine(1).data as Record<string, unknown>;
 

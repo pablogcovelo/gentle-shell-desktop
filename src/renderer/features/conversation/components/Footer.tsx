@@ -78,10 +78,26 @@ export function Footer({ workspace, workspacePath, session, appVersion }: Footer
 }
 
 /**
+ * The explicit, actionable copy for a chat whose identity was read and that
+ * reports no model (desktop-workspace-registry-and-diagnostics T4, S6): the
+ * wire's literal `unknown` is normalized away upstream, so what arrives
+ * here is an identity with no model at all — a hint, not a placeholder.
+ */
+const NO_MODEL_HINT = "No model — sign in with /login";
+const NO_MODEL_TOOLTIP =
+  "No model is signed in for this chat. /login is a terminal command — run it in the gentle-shell terminal to sign in to a provider.";
+
+/**
  * Session identity (desktop-rpc T4, moved here by S10): the design's
  * `·`-separated facts, in the artboard's order. Each fact renders only when
  * the child actually reported it — a fact the child did not send renders
- * nothing, never a placeholder.
+ * nothing, never a placeholder. The one exception is a READ identity with
+ * no model (S6): a successful `get_state` always supplies a `thinkingLevel`
+ * (it is required on the wire), so a folded identity that still has no
+ * model label is a chat with nothing signed in — say so explicitly instead
+ * of rendering the child's `unknown` (normalized away upstream) or a
+ * silently missing group. A session without a `thinkingLevel` has not had
+ * its identity answered yet, and claiming "No model" then would be a lie.
  */
 function IdentityGroup({
   session,
@@ -92,13 +108,20 @@ function IdentityGroup({
 }) {
   const modelLabel = session?.modelName ?? session?.modelId;
   const thinkingLevel = session?.thinkingLevel;
+  const noModel = !modelLabel && thinkingLevel !== undefined;
 
   if (!modelLabel && !thinkingLevel && !profileLabel) return null;
 
   return (
     <span className="gc-footer__group gc-footer__identity" aria-label="Session identity">
-      {modelLabel ? <span className="gc-footer__model">{modelLabel}</span> : null}
-      {modelLabel && thinkingLevel ? <DotSeparator /> : null}
+      {noModel ? (
+        <span className="gc-footer__model gc-footer__model--none" title={NO_MODEL_TOOLTIP}>
+          {NO_MODEL_HINT}
+        </span>
+      ) : modelLabel ? (
+        <span className="gc-footer__model">{modelLabel}</span>
+      ) : null}
+      {(modelLabel || noModel) && thinkingLevel ? <DotSeparator /> : null}
       {thinkingLevel ? <span className="gc-footer__thinking">{thinkingLevel}</span> : null}
       {(thinkingLevel || modelLabel) && profileLabel ? <DotSeparator /> : null}
       {profileLabel ? <span>{profileLabel}</span> : null}

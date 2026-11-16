@@ -432,6 +432,54 @@ describe("reduceChat: errors and unhandled events", () => {
       reduceChat(INITIAL_CHAT_STATE, { type: "response", command: "prompt", success: true }),
     ).toBe(INITIAL_CHAT_STATE);
   });
+
+  // T3 (S5/S10, desktop-workspace-registry-and-diagnostics): the child's own
+  // answer to a prompt it could not run — the isolated home's
+  // "No API key found ... Use /login ..." — was decoded but never folded,
+  // so the status line showed nothing at all. The failed `prompt` response
+  // is the one command envelope that IS chat state.
+  describe("failed prompt responses", () => {
+    const FAILED_PROMPT = {
+      type: "response" as const,
+      command: "prompt",
+      success: false as const,
+      error: "No API key found for the selected model. Use /login to log into a provider via OAuth or API key.",
+    };
+
+    it("fold the child's own error text into lastError", () => {
+      const state = reduceChat(INITIAL_CHAT_STATE, FAILED_PROMPT);
+      expect(state.lastError).toBe(FAILED_PROMPT.error);
+    });
+
+    it("replace a previous lastError with the newest answer", () => {
+      const before = { ...INITIAL_CHAT_STATE, lastError: "older failure" };
+      expect(reduceChat(before, FAILED_PROMPT).lastError).toBe(FAILED_PROMPT.error);
+    });
+
+    it("leave every other field untouched", () => {
+      const state = reduceChat(INITIAL_CHAT_STATE, FAILED_PROMPT);
+      const { lastError: _error, ...rest } = state;
+      expect(rest).toEqual(INITIAL_CHAT_STATE);
+    });
+
+    it("stay no-ops for a successful prompt response", () => {
+      expect(
+        reduceChat(INITIAL_CHAT_STATE, { type: "response", command: "prompt", success: true }),
+      ).toBe(INITIAL_CHAT_STATE);
+    });
+
+    it("stay no-ops for any other command's failure — the id-correlated folds own those answers", () => {
+      expect(
+        reduceChat(INITIAL_CHAT_STATE, { type: "response", command: "abort", success: false, error: "boom" }),
+      ).toBe(INITIAL_CHAT_STATE);
+      expect(
+        reduceChat(INITIAL_CHAT_STATE, { type: "response", command: "get_messages", success: false, error: "boom" }),
+      ).toBe(INITIAL_CHAT_STATE);
+      expect(
+        reduceChat(INITIAL_CHAT_STATE, { type: "response", command: "get_state", success: false, error: "boom" }),
+      ).toBe(INITIAL_CHAT_STATE);
+    });
+  });
 });
 
 describe("reduceChat: fixture replays", () => {

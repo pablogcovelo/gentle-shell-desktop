@@ -256,6 +256,42 @@ describe("Footer (desktop-workspace-shell T7 — the design's footer, S9/S10/S11
       expect(screen.queryByLabelText("Session identity")).not.toBeInTheDocument();
       expect(screen.queryByText("opensourcing")).not.toBeInTheDocument();
     });
+
+    // S6 (desktop-workspace-registry-and-diagnostics): the isolated home
+    // signs in to no model, and its `get_state` answers the literal
+    // "unknown" — which sessionStats normalizes away upstream. What reaches
+    // this footer is a read identity with NO model: render an explicit,
+    // actionable hint instead of the wire literal or a silently missing
+    // fact.
+    it("shows the explicit no-model hint when the identity was read and no model is signed in", () => {
+      render(<Footer session={{ thinkingLevel: "off" }} />);
+
+      const identity = screen.getByLabelText("Session identity");
+      expect(identity).toHaveTextContent("No model — sign in with /login");
+      expect(identity.textContent?.toLowerCase()).not.toContain("unknown");
+      // Actionable, not a dead label: the tooltip says where /login lives.
+      expect(identity.querySelector(".gc-footer__model--none")).toHaveAttribute(
+        "title",
+        expect.stringContaining("/login"),
+      );
+    });
+
+    it("keeps the hint beside the thinking level it was read with, separated like every other fact", () => {
+      render(<Footer session={{ thinkingLevel: "low" }} />);
+
+      const identity = screen.getByLabelText("Session identity");
+      expect(identity.textContent).toContain("·");
+      expect(identity).toHaveTextContent("low");
+    });
+
+    it("renders no hint before the identity read has folded — a session without a model answer is not yet a no-model chat", () => {
+      // Only the stats half of the identity has arrived so far: claiming
+      // "No model" now would be a lie, not a hint.
+      render(<Footer session={{ contextPercent: 30 }} />);
+
+      expect(screen.queryByLabelText("Session identity")).not.toBeInTheDocument();
+      expect(screen.queryByText(/No model/)).not.toBeInTheDocument();
+    });
   });
 
   describe("context group", () => {

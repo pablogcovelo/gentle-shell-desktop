@@ -19,7 +19,14 @@ import { emptyHelpersActivity, parseHelpersActivity } from "./helpersActivity";
 // the leaf module toolCalls.ts and are imported, not duplicated, here.
 import { MAX_TOOL_CALLS, boundedPayload } from "./toolCalls";
 import { TODO_STATE_CUSTOM_TYPE, parseTodoPanel } from "./todoPanel";
-import type { AssistantMessageEvent, FireAndForgetMethod, RpcEvent, RpcExtensionUIRequest, RpcMessage } from "./types";
+import type {
+  AssistantMessageEvent,
+  FireAndForgetMethod,
+  RpcEvent,
+  RpcExtensionUIRequest,
+  RpcMessage,
+  RpcResponse,
+} from "./types";
 
 /**
  * The generic fire-and-forget branch of RpcExtensionUIRequest (setWidget,
@@ -145,12 +152,33 @@ export function reduceChat(state: ChatState, event: RpcEvent, now?: string): Cha
       return applySessionStateChanged(state, event);
     case "extension_error":
       return { ...state, lastError: event.error };
-    // turn_start/turn_end and command-response envelopes carry nothing the
-    // chat view needs; agent_start/agent_end/agent_settled already drive
-    // `working`, and the assistant text is driven by message_*/text_* deltas.
+    case "response":
+      return applyCommandResponse(state, event);
+    // turn_start/turn_end and the remaining command-response envelopes
+    // carry nothing the chat view needs; agent_start/agent_end/agent_settled
+    // already drive `working`, and the assistant text is driven by
+    // message_*/text_* deltas.
     default:
       return state;
   }
+}
+
+/**
+ * Command acknowledgement envelopes (desktop-workspace-registry-and-
+ * diagnostics T3, S5/S10). The one envelope whose failure is chat state is
+ * the `prompt` response: a child that cannot run the turn answers
+ * `{command:"prompt", success:false, error:"No API key found ... Use /login
+ * ..."}` — the home's real reason the turn never produced anything. It was
+ * decoded and then dropped, which is the whole "no recibo respuesta
+ * ninguna" defect: fold its error into `lastError`, the field the status
+ * line renders. A successful prompt response changes nothing, and every
+ * OTHER command's failure stays a no-op here: the id-correlated folds in
+ * PiSession (history, identity, commands) own those answers and keep
+ * priority over anything this arm could say.
+ */
+function applyCommandResponse(state: ChatState, event: RpcResponse): ChatState {
+  if (event.success || event.command !== "prompt") return state;
+  return { ...state, lastError: event.error };
 }
 
 function openAssistantMessage(state: ChatState, message: RpcMessage): ChatState {
