@@ -34,7 +34,7 @@ describe("parseWorktreeChanges (desktop-rpc T8b)", () => {
     });
   });
 
-  it("a failed root, an unborn root and an answer without model are unavailable — never zeros", () => {
+  it("a failed root, an unborn root and an answer without model carry the root-level flag and no invented numbers", () => {
     const fixture = readFixture();
     const cases = [fixture.worktreeFailedRoot, fixture.worktreeUnbornRoot, { root: "/home/dev/project" }];
 
@@ -55,30 +55,46 @@ describe("parseWorktreeChanges (desktop-rpc T8b)", () => {
     expect(parseWorktreeChanges(undefined)).toBeUndefined();
   });
 
-  it("an untracked file the child has not measured labels the whole count unavailable — the sums are partial, so no numbers are carried", () => {
+  it("an untracked file the child has not measured keeps the supplied sums and names that file (P8)", () => {
     const data = readFixture().worktreeLabeledUntracked;
 
+    // The split: a partial measurement is no longer collapsed into "no
+    // counts at all". The child's own sums are carried, and the file it could
+    // not measure is named instead of poisoning the whole answer.
     expect(parseWorktreeChanges(data)).toEqual({
       root: "/home/dev/project",
       files: ["src/index.ts", "scratch/notes.md"],
-      countsUnavailable: true,
+      filesUnmeasured: ["scratch/notes.md"],
+      added: 12,
+      deleted: 3,
     });
   });
 
-it("keeps the branch the child supplied even when the counts are unavailable", () => {
+it("keeps the branch and the supplied sums when only some files are unmeasured (P8)", () => {
   const parsed = parseWorktreeChanges({
     root: "/repo",
     branch: "main",
     model: { files: [{ path: "a.ts", countsUnavailable: true }], added: 4, deleted: 1, digest: "d" },
   });
 
-  // The branch is the child's own fact and does not depend on the counts: a
-  // partial answer must not silently drop it from the footer.
+  // The branch is the child's own fact and does not depend on the counts, and
+  // neither do the sums it did compute: a partial answer keeps both.
   expect(parsed).toEqual({
     root: "/repo",
     branch: "main",
     files: ["a.ts"],
-    countsUnavailable: true,
+    filesUnmeasured: ["a.ts"],
+    added: 4,
+    deleted: 1,
   });
+});
+
+it("a model that reports the whole root as unmeasured stays a root-level answer (P8)", () => {
+  const parsed = parseWorktreeChanges({
+    root: "/repo",
+    model: { files: [{ path: "a.ts" }], added: 0, deleted: 0, digest: "d", countsUnavailable: true },
+  });
+
+  expect(parsed).toEqual({ root: "/repo", files: ["a.ts"], countsUnavailable: true });
 });
 });

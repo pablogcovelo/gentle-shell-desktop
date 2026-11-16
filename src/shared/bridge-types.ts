@@ -305,18 +305,28 @@ export interface ToolVocabulary {
 }
 
 /** The worktree state gentle-pi computes for a root (desktop-rpc T8).
- * `countsUnavailable` is carried because a root it could not read must render
- * as "unavailable", never as zero files and zero lines. When it is set the
- * child supplied no complete counts (a failed or unborn root, or a file it
- * has not measured), so `added`/`deleted` are absent too: a number the child
- * did not supply is never invented. */
+ *
+ * Two DIFFERENT facts, deliberately separate (pending-work P8, owner L4/L5):
+ * `countsUnavailable` is root-level — the child supplied no counts at all
+ * (a failed root, an unborn root, a refused answer, a model without
+ * numbers), so `added`/`deleted` are absent and never invented; `filesUnmeasured`
+ * is per-file — these files' lines were not measured (an untracked file's
+ * lines are not in `diff --numstat`), so the supplied `added`/`deleted` are
+ * PARTIAL sums and the renderer must say so. The footer renders both as
+ * counts, never as the word "unavailable"; only the payload keeps the
+ * distinction. */
 export interface WorktreeChanges {
   readonly root: string;
   readonly branch?: string;
   readonly files: readonly string[];
   readonly added?: number;
   readonly deleted?: number;
+  /** Root-level: no counts could be measured at all. */
   readonly countsUnavailable?: boolean;
+  /** Per-file: the paths whose line counts the child could not measure, so
+   * `added`/`deleted` are partial. Empty or absent means every listed file
+   * was measured. */
+  readonly filesUnmeasured?: readonly string[];
 }
 
 /** MCP inventory, never health: `health` is always "unknown" because pi does

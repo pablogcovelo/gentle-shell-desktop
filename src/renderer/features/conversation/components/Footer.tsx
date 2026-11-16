@@ -32,9 +32,11 @@ export interface FooterProps {
  * Every group is honest (S11): a group renders only the members the wire
  * can prove. The path is always rendered — the full directory of the open
  * workspace, or `~/` when none is open, never invented and never truncated
- * with an ellipsis. The changes group renders only when a worktree root is
- * known, with the child's own counts or `unavailable` for a failed, refused
- * or partially measured answer — never zeros. Capabilities are the MCP
+ * with an ellipsis. The changes group renders whenever a worktree root is
+ * known, always as counts — the child's own numbers, partial sums when some
+ * files were unmeasured, or `0 files · +0/-0` when the root itself could not
+ * be measured (owner decisions L4/L5; the caveat lives in the group's
+ * `title`, never in the visible copy). Capabilities are the MCP
  * inventory, never health: pi does not expose whether a server is
  * connected, so no wording here may ever claim it. The capabilities group
  * stays mounted even before inventory arrives. Skills and extensions have
@@ -105,29 +107,42 @@ function IdentityGroup({
 }
 
 /**
- * The child's own counts, or the unavailable word when it supplied none:
- * `countsUnavailable` covers a failed or unborn root, a refused answer and
- * a partial count (an unmeasured untracked file), and none of those may
- * render as zero files and zero lines.
+ * Three states, ONE render (pending-work P8, owner decisions L4/L5).
+ *
+ * (a) measured and clean, (b) measured with partial data, and (c) unmeasured
+ * (failed root, unborn root, refused answer) all print counts. The app never
+ * prints the word "unavailable", and the group is never omitted once a root
+ * is known.
+ *
+ * The accepted consequence, recorded by the owner rather than argued again:
+ * (c) now looks exactly like (a), so the footer can no longer tell "nothing
+ * changed" from "nothing could be measured". The distinction survives in the
+ * payload (`countsUnavailable` for the root, `filesUnmeasured` per file) and
+ * is carried here through `title`/`aria-label` only — the visible copy stays
+ * the one the design has.
  */
 function ChangesGroup({ worktree }: { worktree: WorktreeChanges }) {
-  // Absent tallies are as honest as the explicit flag: printing "0 files ·
-  // +0/-0" would invent numbers the child never sent.
-  const unavailable =
-    worktree.countsUnavailable || worktree.added === undefined || worktree.deleted === undefined;
+  // Absent tallies mean the same as the explicit root flag: the child supplied
+  // no counts, so there is nothing to measure — and nothing to print but
+  // zeros, which is the owner's chosen copy for that case.
+  const measured = worktree.countsUnavailable !== true && worktree.added !== undefined && worktree.deleted !== undefined;
+  const files = measured ? worktree.files.length : 0;
+  const added = measured ? worktree.added : 0;
+  const deleted = measured ? worktree.deleted : 0;
+
+  const unmeasured = worktree.filesUnmeasured ?? [];
+  const caveat = !measured
+    ? "changes were not measured"
+    : unmeasured.length > 0
+      ? `${unmeasured.length} of ${worktree.files.length} files were not measured (${unmeasured.join(", ")}): the counts are partial`
+      : undefined;
 
   return (
-    <span className="gc-footer__group" role="group" aria-label="Workspace changes">
+    <span className="gc-footer__group" role="group" aria-label="Workspace changes" title={caveat}>
       <span className="gc-footer__label">changes</span>
-      {unavailable ? (
-        <span>unavailable</span>
-      ) : (
-        <>
-          <span>{worktree.files.length} files</span>
-          <span className="gc-footer__added">+{worktree.added}</span>
-          <span className="gc-footer__deleted">-{worktree.deleted}</span>
-        </>
-      )}
+      <span>{`${files} files`}</span>
+      <span className="gc-footer__added">{`+${added}`}</span>
+      <span className="gc-footer__deleted">{`-${deleted}`}</span>
     </span>
   );
 }

@@ -12,8 +12,8 @@ import type { ActiveProfile, McpStatus, WorktreeChanges } from "@shared/bridge-t
  *   model: { files: [{ path, added, deleted, status, countsUnavailable? }],
  *   added, deleted, digest } }`; a root whose scan failed answers
  *   `{ root, failed: true }` and a root with no commits yet answers
- *   `{ root, unborn: true }` — each with no model, never zero files or zero
- *   lines (docs/desktop-rpc.md "get_worktree_changes");
+ *   `{ root, unborn: true }` — each with no model, so this decoder carries no
+ *   numbers for them (docs/desktop-rpc.md "get_worktree_changes");
  * - `mcp_status` answers `{ health, configured: { status, names },
  *   registered, namespaces }` with `health` always `"unknown"` — pi does not
  *   expose connection state, so nothing may imply it;
@@ -29,8 +29,9 @@ export function parseWorktreeChanges(data: unknown): WorktreeChanges | undefined
 
   // The child's own truthful labels ("Truthful labels, real shapes",
   // docs/desktop-rpc.md): a failed or unborn root carries no model, and an
-  // answer without a model at all is the same fact. Counts are unavailable —
-  // never zeros, because zero would claim a measurement nobody made.
+  // answer without a model at all is the same fact. Counts are unavailable at
+  // the ROOT level (pending-work P8): the payload keeps that distinction and
+  // invents no numbers, while the footer is the layer that decides copy.
   if (data.failed === true || data.unborn === true) return unavailableWorktreeChanges(data.root);
 
   const model = data.model;
@@ -40,29 +41,33 @@ export function parseWorktreeChanges(data: unknown): WorktreeChanges | undefined
   if (typeof model.deleted !== "number" || !Number.isFinite(model.deleted)) return unavailableWorktreeChanges(data.root, declaredBranch);
 
   const files = parseFilePaths(model.files);
-  // A file the child has not measured (an untracked file's lines are not in
-  // `diff --numstat`) makes the sums PARTIAL: labelled, with no numbers
-  // carried, so the footer cannot present a partial count as complete.
   // `branch` sits beside `model` in the documented answer, and is "unknown"
   // when the root's own branch cannot be read — that is the child's own word
   // and is rendered as supplied, whether or not the counts survived.
   const branch = typeof data.branch === "string" && data.branch.length > 0 ? { branch: data.branch } : {};
-  const countsUnavailable = files.labeled || model.countsUnavailable === true;
-  if (countsUnavailable) {
+  // A model that reports the whole root as unmeasured carries no sums to
+  // trust, so it stays a root-level answer (P8).
+  if (model.countsUnavailable === true) {
     return { root: data.root, ...branch, files: files.paths, countsUnavailable: true };
   }
 
+  // P8, the split: an unmeasured FILE (an untracked file's lines are not in
+  // `diff --numstat`) does not discard the sums the child did supply — it
+  // names them as partial. The renderer keeps the counts it was given and
+  // marks the file, instead of collapsing the whole answer to a word.
   return {
     root: data.root,
     ...branch,
     files: files.paths,
+    ...(files.unmeasured.length > 0 ? { filesUnmeasured: files.unmeasured } : {}),
     added: model.added,
     deleted: model.deleted,
   };
 }
 
 /** The unavailable shape shared by every "the child supplied no counts"
- * answer: no numbers at all, only the flag the footer renders as such. */
+ * answer: no numbers at all, only the root-level flag the renderer reports
+ * through its own copy (P8: counts, never the word "unavailable"). */
 export function unavailableWorktreeChanges(root: string, branch?: string): WorktreeChanges {
   return {
     root,
@@ -73,12 +78,14 @@ export function unavailableWorktreeChanges(root: string, branch?: string): Workt
 }
 
 /** The per-file projection: `file.path` is relative to `root`, and a file
- * labelled `countsUnavailable` (an unmeasured untracked file) marks the
- * sums partial. Entries that are neither are dropped, not coerced. */
-function parseFilePaths(value: unknown): { paths: readonly string[]; labeled: boolean } {
-  if (!Array.isArray(value)) return { paths: [], labeled: false };
+ * labelled `countsUnavailable` (an unmeasured untracked file) is collected
+ * SEPARATELY (P8: `filesUnmeasured`) so the renderer can keep the sums it was
+ * given and mark only those files. Entries that are neither are dropped, not
+ * coerced. */
+function parseFilePaths(value: unknown): { paths: readonly string[]; unmeasured: readonly string[] } {
+  if (!Array.isArray(value)) return { paths: [], unmeasured: [] };
   const paths: string[] = [];
-  let labeled = false;
+  const unmeasured: string[] = [];
   for (const entry of value) {
     if (typeof entry === "string") {
       paths.push(entry);
@@ -86,10 +93,10 @@ function parseFilePaths(value: unknown): { paths: readonly string[]; labeled: bo
     }
     if (isRecord(entry) && typeof entry.path === "string") {
       paths.push(entry.path);
-      if (entry.countsUnavailable === true) labeled = true;
+      if (entry.countsUnavailable === true) unmeasured.push(entry.path);
     }
   }
-  return { paths, labeled };
+  return { paths, unmeasured };
 }
 
 export function parseMcpStatus(data: unknown): McpStatus | undefined {

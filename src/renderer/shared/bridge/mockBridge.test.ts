@@ -261,8 +261,8 @@ describe("mockBridge", () => {
   // something to show in the preview.
   // T8b — the demo worktree: the preview shows the footer's worktree group
   // for every workspace whose directory is known, and one scenario (the
-  // working chat) carries the unavailable case, like the usage demo's
-  // pending provider.
+  // working chat) carries a root nobody measured, so the preview exercises
+  // the P8 copy (`0 files · +0/-0`, caveat in the title).
   it("the demo state carries a plausible worktree so the footer group is exercisable without a child", async () => {
     const { states } = collectStates();
     await mockBridge.newChat();
@@ -272,7 +272,7 @@ describe("mockBridge", () => {
     expect(worktree?.files.length).toBeGreaterThan(0);
   });
 
-  it("the working chat's demo worktree is the unavailable case, never zeros", async () => {
+  it("the working chat's demo worktree is the unmeasured root the footer now prints as zeros (P8)", async () => {
     const { state } = await mockBridge.openChat("chat-migration");
 
     expect(state.workspace?.worktree).toEqual({
@@ -334,10 +334,10 @@ describe("mockBridge", () => {
     });
   });
 
-it("keeps the rest of the workspace facts when a chat's worktree is unavailable", async () => {
+it("keeps the rest of the workspace facts when a chat's worktree could not be measured", async () => {
   const opened = await mockBridge.openChat("chat-migration");
 
-  // The demo's unavailable worktree must not wipe the profile and MCP
+  // The demo's unmeasured worktree must not wipe the profile and MCP
   // inventory the footer also renders.
   expect(opened.state.workspace?.worktree?.countsUnavailable).toBe(true);
   expect(opened.state.workspace?.profile).toBeDefined();

@@ -86,7 +86,7 @@ describe("Footer (desktop-workspace-shell T7 — the design's footer, S9/S10/S11
       expect(container.querySelector(".gc-footer__added")).not.toBeNull();
     });
 
-    it("renders unavailable for countsUnavailable — never as zero files and zero lines", () => {
+    it("renders 0 files · +0/-0 for a root nobody could measure, and keeps the caveat out of the visible copy (P8)", () => {
       render(
         <Footer
           workspace={{ worktree: { root: "/home/dev/gentle", files: [], countsUnavailable: true } }}
@@ -95,13 +95,20 @@ describe("Footer (desktop-workspace-shell T7 — the design's footer, S9/S10/S11
       );
 
       const footer = screen.getByLabelText("Session footer");
-      expect(footer).toHaveTextContent("unavailable");
-      expect(footer.textContent).not.toContain("0 files");
-      expect(footer.textContent).not.toContain("+0");
-      expect(footer.textContent).not.toContain("-0");
+      expect(within(footer).getByText("changes")).toBeInTheDocument();
+      expect(within(footer).getByText("0 files")).toBeInTheDocument();
+      expect(within(footer).getByText("+0")).toBeInTheDocument();
+      expect(within(footer).getByText("-0")).toBeInTheDocument();
+      // Owner L4/L5: the app never prints the word, and the group is never
+      // omitted. The distinction survives accessibly, not visually.
+      expect(footer).not.toHaveTextContent("unavailable");
+      expect(within(footer).getByRole("group", { name: "Workspace changes" })).toHaveAttribute(
+        "title",
+        "changes were not measured",
+      );
     });
 
-    it("renders unavailable when tallies are missing — a number the child did not send is never invented", () => {
+    it("renders 0 files · +0/-0 when tallies are missing, with the same caveat (P8)", () => {
       render(
         <Footer
           workspace={{ worktree: { root: "/repo", files: ["a.ts"] } }}
@@ -110,8 +117,42 @@ describe("Footer (desktop-workspace-shell T7 — the design's footer, S9/S10/S11
       );
 
       const footer = screen.getByLabelText("Session footer");
-      expect(footer).toHaveTextContent("unavailable");
-      expect(screen.queryByText(/\+0\/-0/)).not.toBeInTheDocument();
+      expect(within(footer).getByText("0 files")).toBeInTheDocument();
+      expect(within(footer).getByText("+0")).toBeInTheDocument();
+      expect(within(footer).getByText("-0")).toBeInTheDocument();
+      expect(footer).not.toHaveTextContent("unavailable");
+      expect(within(footer).getByRole("group", { name: "Workspace changes" })).toHaveAttribute(
+        "title",
+        "changes were not measured",
+      );
+    });
+
+    it("renders the partial sums the child did supply and marks only the unmeasured file (P8)", () => {
+      render(
+        <Footer
+          workspace={{
+            worktree: {
+              root: "/home/dev/gentle",
+              files: ["src/index.ts", "scratch/notes.md"],
+              filesUnmeasured: ["scratch/notes.md"],
+              added: 12,
+              deleted: 3,
+            },
+          }}
+          workspacePath="/home/dev/gentle"
+        />,
+      );
+
+      const footer = screen.getByLabelText("Session footer");
+      // State (b): the counts are real, so they are printed; the unmeasured
+      // file is marked, so nobody reads the sums as complete.
+      expect(within(footer).getByText("2 files")).toBeInTheDocument();
+      expect(within(footer).getByText("+12")).toBeInTheDocument();
+      expect(within(footer).getByText("-3")).toBeInTheDocument();
+      expect(within(footer).getByRole("group", { name: "Workspace changes" })).toHaveAttribute(
+        "title",
+        "1 of 2 files were not measured (scratch/notes.md): the counts are partial",
+      );
     });
 
     it("renders no changes group at all when no root is known", () => {

@@ -2154,7 +2154,7 @@ describe("worktree group (desktop-rpc T8b)", () => {
     handle.resolveExited({ code: 0, signal: null });
   });
 
-  it("a refused or failed answer renders unavailable, never as zero files and zero lines", async () => {
+  it("a refused or failed answer carries the root-level unavailable flag and invents no numbers", async () => {
     const { spawner, handles } = createFakeSpawner();
     const session = new PiSession({ spawner, locator: fakeLocator, env: {}, cwd: "/home/dev/project" });
     session.start();
