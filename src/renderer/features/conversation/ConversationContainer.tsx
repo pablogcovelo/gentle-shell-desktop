@@ -54,6 +54,11 @@ export interface ConversationContainerProps {
    * workspace. The directory arrived validated in main; it reaches the
    * footer through ChatState.workspacePath. */
   readonly createdWorkspace?: { readonly chatKey: string; readonly result: OpenChatResult };
+  /** P2: reported after a successful chat.close of this pane's host, so the
+   * shell can land on a fresh chat instead of leaving the pane addressing a
+   * host nothing owns any more. A FAILED close reports nothing here: the
+   * workspace is still live and the failure is surfaced in the status line. */
+  readonly onWorkspaceClosed?: () => void;
 }
 
 /**
@@ -157,7 +162,7 @@ function errorText(cause: unknown): string {
  * notifications (desktop-rpc T2b) render in the same status surface for
  * the same reason: they are feedback chrome, never transcript entries.
  */
-export function ConversationContainer({ activeChat, activeHostId, onHostResolved, onWorktreeBranch, createdWorkspace, footerTarget }: ConversationContainerProps) {
+export function ConversationContainer({ activeChat, activeHostId, onHostResolved, onWorktreeBranch, createdWorkspace, onWorkspaceClosed, footerTarget }: ConversationContainerProps) {
   const bridge = useBridge();
   const [chatState, setChatState] = useState<ChatState>(emptyChatState());
   // The host id this container resolved for the current activeChat, kept
@@ -232,7 +237,7 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
       setBridgeError(message);
     });
     // T5d: a close report (the chat.closed push for a host closed through
-    // bridge.closeChat — there is deliberately no close button in the UI)
+    // bridge.closeChat — the header's close control is that caller, P2)
     // evicts that host's snapshot and chat→host mapping. When the closed
     // host is the one this pane is addressing, say so in the status line:
     // the pane keeps painting its last known state, but every request from
@@ -381,6 +386,28 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
     bridge.answerDialog(hostId, id, answer).catch((cause: unknown) => setBridgeError(errorText(cause)));
   };
 
+  // P2: the production caller for chat.close. It stops exactly the host this
+  // pane addresses and nothing else; main answers through the chat.closed
+  // push, which this container already turns into snapshot and mapping
+  // eviction (see forgetClosedHost). Without a host address there is nothing
+  // to close, and without the optional bridge method this build cannot close
+  // at all — said plainly instead of drawing a control that does nothing.
+  const handleCloseWorkspace = (): void => {
+    if (hostId === "") return;
+    const closing = bridge.closeChat?.(hostId);
+    if (!closing) {
+      setBridgeError("This build cannot close a workspace");
+      return;
+    }
+    closing
+      .then(() => onWorkspaceClosed?.())
+      .catch((cause: unknown) => {
+        // Main also pushes its own report naming the reason (P3). This keeps
+        // the rejection itself visible even for a bridge that does not.
+        setBridgeError(errorText(cause));
+      });
+  };
+
   // T11: the footer's path is the open workspace's directory. Preference
   // order: the app-validated directory the pane's host was created with
   // (workspace.create attached it to the state at the push boundary), then
@@ -417,6 +444,10 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
         pane={pane}
         runningHelpersCount={chatState.helpers.summary.running}
         onSelectPane={setPane}
+        // P2: a close needs a host to address; before the open/new
+        // resolution answers there is none, so the control stays out.
+        canCloseWorkspace={hostId !== ""}
+        onCloseWorkspace={handleCloseWorkspace}
       />
       {pane === CONVERSATION_PANE.HELPERS && <StatusLine error={error} statuses={chatState.statuses} notifications={chatState.notifications} />}
       {pane === CONVERSATION_PANE.HELPERS ? (

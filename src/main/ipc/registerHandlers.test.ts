@@ -185,6 +185,53 @@ describe("WorkspaceHostRouter close cleanup", () => {
     const reopened = await router.openChat("chat-1");
     expect(reopened.hostId).toBe("host-2");
   });
+
+  it("reports a rejected close as an error push for that host, after the close report (P3)", async () => {
+    const byId = new Map<string, ChatHost>();
+    let nextNumber = 1;
+    let stopRejects = false;
+    const openChat = vi.fn(async () => ({ messages: [], working: false, pendingDialogs: [], activity: 0, helpers: emptyHelpers() }) as ChatState);
+    const source: WorkspaceHostSource = {
+      get: (hostId) => byId.get(hostId),
+      createHost: (cwd?: string) => {
+        const host = fakeHost({ hostId: `host-${nextNumber++}`, openChat, cwd });
+        byId.set(host.hostId, host);
+        return host;
+      },
+      findByDirectory: (directory: string) => [...byId.values()].find((host) => host.cwd === directory),
+      list: () => [...byId.values()],
+      stopHost: async (hostId: string) => {
+        const host = byId.get(hostId);
+        if (!host) throw new Error(`no host for id "${hostId}"`);
+        byId.delete(hostId); // dropped before the await, exactly like the registry
+        if (stopRejects) throw new Error("stop failed");
+      },
+    };
+
+    const router = new WorkspaceHostRouter(source);
+    // One ordered log: the renderer's close handler and its error handler
+    // both repaint the same status line, so which one lands LAST decides
+    // what the user reads.
+    const pushes: string[] = [];
+    router.onClosed((hostId) => pushes.push(`closed:${hostId}`));
+    router.onError((_message, hostId) => pushes.push(`error:${hostId}`));
+    const errors: string[] = [];
+    router.onError((message) => errors.push(message));
+
+    const opened = await router.openChat("chat-1");
+    stopRejects = true;
+    await expect(router.closeChat(opened.hostId)).rejects.toThrow("stop failed");
+
+    // P3: the source dropped the host before its child was stopped, so a
+    // failed close can leave a live child nothing tracks. Cleanup alone is
+    // silent — the renderer must be told.
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("stop failed");
+    expect(errors[0]).toContain("may still be running");
+    // Order matters: the generic "host was closed" notice must not be the
+    // last word on a close that did not complete.
+    expect(pushes).toEqual([`closed:${opened.hostId}`, `error:${opened.hostId}`]);
+  });
 });
 
 // T11 — Add workspace: a native directory picker answered by main, a

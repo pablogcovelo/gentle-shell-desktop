@@ -322,8 +322,11 @@ export class WorkspaceHostRouter {
     // before awaiting its child, so a rejected stop still leaves a host the
     // router must stop believing in. Keeping the wiring or the reuse entry
     // would point later opens at a host nothing owns any more.
+    let failure: unknown;
     try {
       await stop(hostId);
+    } catch (cause) {
+      failure = cause;
     } finally {
       this.forgetHostWiring(hostId);
       // A chat this host owned must resolve through a FRESH host on its next
@@ -332,6 +335,20 @@ export class WorkspaceHostRouter {
         if (owner === hostId) this.chatHosts.delete(chatId);
       }
       for (const listener of this.closeListeners) listener(hostId);
+    }
+    if (failure !== undefined) {
+      // P3: the source already dropped the host, so a rejected stop can leave
+      // a child nothing tracks any more. Cleanup alone says nothing about it —
+      // without this report the failure only reached a caller that may swallow
+      // it, and a live process outlived the workspace in silence. Reported
+      // AFTER the close listeners (see the finally above) because the renderer
+      // repaints one status line from both: the specific failure must be the
+      // last word, not the generic "host was closed" notice.
+      const reason = failure instanceof Error ? failure.message : String(failure);
+      for (const listener of this.errorListeners) {
+        listener(`Could not close this workspace's host: ${reason}. Its process may still be running.`, hostId);
+      }
+      throw failure;
     }
   }
 

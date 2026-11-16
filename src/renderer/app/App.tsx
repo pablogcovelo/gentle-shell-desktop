@@ -241,6 +241,10 @@ export function App() {
           createdWorkspace={createdWorkspace}
           onHostResolved={setActiveHostId}
           onWorktreeBranch={setActiveBranch}
+          // P2: closing the open workspace lands on a fresh chat. The closed
+          // chat stays in the sidebar (its session is still on disk) and
+          // selecting it again mints a new host, so nothing is lost.
+          onWorkspaceClosed={handleNewChat}
         />
       </div>
       <div className="gc-app__footer" ref={setFooterTarget} />

@@ -53,6 +53,8 @@ function makeBridge(overrides: Partial<GentleBridge> = {}): GentleBridge {
     sendMessage: vi.fn().mockResolvedValue({ queued: true }),
     abort: vi.fn().mockResolvedValue(undefined),
     answerDialog: vi.fn().mockResolvedValue(undefined),
+    // P2: the close path the header's control reaches.
+    closeChat: vi.fn().mockResolvedValue(undefined),
     onState: vi.fn().mockReturnValue(() => {}),
     onError: vi.fn().mockReturnValue(() => {}),
     // T5c: the fake answers the chat.refresh path; tests that need to hold
@@ -108,6 +110,57 @@ describe("ConversationContainer", () => {
     await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledWith("chat-1"));
     expect(bridge.newChat).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { name: "project" })).toBeInTheDocument();
+  });
+
+  it("closes the addressed workspace through chat.close and reports it up (P2)", async () => {
+    const closeChat = vi.fn().mockResolvedValue(undefined);
+    const onWorkspaceClosed = vi.fn();
+    const bridge = makeBridge({ closeChat });
+    window.gentle = bridge;
+
+    render(
+      <ConversationContainer
+        activeChat={{ kind: "existing", chat: EXISTING_CHAT }}
+        activeHostId="host-7"
+        onWorkspaceClosed={onWorkspaceClosed}
+      />,
+    );
+    await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledWith("chat-1"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Close this workspace" }));
+
+    // Addressed to THIS pane's host, never to "whichever chat is open".
+    await vi.waitFor(() => expect(closeChat).toHaveBeenCalledWith("host-7"));
+    await vi.waitFor(() => expect(onWorkspaceClosed).toHaveBeenCalledTimes(1));
+  });
+
+  it("surfaces a failed close instead of pretending the workspace closed (P3)", async () => {
+    const closeChat = vi.fn().mockRejectedValue(new Error("stop failed"));
+    const onWorkspaceClosed = vi.fn();
+    window.gentle = makeBridge({ closeChat });
+
+    render(
+      <ConversationContainer
+        activeChat={{ kind: "existing", chat: EXISTING_CHAT }}
+        activeHostId="host-7"
+        onWorkspaceClosed={onWorkspaceClosed}
+      />,
+    );
+    await vi.waitFor(() => expect(window.gentle?.openChat).toHaveBeenCalledWith("chat-1"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Close this workspace" }));
+
+    expect(await screen.findByText(/stop failed/)).toBeInTheDocument();
+    // Still open, so the shell must not land on a fresh chat as if it closed.
+    expect(onWorkspaceClosed).not.toHaveBeenCalled();
+  });
+
+  it("draws no close control while the pane has no host to address", async () => {
+    window.gentle = makeBridge({ openChat: vi.fn(() => new Promise<never>(() => {})) });
+
+    render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} />);
+
+    expect(screen.queryByRole("button", { name: "Close this workspace" })).not.toBeInTheDocument();
   });
 
   it("re-opens when activeChat changes", async () => {
