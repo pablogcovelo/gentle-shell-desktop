@@ -9,7 +9,7 @@ import { ChatHost } from "../domain/session/ChatHost";
 import type { LauncherLocator, ProcessSpawner, SessionInfoLike, SessionStore, SpawnedProcess } from "../ports";
 import type { SetupService } from "../ports";
 import { WorkspaceHostRegistry } from "../domain/session/WorkspaceHostRegistry";
-import { WorkspaceHostRouter, registerHandlers, validateWorkspaceDirectory, type WorkspaceHostSource, type WorkspaceRouterDeps } from "./registerHandlers";
+import { WorkspaceHostRouter, registerHandlers, validateWorkspaceDirectory, type WorkspaceHostSource, type WorkspaceRegistryPort, type WorkspaceRouterDeps } from "./registerHandlers";
 
 function fakeHost(overrides: Partial<ChatHost> = {}): ChatHost {
   return {
@@ -373,6 +373,146 @@ describe("workspace.create (T11)", () => {
     const picked = setup({ routerDeps: { chooseDirectory: vi.fn().mockResolvedValue("/tmp/chosen") } });
     await expect(registeredHandler(picked.ipc, IPC_CHANNELS.WORKSPACE_CHOOSE_DIRECTORY)({})).resolves.toBe("/tmp/chosen");
     expect(picked.handles).toHaveLength(0); // choosing alone starts no child
+  });
+});
+
+// T1 (S1/S2) — the persisted workspace registry channels: the panel's
+// list (persisted UNION pi-session directories), add (validate, then
+// persist), remove (the persisted entry ONLY) and open (the creation
+// path without the picker). Each of list/add/remove answers the fresh
+// WorkspaceList — one explicit re-read per action, no push channel.
+describe("workspace registry channels (T1)", () => {
+  function fakeWorkspaceRegistry(persisted: string[]): WorkspaceRegistryPort {
+    const list = [...persisted];
+    return {
+      list: vi.fn(() => [...list]),
+      add: vi.fn((directory: string) => {
+        if (!list.includes(directory)) list.unshift(directory);
+        return [...list];
+      }),
+      remove: vi.fn((directory: string) => {
+        const index = list.indexOf(directory);
+        if (index >= 0) list.splice(index, 1);
+        return [...list];
+      }),
+    };
+  }
+
+  function setup(persisted: string[], routerDeps: WorkspaceRouterDeps = { validateDirectory: vi.fn().mockResolvedValue(undefined) }): {
+    ipc: IpcMain;
+    handles: FakeProcessHandle[];
+    registry: ReturnType<typeof fakeWorkspaceRegistry>;
+  } {
+    const { spawner, handles } = createFakeSpawner();
+    const store = fakeSessionStore([session({ id: "sess-1", path: "/home/sessions/proj/sess-1.jsonl", cwd: "/tmp/proj" })]);
+    const ipc = fakeIpcMain();
+    const registry = fakeWorkspaceRegistry(persisted);
+    const router = new WorkspaceHostRouter(
+      realHostSource(() => ({ spawner, locator: fakeLocator, sessionStore: store, env: {} })),
+      routerDeps,
+    );
+    registerHandlers(router, fakeSetup(), fakeWebContents().webContents, ipc, { workspaces: registry });
+    return { ipc, handles, registry };
+  }
+
+  it("workspace.list answers persisted UNION pi-session directories, persisted first and deduplicated", async () => {
+    const { ipc } = setup(["/tmp/persisted-a", "/tmp/proj"]);
+
+    await expect(registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_LIST)({})).resolves.toEqual({
+      directories: ["/tmp/persisted-a", "/tmp/proj"],
+      persisted: ["/tmp/persisted-a", "/tmp/proj"],
+    });
+  });
+
+  it("workspace.list includes a session directory the registry never persisted", async () => {
+    const { ipc } = setup([]);
+
+    await expect(registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_LIST)({})).resolves.toEqual({
+      directories: ["/tmp/proj"],
+      persisted: [],
+    });
+  });
+
+  it("workspace.add validates the directory BEFORE persisting: an invalid one is refused and persists nothing", async () => {
+    const { ipc, registry, handles } = setup([], {
+      validateDirectory: vi.fn().mockRejectedValue(new Error('"relative/path" is not an absolute path')),
+    });
+
+    await expect(registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_ADD)({}, "relative/path")).rejects.toThrow(
+      /not an absolute path/,
+    );
+    expect(registry.add).not.toHaveBeenCalled();
+    expect(registry.list()).toEqual([]);
+    expect(handles).toHaveLength(0); // nothing was created either
+  });
+
+  it("workspace.add persists a valid directory and answers the fresh list including it", async () => {
+    const { ipc, registry } = setup([]);
+
+    const answer = (await registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_ADD)({}, "/tmp/added")) as {
+      directories: readonly string[];
+      persisted: readonly string[];
+    };
+
+    expect(registry.add).toHaveBeenCalledWith("/tmp/added");
+    // A persisted directory with no chat yet is still a row (S1): it is
+    // listed even though pi has no session for it.
+    expect(answer.persisted).toEqual(["/tmp/added"]);
+    expect(answer.directories).toEqual(["/tmp/added", "/tmp/proj"]);
+  });
+
+  it("workspace.remove deletes ONLY the persisted entry: the session directory stays listed and no host is touched", async () => {
+    const { ipc, handles } = setup(["/tmp/persisted"]);
+
+    const answer = (await registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_REMOVE)({}, "/tmp/persisted")) as {
+      directories: readonly string[];
+      persisted: readonly string[];
+    };
+
+    expect(answer.persisted).toEqual([]);
+    // The session directory survives: remove never forgets a chat.
+    expect(answer.directories).toEqual(["/tmp/proj"]);
+    expect(handles).toHaveLength(0); // no child was spawned or stopped
+  });
+
+  it("workspace.remove of a session-only directory is a no-op that answers the unchanged list", async () => {
+    const { ipc } = setup([]);
+
+    const answer = (await registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_REMOVE)({}, "/tmp/proj")) as {
+      directories: readonly string[];
+      persisted: readonly string[];
+    };
+
+    expect(answer.persisted).toEqual([]);
+    expect(answer.directories).toEqual(["/tmp/proj"]);
+  });
+
+  it("workspace.open is the creation path without the picker: validates, spawns the host with that directory as cwd", async () => {
+    const { ipc, handles } = setup([]);
+
+    const opened = (await registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_OPEN)({}, "/tmp/opened")) as {
+      hostId: string;
+      state: ChatState;
+    };
+
+    expect(opened.hostId).toBe("host-1");
+    expect(handles).toHaveLength(1);
+    expect(handles[0]!.cwd).toBe("/tmp/opened");
+    expect(opened.state.workspacePath).toBe("/tmp/opened");
+  });
+
+  it("the registry channels refuse clearly when no registry is configured", async () => {
+    const { spawner } = createFakeSpawner();
+    const store = fakeSessionStore([]);
+    const ipc = fakeIpcMain();
+    const router = new WorkspaceHostRouter(
+      realHostSource(() => ({ spawner, locator: fakeLocator, sessionStore: store, env: {} })),
+    );
+    registerHandlers(router, fakeSetup(), fakeWebContents().webContents, ipc);
+
+    await expect(registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_LIST)({})).rejects.toThrow(/workspace registry is unavailable/);
+    await expect(registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_ADD)({}, "/tmp/a")).rejects.toThrow(/workspace registry is unavailable/);
+    await expect(registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_REMOVE)({}, "/tmp/a")).rejects.toThrow(/workspace registry is unavailable/);
   });
 });
 

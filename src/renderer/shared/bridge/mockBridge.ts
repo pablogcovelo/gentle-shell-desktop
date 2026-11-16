@@ -25,6 +25,7 @@ import {
   type SetupStatus,
   type StopHelperOutcome,
   type WorkspaceInfo,
+  type WorkspaceList,
 } from "@shared/bridge-types";
 
 /**
@@ -259,6 +260,33 @@ let currentState: ChatState = emptyState();
 let nextMessageId = 0;
 let nextDialogId = 0;
 
+// T1 (S1/S2) — the preview's persisted workspace registry: what the user
+// added (most-recently-added first, deduplicated) UNION the directories
+// the example sessions were started in, exactly like the real main
+// process unions the app config with pi's session store. The example
+// chat list is replaceable (setMockChats) so a test can simulate a
+// machine with no sessions at all — the true empty state.
+let persistedWorkspaces: string[] = [];
+let exampleChats: readonly ChatSummary[] = EXAMPLE_CHATS;
+
+/** Overrides the mock's session list (tests only; the preview always uses
+ * the demo chats). Call with [] to simulate a machine with no pi
+ * sessions, or undefined to restore the demo chats. */
+export function setMockChats(chats: readonly ChatSummary[] | undefined): void {
+  exampleChats = chats ?? EXAMPLE_CHATS;
+}
+
+/** The panel's directories: persisted registry entries first, then the
+ * session directories, deduplicated on the exact string — the same union
+ * main's workspace.list answers. */
+function workspaceUnion(): WorkspaceList {
+  const directories = [...persistedWorkspaces];
+  for (const chat of exampleChats) {
+    if (chat.cwd && !directories.includes(chat.cwd)) directories.push(chat.cwd);
+  }
+  return { directories, persisted: [...persistedWorkspaces] };
+}
+
 // T5b — the mock implements the same host-identity contract as the real
 // bridge: openChat/newChat mint (or reuse) a host id and answer it, every
 // request carries the host id and is rejected for an unknown or no-longer-
@@ -292,6 +320,33 @@ export function setMockDirectoryPick(pick: string | null | undefined): void {
 /** Host id -> the directory it was created for (T11): how the mock reuses
  * an already-open workspace's host instead of minting a second one. */
 const directoryByHostId = new Map<string, string>();
+
+/** Absolute-path check without node:path (this module runs in the
+ * renderer, whose tsconfig has no node types): a leading separator or a
+ * drive path. Mirrors what the real main process enforces through
+ * validateWorkspaceDirectory. */
+function isAbsolutePath(candidate: string): boolean {
+  return candidate.startsWith("/") || candidate.startsWith("\\") || /^[a-zA-Z]:[\\/]/.test(candidate);
+}
+
+/** The creation path the Add-workspace flow and workspace.open share
+ * (T11/T1): bind a host to the directory — reusing an already-open
+ * directory's host instead of minting a second child — and carry the
+ * directory as workspacePath. */
+async function createWorkspaceFor(directory: string): Promise<OpenChatResult> {
+  helpersScenarioToken += 1; // invalidate any growth loop from a previously open chat
+  const existing = [...directoryByHostId.entries()].find(([, dir]) => dir === directory)?.[0];
+  if (existing !== undefined) {
+    currentHostId = existing;
+    setState({ ...currentState, hostId: existing, workspacePath: directory });
+    return { hostId: existing, state: currentState };
+  }
+  const hostId = mintHostId();
+  directoryByHostId.set(hostId, directory);
+  currentHostId = hostId;
+  setState({ ...emptyState(), hostId, workspacePath: directory });
+  return { hostId, state: currentState };
+}
 
 const stateListeners = new Set<(state: ChatState) => void>();
 const errorListeners = new Set<(message: string, hostId: string) => void>();
@@ -333,6 +388,8 @@ export function resetMockBridge(): void {
   hostIdByChat.clear();
   directoryByHostId.clear();
   directoryPick = undefined;
+  persistedWorkspaces = [];
+  exampleChats = EXAMPLE_CHATS;
   stateListeners.clear();
   errorListeners.clear();
   closeListeners.clear();
@@ -655,7 +712,7 @@ export function setMockFilePick(pick: string | null | undefined): void {
 
 export const mockBridge: GentleBridge = {
   async listChats(): Promise<ChatSummary[]> {
-    return EXAMPLE_CHATS;
+    return [...exampleChats];
   },
 
   async openChat(id: string): Promise<OpenChatResult> {
@@ -778,19 +835,36 @@ export const mockBridge: GentleBridge = {
   // router: an already-open directory reuses its host instead of minting a
   // second child, and the created host's state carries the directory as
   // workspacePath (the footer's path).
-  async createWorkspace(directory: string): Promise<OpenChatResult> {
-    helpersScenarioToken += 1; // invalidate any growth loop from a previously open chat
-    const existing = [...directoryByHostId.entries()].find(([, dir]) => dir === directory)?.[0];
-    if (existing !== undefined) {
-      currentHostId = existing;
-      setState({ ...currentState, hostId: existing, workspacePath: directory });
-      return { hostId: existing, state: currentState };
+  createWorkspace(directory: string): Promise<OpenChatResult> {
+    return createWorkspaceFor(directory);
+  },
+
+  // T1 (S1/S2): the workspace registry in the preview — the same shapes
+  // and refusals main answers (list = persisted UNION sessions; add
+  // persists most-recently-added first after an absolute-path check;
+  // remove deletes ONLY the persisted entry; open is the creation path
+  // without the picker).
+  async listWorkspaces(): Promise<WorkspaceList> {
+    return workspaceUnion();
+  },
+
+  async addWorkspace(directory: string): Promise<WorkspaceList> {
+    if (directory.length === 0 || !isAbsolutePath(directory)) {
+      throw new Error(`"${directory}" is not an absolute path — the workspace registry stores absolute directories only`);
     }
-    const hostId = mintHostId();
-    directoryByHostId.set(hostId, directory);
-    currentHostId = hostId;
-    setState({ ...emptyState(), hostId, workspacePath: directory });
-    return { hostId, state: currentState };
+    if (!persistedWorkspaces.includes(directory)) persistedWorkspaces = [directory, ...persistedWorkspaces];
+    return workspaceUnion();
+  },
+
+  async removeWorkspace(directory: string): Promise<WorkspaceList> {
+    persistedWorkspaces = persistedWorkspaces.filter((entry) => entry !== directory);
+    return workspaceUnion();
+  },
+
+  openWorkspace(directory: string): Promise<OpenChatResult> {
+    // The same creation path as the Add-workspace flow (createWorkspace),
+    // minus the picker — no duplicated host lifecycle logic.
+    return createWorkspaceFor(directory);
   },
 
   onClosed(callback: (hostId: string) => void): () => void {

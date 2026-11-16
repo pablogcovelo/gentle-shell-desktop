@@ -19,8 +19,17 @@ import "./ConversationContainer.css";
  * down; ChatsContainer only reports selection intent up to App, it never
  * calls chat.open/chat.new itself, because GentleBridge tracks exactly one
  * "currently open" chat.
+ *
+ * T2 (S3/S4/S11): `none` says NO chat/workspace is open — the app starts
+ * there instead of a synthetic new chat that would spawn a child on first
+ * paint — and `workspace` selects a workspace directory whose pane
+ * resolves on its own: the directory's most recent session reopens, or a
+ * new chat is created for it through workspace.open (the creation path,
+ * without the picker).
  */
 export type ActiveChat =
+  | { readonly kind: "none" }
+  | { readonly kind: "workspace"; readonly directory: string }
   | { readonly kind: "new"; readonly epoch: number }
   | { readonly kind: "existing"; readonly chat: ChatSummary };
 
@@ -93,11 +102,15 @@ export function resetWorkspaceSnapshotsForTests(): void {
   closedHosts.clear();
 }
 
-/** The cache key of a selection: an existing chat's id, or `new-<epoch>`
- * for an unsaved chat (App's epoch counter makes every "New chat" click a
- * distinct pane, T9b). */
+/** The cache key of a selection: an existing chat's id, `new-<epoch>` for
+ * an unsaved chat (App's epoch counter makes every "New chat" click a
+ * distinct pane, T9b), or `ws-<directory>` for a workspace pane — keyed by
+ * the directory, so re-selecting a workspace reuses its live host and
+ * snapshot (T5c) instead of starting a second child. */
 function chatKeyOf(activeChat: ActiveChat): string {
-  return activeChat.kind === "existing" ? activeChat.chat.id : `new-${activeChat.epoch}`;
+  if (activeChat.kind === "existing") return activeChat.chat.id;
+  if (activeChat.kind === "workspace") return `ws-${activeChat.directory}`;
+  return activeChat.kind === "new" ? `new-${activeChat.epoch}` : "none";
 }
 
 /** Stores one pushed state as its host's snapshot (T5c): called for every
@@ -267,7 +280,8 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   // Guarded against stale resolutions: if the selection changes again
   // before this request settles (e.g. quickly clicking two chats), its
   // resolved/rejected result must not clobber the state that belongs to
-  // the newer selection.
+  // the newer selection. A `none` selection resolves nothing: no chat is
+  // open, so no child may be spawned (T2/S4).
   // Reset to the chat pane whenever the selected chat changes — a helper
   // tab left open on the previous chat must never bleed into the next one.
   // The previous chat's host id needs no reset here: the resolved pair is
@@ -286,6 +300,9 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   useEffect(() => {
     setBridgeError(undefined);
     let cancelled = false;
+    // T2/S4: with no chat and no workspace open nothing may be resolved —
+    // no child, no host, no request.
+    if (activeChat.kind === "none") return;
 
     // Adopts the resolution of the chat this effect opened (T5b + T5c):
     // remembers which host owns it, caches its state as that host's
@@ -309,6 +326,39 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
       const creation = createdWorkspace && createdWorkspace.chatKey === currentKey ? createdWorkspace : undefined;
       if (creation) {
         adopt(creation.result.hostId, creation.result.state);
+        return;
+      }
+      // T2 (S11): a workspace pane always lands on a chat for its
+      // directory. The directory's most recent session reopens when pi has
+      // one; otherwise a new chat is created through workspace.open — the
+      // same creation path as the Add-workspace flow (validated, reuse,
+      // cwd-bound spawn), minus the picker. Never a second lifecycle
+      // implementation, and never "no chat for a selected workspace".
+      if (activeChat.kind === "workspace") {
+        const directory = activeChat.directory;
+        bridge
+          .listChats()
+          .then((chats) => {
+            if (cancelled) return;
+            const mostRecent = chats
+              .filter((chat) => chat.cwd === directory)
+              .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+            const opening = mostRecent ? bridge.openChat(mostRecent.id) : bridge.openWorkspace?.(directory);
+            if (!opening) {
+              setBridgeError("This bridge cannot open a workspace directory");
+              return;
+            }
+            opening
+              .then((result) => {
+                if (!cancelled) adopt(result.hostId, result.state);
+              })
+              .catch((cause: unknown) => {
+                if (!cancelled) setBridgeError(errorText(cause));
+              });
+          })
+          .catch((cause: unknown) => {
+            if (!cancelled) setBridgeError(errorText(cause));
+          });
         return;
       }
       const opening = activeChat.kind === "existing" ? bridge.openChat(activeChat.chat.id) : bridge.newChat();
@@ -438,11 +488,17 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   // order: the app-validated directory the pane's host was created with
   // (workspace.create attached it to the state at the push boundary), then
   // the session summary's own cwd for a chat opened from the sidebar —
-  // pi's record of where that session was started. Undefined means no
-  // directory is known, and the footer shows `~/` rather than an invented
-  // path. NOT the worktree group: no worktree counts here (that is T8b).
+  // pi's record of where that session was started — then, for a workspace
+  // pane (T2), the selected directory itself. Undefined means no directory
+  // is known, and the footer shows `~/` rather than an invented path. NOT
+  // the worktree group: no worktree counts here (that is T8b).
   const workspacePath =
-    chatState.workspacePath ?? (activeChat.kind === "existing" ? activeChat.chat.cwd : undefined);
+    chatState.workspacePath ??
+    (activeChat.kind === "existing"
+      ? activeChat.chat.cwd
+      : activeChat.kind === "workspace"
+        ? activeChat.directory
+        : undefined);
   // One welcome intro per chat identity (T9b). An existing chat keeps its id,
   // so re-selecting the same saved chat never replays. Every unsaved chat is
   // its own pane via App's epoch counter, so two "New chat" clicks never

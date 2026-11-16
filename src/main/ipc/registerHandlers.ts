@@ -10,6 +10,7 @@ import type {
   OpenChatResult,
   PromptResult,
   StopHelperOutcome,
+  WorkspaceList,
 } from "@shared/bridge-types";
 import { IPC_CHANNELS } from "@shared/ipc-channels";
 import type { ChatHost } from "../domain/session/ChatHost";
@@ -359,6 +360,17 @@ export class WorkspaceHostRouter {
     }
   }
 
+  /** T1: validates a workspace directory through the injected validator —
+   * the SAME check workspace.create runs before anything is created, so
+   * workspace.add can persist only a directory the creation path would
+   * accept. Refuses clearly when no validator is configured. */
+  async validateWorkspace(directory: string): Promise<void> {
+    if (!this.deps.validateDirectory) {
+      throw new Error("WorkspaceHostRouter: no directory validator is configured");
+    }
+    await this.deps.validateDirectory(directory);
+  }
+
   /** Answers the addressed host's current state WITHOUT starting or
    * restarting its child (T5c): the renderer calls this when it regains
    * focus on a chat it already resolved, after painting the snapshot it
@@ -495,6 +507,53 @@ export interface ShellPorts {
   readonly windowControls?: WindowControlsPort;
   readonly appInfo?: () => AppInfo;
   readonly chooseFile?: () => Promise<string | null>;
+  /** T1 (S1/S2): the persisted workspace registry over the app config
+   * (src/main/index.ts builds it from the same config.json that holds
+   * `home`). `add` persists one absolute directory (most-recently-added
+   * first, deduplicated); `remove` deletes ONLY the persisted entry;
+   * `list` answers the persisted directories. Backed by a real store in
+   * the packaged app; absent in a build without one, where the registry
+   * channels refuse clearly instead of pretending. */
+  readonly workspaces?: WorkspaceRegistryPort;
+}
+
+/**
+ * T1 (S1/S2): the persisted workspace registry, injected (never imported
+ * from Electron here) so tests can back the channels with an in-memory
+ * registry. The concrete store lives in the app config
+ * (createAppConfigStore's workspaces key) and is wired in src/main/index.ts.
+ */
+export interface WorkspaceRegistryPort {
+  /** The persisted workspace directories, most-recently-added first. */
+  list(): readonly string[];
+  /** Persists one directory (the store validates absolute-ness and
+   * deduplicates). Returns the fresh persisted list. */
+  add(directory: string): readonly string[];
+  /** Deletes ONLY the persisted entry for `directory` — never a session
+   * file, a directory or a chat. A no-op for an unknown directory.
+   * Returns the fresh persisted list. */
+  remove(directory: string): readonly string[];
+}
+
+/**
+ * T1: the Workspaces panel's directories — the persisted registry entries
+ * first (most-recently-added first), then the directories pi already has
+ * sessions for, deduplicated on the exact string (the same policy as
+ * findByDirectory: the picker returns one canonical absolute path per
+ * directory). `persisted` repeats the registry subset so the renderer can
+ * honestly hide the remove action on session-only rows.
+ */
+function workspaceList(persisted: readonly string[], chats: readonly ChatSummary[]): WorkspaceList {
+  const directories = [...persisted];
+  for (const chat of chats) {
+    if (chat.cwd && !directories.includes(chat.cwd)) directories.push(chat.cwd);
+  }
+  return { directories, persisted: [...persisted] };
+}
+
+function requireWorkspaceRegistry(ports: ShellPorts): WorkspaceRegistryPort {
+  if (!ports.workspaces) throw new Error("The workspace registry is unavailable in this build.");
+  return ports.workspaces;
 }
 
 /** The BrowserWindow actions the frameless chrome performs. */
@@ -535,6 +594,31 @@ export function registerHandlers(
   // directory.
   registerRequestHandler(ipc, IPC_CHANNELS.WORKSPACE_CHOOSE_DIRECTORY, () => router.chooseDirectory());
   registerRequestHandler(ipc, IPC_CHANNELS.WORKSPACE_CREATE, (_event, directory: string) => router.createWorkspace(directory));
+  // T1 (S1/S2): the workspace registry. Each of list/add/remove answers
+  // the fresh WorkspaceList, so the panel re-reads after add and after
+  // remove without a restart — one explicit re-read per action, never a
+  // push channel. add validates through the SAME validator workspace
+  // create uses, so a directory the creation path would refuse is never
+  // persisted. open is the creation path itself (workspace.create) minus
+  // the picker: selecting a persisted workspace that has no chats yet
+  // opens a new chat for that directory without asking again, with no
+  // duplicated host lifecycle logic.
+  registerRequestHandler(ipc, IPC_CHANNELS.WORKSPACE_LIST, async () => {
+    const registry = requireWorkspaceRegistry(ports);
+    return workspaceList(registry.list(), await router.listChats());
+  });
+  registerRequestHandler(ipc, IPC_CHANNELS.WORKSPACE_ADD, async (_event, directory: string) => {
+    const registry = requireWorkspaceRegistry(ports);
+    await router.validateWorkspace(directory);
+    registry.add(directory);
+    return workspaceList(registry.list(), await router.listChats());
+  });
+  registerRequestHandler(ipc, IPC_CHANNELS.WORKSPACE_REMOVE, async (_event, directory: string) => {
+    const registry = requireWorkspaceRegistry(ports);
+    registry.remove(directory);
+    return workspaceList(registry.list(), await router.listChats());
+  });
+  registerRequestHandler(ipc, IPC_CHANNELS.WORKSPACE_OPEN, (_event, directory: string) => router.createWorkspace(directory));
   registerRequestHandler(ipc, IPC_CHANNELS.SETUP_STATUS, () => setup.status());
   registerRequestHandler(ipc, IPC_CHANNELS.CHOOSE_HOME, (_event, mode: HomeMode) => setup.chooseHome(mode));
   // The shell's own chrome (second increment): app facts, the frameless

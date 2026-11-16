@@ -11,7 +11,12 @@ import {
 import { boundedStop } from "./domain/lifecycle/boundedStop";
 import { homeDirFor, resolveHomeMode } from "./domain/home/home";
 import { WorkspaceHostRegistry } from "./domain/session/WorkspaceHostRegistry";
-import { WorkspaceHostRouter, registerHandlers, validateWorkspaceDirectory } from "./ipc/registerHandlers";
+import {
+  WorkspaceHostRouter,
+  registerHandlers,
+  validateWorkspaceDirectory,
+  type WorkspaceRegistryPort,
+} from "./ipc/registerHandlers";
 
 // `import.meta.dirname` directly (not a manually computed
 // `path.dirname(fileURLToPath(import.meta.url))` `__dirname`), and under
@@ -83,6 +88,18 @@ const hostRegistry = new WorkspaceHostRegistry({
     log: logPiLine,
   }),
 });
+// T1 (S1/S2): the persisted workspace registry over the app config — the
+// same config.json that holds `home`. The port is wired into
+// registerHandlers' ports object exactly like appInfo/windowControls/
+// chooseFile, so the workspace.list/add/remove channels are backed by
+// real persistence in this build (add persists most-recently-added first
+// and deduplicated; remove deletes only the persisted entry).
+const workspaceRegistry: WorkspaceRegistryPort = {
+  list: () => configStore.listWorkspaces(),
+  add: (directory) => configStore.addWorkspace(directory).workspaces ?? [],
+  remove: (directory) => configStore.removeWorkspace(directory).workspaces ?? [],
+};
+
 // T11: the two workspace channels' main-side adapters, injected into the
 // router so tests never open a real dialog nor touch the filesystem.
 // chooseDirectory opens Electron's native directory picker
@@ -129,6 +146,7 @@ function createWindow(): void {
   // native FILE picker; its null answer is a cancelled pick.
   const unregisterHandlers = registerHandlers(hostRouter, setupService, window.webContents, ipcMain, {
     appInfo: () => ({ version: app.getVersion() }),
+    workspaces: workspaceRegistry,
     windowControls: {
       minimize: () => window.minimize(),
       toggleMaximize: () => {

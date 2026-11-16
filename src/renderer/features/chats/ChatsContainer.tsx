@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { ChatSummary, OpenChatResult } from "@shared/bridge-types";
+import type { ChatSummary, OpenChatResult, WorkspaceList } from "@shared/bridge-types";
 import { useBridge } from "@renderer/shared/bridge/useBridge";
 import { Button } from "@renderer/shared/ui/atoms/Button";
-import { ChatList } from "./components/ChatList";
+import { ChatList, type WorkspaceGroup } from "./components/ChatList";
 import { directoryOf } from "./components/ChatListItem";
 import "./ChatsContainer.css";
 
@@ -18,6 +18,20 @@ export interface ChatsContainerProps {
    * parent does not support workspace creation, and then the action is not
    * rendered. */
   readonly onWorkspaceCreated?: (result: OpenChatResult) => void;
+  /** T1: the Workspaces panel's directories (persisted UNION pi-session
+  * directories), owned by App — it needs the same list for selection and
+  * the empty state. Undefined keeps today's flat chat list (a caller
+  * without the registry). */
+  readonly workspaces?: WorkspaceList;
+  /** T1: reports the fresh WorkspaceList after add/remove, so App's copy
+  * (selection, empty state) and this panel stay correct without a
+  * restart. add/remove answer the fresh list themselves — one explicit
+  * re-read per action, never a push channel. */
+  readonly onWorkspacesChanged?: (workspaces: WorkspaceList) => void;
+  /** T1: reports a workspace row picked — App opens that directory's pane
+  * without the picker (selecting a persisted workspace that has no chats
+  * must not show the native picker again). */
+  readonly onSelectWorkspace?: (directory: string) => void;
   /** The currently open chat's id, for highlighting; undefined while a fresh chat is open. */
   readonly selectedChatId?: string;
   /** The open workspace's branch, shown under that workspace's name (owner
@@ -37,7 +51,7 @@ export interface ChatsContainerProps {
  * owns "the currently open chat" per GentleBridge's single-current-chat
  * shape, so this only reports selection intent up to App.
  */
-export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, selectedChatId, activeBranch, query, navigationTools, navigationOpen }: ChatsContainerProps) {
+export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, onSelectWorkspace, workspaces, onWorkspacesChanged, selectedChatId, activeBranch, query, navigationTools, navigationOpen }: ChatsContainerProps) {
   const bridge = useBridge();
   const [chats, setChats] = useState<ChatSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -73,6 +87,30 @@ export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, se
   const handleNewChat = (): void => {
     paneActions.current += 1;
     onNewChat();
+  };
+
+  // T1: a workspace row was picked. Same pane-action guard as every other
+  // selection: an in-flight Add-workspace flow loses to it.
+  const handleSelectWorkspace = (directory: string): void => {
+    paneActions.current += 1;
+    onSelectWorkspace?.(directory);
+  };
+
+  // T1 (S2): a persisted row's remove action deletes ONLY the persisted
+  // registry entry — never a session file, a directory, a chat or a host
+  // (bridge.removeWorkspace, not closeChat). The fresh list answers the
+  // request itself and is reported up, so the panel is correct without a
+  // restart. A failure surfaces beside the action that asked for it.
+  const handleRemoveWorkspace = (directory: string): void => {
+    void (async () => {
+      const remove = bridge.removeWorkspace?.bind(bridge);
+      if (!remove) return;
+      setWorkspaceError(null);
+      const fresh = await remove(directory);
+      onWorkspacesChanged?.(fresh);
+    })().catch((cause: unknown) => {
+      setWorkspaceError(cause instanceof Error ? cause.message : String(cause));
+    });
   };
 
   // The removed visible New chat action remains available with Ctrl/⌘+N.
@@ -133,6 +171,19 @@ export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, se
         // stop here and start no child at all for a workspace nobody waits for.
         if (paneActions.current !== actionAtStart) return;
 
+        // T1 (S2): the picked directory is PERSISTED before the chat is
+        // created, so the row exists immediately and survives a restart —
+        // even when the child fails to start (the row stays; selecting it
+        // retries). The fresh list answers the request and is reported up.
+        // A bridge without the registry degrades to today's flow (create
+        // only) instead of stopping.
+        const add = bridge.addWorkspace?.bind(bridge);
+        if (add) {
+          const fresh = await add(directory);
+          if (paneActions.current !== actionAtStart) return;
+          onWorkspacesChanged?.(fresh);
+        }
+
         const result = await create(directory);
         if (paneActions.current !== actionAtStart) {
           // The child already exists, so merely dropping the result would leave
@@ -150,6 +201,31 @@ export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, se
       setWorkspaceError(cause instanceof Error ? cause.message : String(cause));
     });
   };
+
+  // T1: the grouped render — one row per workspace directory, its chat
+  // rows underneath. With no registry (workspaces undefined) the flat
+  // chat list renders exactly as before.
+  const needle = normalizedQuery?.toLowerCase();
+  const grouped = (() => {
+    if (!workspaces) return undefined;
+    const directories = new Set(workspaces.directories);
+    const chatMatches = (chat: ChatSummary): boolean =>
+      !needle ||
+      chat.title.toLowerCase().includes(needle) ||
+      (directoryOf(chat.cwd) ?? "").toLowerCase().includes(needle);
+    const groups: WorkspaceGroup[] = [];
+    for (const directory of workspaces.directories) {
+      const all = chats.filter((chat) => chat.cwd === directory);
+      const directoryMatches =
+        needle !== undefined &&
+        ((directoryOf(directory) ?? directory).toLowerCase().includes(needle) || directory.toLowerCase().includes(needle));
+      const filtered = needle === undefined || directoryMatches ? all : all.filter(chatMatches);
+      if (needle !== undefined && !directoryMatches && filtered.length === 0) continue;
+      groups.push({ directory, chats: filtered, persisted: workspaces.persisted.includes(directory) });
+    }
+    const remainder = chats.filter((chat) => !chat.cwd || !directories.has(chat.cwd)).filter(chatMatches);
+    return { groups, remainder };
+  })();
 
   // S8: the sidebar SHOWS chats as workspaces (the bridge serves chats, the
   // owner's call), so the panel's heading is the artboard's "Workspaces".
@@ -189,7 +265,15 @@ export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, se
           Could not add the workspace: {workspaceError}
         </p>
       )}
-      <ChatList chats={visibleChats} selectedId={selectedChatId} onSelect={handleSelect} activeBranch={activeBranch} />
+      <ChatList
+        chats={grouped ? grouped.remainder : visibleChats}
+        groups={grouped?.groups}
+        selectedId={selectedChatId}
+        onSelect={handleSelect}
+        onSelectWorkspace={handleSelectWorkspace}
+        onRemoveWorkspace={handleRemoveWorkspace}
+        activeBranch={activeBranch}
+      />
       {normalizedQuery && visibleChats.length === 0 && (
         <p className="gc-chats__empty">No chats match &quot;{normalizedQuery}&quot;.</p>
       )}

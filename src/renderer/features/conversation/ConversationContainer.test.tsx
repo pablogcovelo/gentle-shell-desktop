@@ -60,6 +60,9 @@ function makeBridge(overrides: Partial<GentleBridge> = {}): GentleBridge {
     // later request to it.
     openChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: emptyState() }),
     newChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: emptyState() }),
+    // T2: the workspace pane's creation path; a default spy so "never
+    // called" assertions have something to read.
+    openWorkspace: vi.fn().mockResolvedValue({ hostId: "host-1", state: emptyState() }),
     sendMessage: vi.fn().mockResolvedValue({ queued: true }),
     abort: vi.fn().mockResolvedValue(undefined),
     answerDialog: vi.fn().mockResolvedValue(undefined),
@@ -1545,5 +1548,68 @@ describe("ConversationContainer created workspace (T11)", () => {
     expect(footer).toHaveTextContent("~/");
     expect(footer.textContent).not.toContain("main");
     expect(footer.textContent).not.toContain("+4/-1");
+  });
+});
+
+// T2 (S3/S4/S11) — the workspace pane: a selected workspace directory is
+// always a pane with a chat. Its most recent session reopens when pi has
+// one; otherwise a new chat is created for the directory through
+// workspace.open — the creation path itself, never the picker, never a
+// duplicated host lifecycle.
+describe("ConversationContainer workspace pane (T2)", () => {
+  const OLDER = { ...EXISTING_CHAT, id: "chat-older", title: "Older", cwd: "/tmp/project", updatedAt: "2026-09-21T09:00:00.000Z" };
+  const NEWEST = { ...EXISTING_CHAT, id: "chat-newest", title: "Newest", cwd: "/tmp/project", updatedAt: "2026-09-21T11:00:00.000Z" };
+  const ELSEWHERE = { ...EXISTING_CHAT, id: "chat-elsewhere", title: "Elsewhere", cwd: "/tmp/other", updatedAt: "2026-09-21T12:00:00.000Z" };
+
+  it("reopens the most recent session for the workspace directory (openChat, never newChat)", async () => {
+    const bridge = makeBridge({ listChats: vi.fn().mockResolvedValue([OLDER, ELSEWHERE, NEWEST]) });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={{ kind: "workspace", directory: "/tmp/project" }} />);
+
+    await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledWith("chat-newest"));
+    expect(bridge.newChat).not.toHaveBeenCalled();
+    expect(bridge.openWorkspace).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "project" })).toBeInTheDocument();
+  });
+
+  it("creates a chat for a workspace with no session through workspace.open — no picker, no duplicated lifecycle", async () => {
+    const bridge = makeBridge({
+      listChats: vi.fn().mockResolvedValue([]),
+      openWorkspace: vi.fn().mockResolvedValue({ hostId: "host-9", state: { ...emptyState(), workspacePath: "/tmp/fresh-ws" } }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={{ kind: "workspace", directory: "/tmp/fresh-ws" }} />);
+
+    await vi.waitFor(() => expect(bridge.openWorkspace).toHaveBeenCalledWith("/tmp/fresh-ws"));
+    expect(bridge.openChat).not.toHaveBeenCalled();
+    expect(bridge.newChat).not.toHaveBeenCalled();
+    // The pane knows its directory even before any pushed state carries it.
+    expect(screen.getByRole("heading", { name: "fresh-ws" })).toBeInTheDocument();
+  });
+
+  it("surfaces a workspace that cannot be opened instead of pretending a chat opened", async () => {
+    const bridge = makeBridge({
+      listChats: vi.fn().mockResolvedValue([]),
+      openWorkspace: vi.fn().mockRejectedValue(new Error("cannot start the child")),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={{ kind: "workspace", directory: "/tmp/fresh-ws" }} />);
+
+    expect(await screen.findByRole("status")).toHaveTextContent(/cannot start the child/);
+  });
+
+  it("resolves nothing for kind none — no chat, no host, no request", async () => {
+    const bridge = makeBridge();
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={{ kind: "none" }} />);
+    await act(async () => {});
+
+    expect(bridge.openChat).not.toHaveBeenCalled();
+    expect(bridge.newChat).not.toHaveBeenCalled();
+    expect(bridge.openWorkspace).not.toHaveBeenCalled();
   });
 });

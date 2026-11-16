@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CHAT_STATE, ODD_PHASE, type ChatState } from "@shared/bridge-types";
-import { DEMO_WORKSPACE_DIRECTORY, mockBridge, resetMockBridge, setMockDirectoryPick } from "./mockBridge";
+import { DEMO_WORKSPACE_DIRECTORY, mockBridge, resetMockBridge, setMockChats, setMockDirectoryPick } from "./mockBridge";
 
 function collectStates(): { states: ChatState[]; errors: string[] } {
   const states: ChatState[] = [];
@@ -57,6 +57,69 @@ describe("mockBridge", () => {
 
     setMockDirectoryPick(null);
     await expect(pick()).resolves.toBeNull();
+  });
+
+  // T1 (S1/S2) — the workspace registry in the preview: the persisted
+  // registry (module state, reset with resetMockBridge) UNION the
+  // example chats' directories, with add/remove/open mirroring the real
+  // main process.
+  it("listWorkspaces answers the persisted registry UNION the example chats' directories, persisted first", async () => {
+    const list = mockBridge.listWorkspaces?.bind(mockBridge);
+    if (!list) throw new Error("mockBridge did not implement listWorkspaces");
+
+    await expect(list()).resolves.toEqual({
+      directories: ["/Users/dev/gentle-shell-desktop", "/Users/dev/pi"],
+      persisted: [],
+    });
+  });
+
+  it("addWorkspace persists most-recently-added first, deduplicates, and refuses a relative directory", async () => {
+    const add = mockBridge.addWorkspace?.bind(mockBridge);
+    if (!add) throw new Error("mockBridge did not implement addWorkspace");
+
+    await add("/tmp/mock-ws-1");
+    await add("/tmp/mock-ws-1"); // deduplicated
+    const second = await add("/tmp/mock-ws-2");
+
+    expect(second.persisted).toEqual(["/tmp/mock-ws-2", "/tmp/mock-ws-1"]);
+    expect(second.directories.slice(0, 2)).toEqual(["/tmp/mock-ws-2", "/tmp/mock-ws-1"]);
+
+    await expect(add("relative/path")).rejects.toThrow(/not an absolute path/);
+    expect((await mockBridge.listWorkspaces?.())?.persisted).toEqual(["/tmp/mock-ws-2", "/tmp/mock-ws-1"]);
+  });
+
+  it("removeWorkspace deletes only the persisted entry: a session-only directory is a no-op", async () => {
+    const add = mockBridge.addWorkspace?.bind(mockBridge);
+    const remove = mockBridge.removeWorkspace?.bind(mockBridge);
+    if (!add || !remove) throw new Error("mockBridge did not implement the registry methods");
+
+    await add("/tmp/mock-ws");
+    const afterRemove = await remove("/tmp/mock-ws");
+    expect(afterRemove.persisted).toEqual([]);
+    // The example sessions' directories survive: remove never forgets a chat.
+    expect(afterRemove.directories).toContain("/Users/dev/pi");
+
+    const noOp = await remove("/Users/dev/pi");
+    expect(noOp.persisted).toEqual([]);
+    expect(noOp.directories).toContain("/Users/dev/pi");
+  });
+
+  it("openWorkspace binds a host to the directory without the picker and reuses an already-open directory's host", async () => {
+    const open = mockBridge.openWorkspace?.bind(mockBridge);
+    if (!open) throw new Error("mockBridge did not implement openWorkspace");
+
+    const first = await open("/tmp/mock-open");
+    expect(first.state.workspacePath).toBe("/tmp/mock-open");
+
+    const again = await open("/tmp/mock-open");
+    expect(again.hostId).toBe(first.hostId);
+  });
+
+  it("setMockChats replaces the example list so a test can simulate a machine with no sessions", async () => {
+    setMockChats([]);
+
+    await expect(mockBridge.listWorkspaces?.()).resolves.toEqual({ directories: [], persisted: [] });
+    await expect(mockBridge.listChats()).resolves.toEqual([]);
   });
 
   it("createWorkspace mints a host whose state carries the directory as workspacePath, and the host answers requests", async () => {

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { CHAT_STATE, type ChatState, type ChatSummary, type GentleBridge } from "@shared/bridge-types";
+import { CHAT_STATE, type ChatState, type ChatSummary, type GentleBridge, type WorkspaceList } from "@shared/bridge-types";
 import { ChatsContainer } from "./ChatsContainer";
 
 function makeBridge(overrides: Partial<GentleBridge> = {}): GentleBridge {
@@ -149,6 +149,121 @@ const EMPTY_STATE: ChatState = {
   activity: 0,
   helpers: { summary: { running: 0, queued: 0, waiting: 0, finished: 0 }, tasks: [] },
 };
+
+// T1 (S1/S2) — the Workspaces panel rows: one row per workspace directory
+// (persisted UNION pi-session directories), remove on persisted rows only,
+// and the add/remove/select flows through the bridge.
+describe("ChatsContainer workspace registry (T1)", () => {
+  const SESSION_CHAT = makeChat({ id: "chat-1", title: "A chat", cwd: "/tmp/project" });
+  const WORKSPACES: WorkspaceList = { directories: ["/tmp/added", "/tmp/project"], persisted: ["/tmp/added"] };
+
+  it("renders one row per workspace directory — a persisted directory with no chat yet is still a row", async () => {
+    window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([SESSION_CHAT]) });
+
+    render(
+      <ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} workspaces={WORKSPACES} />,
+    );
+
+    expect(await screen.findByRole("button", { name: "added — workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "project — workspace" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /A chat/ })).toBeInTheDocument();
+  });
+
+  it("shows the remove action on persisted rows only — a session-only row has nothing persisted to forget", async () => {
+    window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([SESSION_CHAT]) });
+
+    render(
+      <ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} workspaces={WORKSPACES} />,
+    );
+
+    expect(await screen.findByRole("button", { name: "Remove workspace added" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove workspace project" })).not.toBeInTheDocument();
+  });
+
+  it("remove deletes only the persisted entry: bridge.removeWorkspace with the directory, the fresh list reported up, no host touched", async () => {
+    const fresh: WorkspaceList = { directories: ["/tmp/project"], persisted: [] };
+    const removeWorkspace = vi.fn().mockResolvedValue(fresh);
+    const closeChat = vi.fn();
+    const onWorkspacesChanged = vi.fn();
+    window.gentle = makeBridge({ removeWorkspace, closeChat });
+
+    render(
+      <ChatsContainer
+        onSelectChat={vi.fn()}
+        onNewChat={vi.fn()}
+        workspaces={WORKSPACES}
+        onWorkspacesChanged={onWorkspacesChanged}
+      />,
+    );
+    (await screen.findByRole("button", { name: "Remove workspace added" })).click();
+
+    await vi.waitFor(() => expect(removeWorkspace).toHaveBeenCalledWith("/tmp/added"));
+    await vi.waitFor(() => expect(onWorkspacesChanged).toHaveBeenCalledWith(fresh));
+    expect(closeChat).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a failed remove beside the action instead of silently keeping the row", async () => {
+    window.gentle = makeBridge({ removeWorkspace: vi.fn().mockRejectedValue(new Error("disk refused")) });
+
+    render(
+      <ChatsContainer
+        onSelectChat={vi.fn()}
+        onNewChat={vi.fn()}
+        workspaces={WORKSPACES}
+        onWorkspacesChanged={vi.fn()}
+      />,
+    );
+    (await screen.findByRole("button", { name: "Remove workspace added" })).click();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/disk refused/);
+  });
+
+  it("selecting a workspace row reports the directory without ever opening the native picker", async () => {
+    const chooseDirectory = vi.fn();
+    const onSelectWorkspace = vi.fn();
+    window.gentle = makeBridge({ chooseDirectory, listChats: vi.fn().mockResolvedValue([]) });
+
+    render(
+      <ChatsContainer
+        onSelectChat={vi.fn()}
+        onNewChat={vi.fn()}
+        workspaces={WORKSPACES}
+        onSelectWorkspace={onSelectWorkspace}
+        onWorkspaceCreated={vi.fn()}
+      />,
+    );
+    (await screen.findByRole("button", { name: "added — workspace" })).click();
+
+    expect(onSelectWorkspace).toHaveBeenCalledWith("/tmp/added");
+    expect(chooseDirectory).not.toHaveBeenCalled();
+  });
+
+  it("Add workspace persists the picked directory first, reports the fresh list, then opens its pane", async () => {
+    const fresh: WorkspaceList = { directories: ["/tmp/new-ws"], persisted: ["/tmp/new-ws"] };
+    const addWorkspace = vi.fn().mockResolvedValue(fresh);
+    const chooseDirectory = vi.fn().mockResolvedValue("/tmp/new-ws");
+    const createWorkspace = vi.fn().mockResolvedValue({ hostId: "host-1", state: EMPTY_STATE });
+    const onWorkspacesChanged = vi.fn();
+    const onWorkspaceCreated = vi.fn();
+    window.gentle = makeBridge({ chooseDirectory, addWorkspace, createWorkspace });
+
+    render(
+      <ChatsContainer
+        onSelectChat={vi.fn()}
+        onNewChat={vi.fn()}
+        onWorkspaceCreated={onWorkspaceCreated}
+        workspaces={WORKSPACES}
+        onWorkspacesChanged={onWorkspacesChanged}
+      />,
+    );
+    (await screen.findByRole("button", { name: "Add workspace" })).click();
+
+    await vi.waitFor(() => expect(createWorkspace).toHaveBeenCalledWith("/tmp/new-ws"));
+    expect(addWorkspace).toHaveBeenCalledWith("/tmp/new-ws");
+    await vi.waitFor(() => expect(onWorkspacesChanged).toHaveBeenCalledWith(fresh));
+    await vi.waitFor(() => expect(onWorkspaceCreated).toHaveBeenCalledWith({ hostId: "host-1", state: EMPTY_STATE }));
+  });
+});
 
 it("does not adopt a workspace created after the user moved on", async () => {
   let releaseCreate: (() => void) | undefined;
