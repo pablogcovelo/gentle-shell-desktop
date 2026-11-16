@@ -75,3 +75,29 @@ L4 (routing note, P7)
 T7 starts by reading pi's resolved message types; the queue's own Blocked-by cell says guessing
 them would trade a doc lie for a code lie, so the shape is read from the installed pi package
 before any `history.ts` change.
+
+L5 (P6 probe evidence, read from the installed pi package 0.85.1 — the queue's "host T4 probe,
+confirmation only" is satisfied; nothing host-side blocks T6)
+
+- Request: `{ id?: string, type: "get_commands" }`, no params.
+- Response: `{ id?, type: "response", command: "get_commands", success: true, data: {
+  commands: RpcSlashCommand[] } }`.
+- `RpcSlashCommand` = `{ name, description?, source: "extension" | "prompt" | "skill",
+  sourceInfo }`. Order is fixed by the child: extension commands, then prompt templates, then
+  skills with a forced `skill:` prefix.
+- `description` really can be absent (extension commands). There is NO argument hint on the
+  wire: `argumentHint` exists only on internal types the handler never copies, so no hint may be
+  rendered from wire data.
+- Built-in TUI commands are excluded on purpose: "would not execute if sent via `prompt`". The
+  composer must therefore offer ONLY what `get_commands` answered — which is also why no
+  hardcoded `/gentle:*` replica is acceptable (S6).
+- `docs/rpc.md`'s sample is stale (shows `path`/`location`); the build exposes `sourceInfo`
+  instead (`CHANGELOG` 0.62.0). The types and handler are the authority.
+- Repo side: `src/main/domain/rpc/types.ts`'s `RpcCommand` union does not model `get_commands`
+  yet; PiSession's correlated-request pattern to copy is `requestIdentity()` /
+  `applyIdentityResponse()` (`stats-…`/`state-…` counters); the state field would be a new
+  optional member of `ChatState` after `session?`; no fixture carries a `get_commands` frame, so
+  one must be captured or written from the shapes above; the composer has no autocomplete today
+  and its `EmojiPanel` is the only in-composer popup precedent, with Enter already claimed by
+  submit — a list must claim Arrow/Enter first.
+- Risk stands at item 3: the `RpcCommand` union change touches a shared contract.
