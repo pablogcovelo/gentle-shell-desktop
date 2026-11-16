@@ -50,7 +50,7 @@ describe("HelpersContainer", () => {
       task({ id: "1", label: "Queued task", status: "queued" }),
       task({ id: "2", label: "Running task", status: "running", startedAt: "2026-09-22T10:00:00.000Z" }),
     ];
-    render(<HelpersContainer activity={activity(tasks)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+    render(<HelpersContainer hostId="host-1" activity={activity(tasks)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
 
 
     expect(screen.getByRole("heading", { name: "Running task" })).toBeInTheDocument();
@@ -58,14 +58,14 @@ describe("HelpersContainer", () => {
 
   it("falls back to the first task when none are running", () => {
     const tasks = [task({ id: "1", label: "Only task", status: "queued" })];
-    render(<HelpersContainer activity={activity(tasks)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+    render(<HelpersContainer hostId="host-1" activity={activity(tasks)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
 
     expect(screen.getByRole("heading", { name: "Only task" })).toBeInTheDocument();
   });
 
   it("switches the thread when a different helper is selected from the list", () => {
     const tasks = [task({ id: "1", label: "First" }), task({ id: "2", label: "Second" })];
-    render(<HelpersContainer activity={activity(tasks)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+    render(<HelpersContainer hostId="host-1" activity={activity(tasks)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
 
     fireEvent.click(screen.getByText("Second"));
 
@@ -74,30 +74,30 @@ describe("HelpersContainer", () => {
 
   it("keeps the current selection across an activity update even after the selected task finishes", () => {
     const initial = [task({ id: "1", label: "First", status: "running", startedAt: "2026-09-22T10:00:00.000Z" })];
-    const { rerender } = render(<HelpersContainer activity={activity(initial)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+    const { rerender } = render(<HelpersContainer hostId="host-1" activity={activity(initial)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
     expect(screen.getByRole("heading", { name: "First" })).toBeInTheDocument();
 
     const updated = [
       task({ id: "1", label: "First", status: "done", startedAt: "2026-09-22T10:00:00.000Z", endedAt: "2026-09-22T10:00:05.000Z" }),
     ];
-    rerender(<HelpersContainer activity={activity(updated)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+    rerender(<HelpersContainer hostId="host-1" activity={activity(updated)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
 
     expect(screen.getByRole("heading", { name: "First" })).toBeInTheDocument();
   });
 
   it("follows a newly-running task once the previously selected one is no longer in the list", () => {
     const initial = [task({ id: "1", label: "First", status: "running", startedAt: "2026-09-22T10:00:00.000Z" })];
-    const { rerender } = render(<HelpersContainer activity={activity(initial)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+    const { rerender } = render(<HelpersContainer hostId="host-1" activity={activity(initial)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
     expect(screen.getByRole("heading", { name: "First" })).toBeInTheDocument();
 
     const updated = [task({ id: "2", label: "Second", status: "running", startedAt: "2026-09-22T10:00:00.000Z" })];
-    rerender(<HelpersContainer activity={activity(updated)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+    rerender(<HelpersContainer hostId="host-1" activity={activity(updated)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
 
     expect(screen.getByRole("heading", { name: "Second" })).toBeInTheDocument();
   });
 
   it("shows a placeholder in both panes when the chat has no helpers", () => {
-    render(<HelpersContainer activity={activity([])} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+    render(<HelpersContainer hostId="host-1" activity={activity([])} onBackToChat={() => {}} openedAt={OPENED_AT} />);
     expect(screen.getByText("No helpers in this chat yet.")).toBeInTheDocument();
     expect(screen.getByText("Nothing running for this chat yet.")).toBeInTheDocument();
   });
@@ -105,7 +105,7 @@ describe("HelpersContainer", () => {
   it("calls onBackToChat from the footer button", () => {
     let called = false;
     const tasks = [task({ id: "1", label: "First" })];
-    render(<HelpersContainer activity={activity(tasks)} onBackToChat={() => (called = true)} openedAt={OPENED_AT} />);
+    render(<HelpersContainer hostId="host-1" activity={activity(tasks)} onBackToChat={() => (called = true)} openedAt={OPENED_AT} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Back to chat" }));
 
@@ -124,7 +124,7 @@ describe("HelpersContainer", () => {
         },
       }),
     ];
-    render(<HelpersContainer activity={activity(tasks)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+    render(<HelpersContainer hostId="host-1" activity={activity(tasks)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
 
     expect(screen.queryByText(/the output/)).not.toBeInTheDocument();
 
@@ -135,7 +135,7 @@ describe("HelpersContainer", () => {
 
   it("Stop stays disabled while the control channel has not been adopted, and says why", () => {
     const tasks = [task({ id: "1", label: "First", status: "running", startedAt: OPENED_AT })];
-    render(<HelpersContainer activity={activity(tasks)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+    render(<HelpersContainer hostId="host-1" activity={activity(tasks)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
 
     const stopButton = screen.getByRole("button", { name: "Stop" });
     expect(stopButton).toBeDisabled();
@@ -145,7 +145,7 @@ describe("HelpersContainer", () => {
   it("Stop stays disabled with the channel's honest reason when the probe failed", () => {
     const tasks = [task({ id: "1", label: "First", status: "running", startedAt: OPENED_AT })];
     render(
-      <HelpersContainer
+      <HelpersContainer hostId="host-1"
         activity={activity(tasks, { stopChannel: { available: false, reason: "Channel unavailable \u2014 this child has no desktop control channel, so helpers cannot be stopped." } })}
         onBackToChat={() => {}}
         openedAt={OPENED_AT}
@@ -163,7 +163,7 @@ describe("HelpersContainer", () => {
   it("Stop stays disabled with the channel's reason when cancel_subagent is not advertised", () => {
     const tasks = [task({ id: "1", label: "First", status: "running", startedAt: OPENED_AT })];
     render(
-      <HelpersContainer
+      <HelpersContainer hostId="host-1"
         activity={activity(tasks, { stopChannel: { available: false, reason: "gentle-shell does not advertise cancel_subagent on this child's control channel, so helpers cannot be stopped from here." } })}
         onBackToChat={() => {}}
         openedAt={OPENED_AT}
@@ -181,9 +181,8 @@ describe("HelpersContainer", () => {
       task({ id: "helper-b", label: "Queued task", status: "queued" }),
     ];
     render(
-      <HelpersContainer
+      <HelpersContainer hostId="host-1"
         activity={activity(tasks, { stopChannel: { available: true } })}
-        hostId="host-1"
         onBackToChat={() => {}}
         openedAt={OPENED_AT}
       />,
@@ -203,7 +202,7 @@ describe("HelpersContainer", () => {
 
   it("Stop is disabled for a helper that already finished, with its reason", () => {
     const tasks = [task({ id: "1", label: "First", status: "done", startedAt: OPENED_AT, endedAt: OPENED_AT })];
-    render(<HelpersContainer activity={activity(tasks, { stopChannel: { available: true } })} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+    render(<HelpersContainer hostId="host-1" activity={activity(tasks, { stopChannel: { available: true } })} onBackToChat={() => {}} openedAt={OPENED_AT} />);
 
     const stopButton = screen.getByRole("button", { name: "Stop" });
     expect(stopButton).toBeDisabled();
@@ -212,7 +211,7 @@ describe("HelpersContainer", () => {
 
   it("Stop is disabled for a waiting helper", () => {
     const tasks = [task({ id: "1", label: "First", status: "waiting", startedAt: OPENED_AT })];
-    render(<HelpersContainer activity={activity(tasks, { stopChannel: { available: true } })} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+    render(<HelpersContainer hostId="host-1" activity={activity(tasks, { stopChannel: { available: true } })} onBackToChat={() => {}} openedAt={OPENED_AT} />);
 
     expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
   });
@@ -222,7 +221,7 @@ describe("HelpersContainer", () => {
     useFakeBridge(stopHelper);
     const tasks = [task({ id: "1", label: "Running task", status: "running", startedAt: OPENED_AT })];
     const { rerender } = render(
-      <HelpersContainer activity={activity(tasks, { stopChannel: { available: true } })} onBackToChat={() => {}} openedAt={OPENED_AT} />,
+      <HelpersContainer hostId="host-1" activity={activity(tasks, { stopChannel: { available: true } })} onBackToChat={() => {}} openedAt={OPENED_AT} />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
@@ -236,7 +235,7 @@ describe("HelpersContainer", () => {
     // The real transition arrives as a pushed state (agents_update):
     // only then does the row render stopped.
     rerender(
-      <HelpersContainer
+      <HelpersContainer hostId="host-1"
         activity={activity([task({ id: "1", label: "Running task", status: "cancelled", startedAt: OPENED_AT, endedAt: OPENED_AT })], {
           stopChannel: { available: true },
         })}
@@ -251,7 +250,7 @@ describe("HelpersContainer", () => {
     const stopHelper = vi.fn().mockResolvedValue("not_tracked");
     useFakeBridge(stopHelper);
     const tasks = [task({ id: "1", label: "Running task", status: "running", startedAt: OPENED_AT })];
-    render(<HelpersContainer activity={activity(tasks, { stopChannel: { available: true } })} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+    render(<HelpersContainer hostId="host-1" activity={activity(tasks, { stopChannel: { available: true } })} onBackToChat={() => {}} openedAt={OPENED_AT} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
 
@@ -262,7 +261,7 @@ describe("HelpersContainer", () => {
     const stopHelper = vi.fn().mockResolvedValue("unavailable");
     useFakeBridge(stopHelper);
     const tasks = [task({ id: "1", label: "Running task", status: "running", startedAt: OPENED_AT })];
-    render(<HelpersContainer activity={activity(tasks, { stopChannel: { available: true } })} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+    render(<HelpersContainer hostId="host-1" activity={activity(tasks, { stopChannel: { available: true } })} onBackToChat={() => {}} openedAt={OPENED_AT} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
 
@@ -278,7 +277,7 @@ describe("HelpersContainer", () => {
       usage: { total: 15234, cost: 0.0421 },
     });
     render(
-      <HelpersContainer activity={activity([merged], { stopChannel: { available: true }, agents: [{ id: "m3a1-worker", agent: "worker", status: "completed" }] })} onBackToChat={() => {}} openedAt={OPENED_AT} />,
+      <HelpersContainer hostId="host-1" activity={activity([merged], { stopChannel: { available: true }, agents: [{ id: "m3a1-worker", agent: "worker", status: "completed" }] })} onBackToChat={() => {}} openedAt={OPENED_AT} />,
     );
 
     // One identity, one row: the list carries exactly ONE row for the
@@ -296,7 +295,7 @@ describe("HelpersContainer", () => {
 
     it("folds a helper finished before openedAt into the Earlier group instead of the main list", () => {
       const tasks = [task({ id: "current-1", label: "Running task", status: "running" }), earlierTask()];
-      render(<HelpersContainer activity={activity(tasks)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+      render(<HelpersContainer hostId="host-1" activity={activity(tasks)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
 
       expect(screen.queryByText("Earlier task")).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: /Earlier · 1 finished/ })).toBeInTheDocument();
@@ -304,14 +303,14 @@ describe("HelpersContainer", () => {
 
     it("keeps a helper finished during this run out of the Earlier group", () => {
       const tasks = [task({ id: "current-1", label: "Just finished", status: "done", endedAt: "2026-09-23T10:00:00.000Z" })];
-      render(<HelpersContainer activity={activity(tasks)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+      render(<HelpersContainer hostId="host-1" activity={activity(tasks)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
 
       expect(screen.getAllByText("Just finished").length).toBeGreaterThan(0);
       expect(screen.queryByRole("button", { name: /Earlier/ })).not.toBeInTheDocument();
     });
 
     it("selects and expands the Earlier group by default when it is the only content", () => {
-      render(<HelpersContainer activity={activity([earlierTask()])} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+      render(<HelpersContainer hostId="host-1" activity={activity([earlierTask()])} onBackToChat={() => {}} openedAt={OPENED_AT} />);
 
       expect(screen.getByRole("heading", { name: "Earlier task" })).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /Earlier · 1 finished/ })).toHaveAttribute("aria-expanded", "true");
@@ -319,7 +318,7 @@ describe("HelpersContainer", () => {
 
     it("selecting an item in the Earlier group still shows its thread", () => {
       const tasks = [task({ id: "current-1", label: "Running task", status: "running" }), earlierTask()];
-      render(<HelpersContainer activity={activity(tasks)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
+      render(<HelpersContainer hostId="host-1" activity={activity(tasks)} onBackToChat={() => {}} openedAt={OPENED_AT} />);
 
       fireEvent.click(screen.getByRole("button", { name: /Earlier · 1 finished/ }));
       fireEvent.click(screen.getByText("Earlier task"));

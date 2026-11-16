@@ -14,8 +14,14 @@ export interface HelpersContainerProps {
    * chat.open/chat.new), threaded into the Stop call as its routing key.
    * Before any resolution it is the empty string, which the bridge
    * rejects through the same `unavailable` outcome note as any other
-   * failed stop — never a fallback to another host. */
-  readonly hostId?: string;
+   * failed stop — never a fallback to another host.
+   *
+   * P4: REQUIRED on purpose. It was optional once, and a parent that forgot
+   * it shipped a broken helper Stop that every unit test still passed. An
+   * address that may be missing is exactly a routing defect the type system
+   * can refuse: "no address yet" is the explicit empty string, never an
+   * absent prop. */
+  readonly hostId: string;
   readonly onBackToChat: () => void;
   /**
    * ISO timestamp of the moment this chat became active in the renderer
