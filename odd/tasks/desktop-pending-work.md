@@ -60,6 +60,7 @@ listed in `pending-work.md` as already delivered; that is the branch's state, no
 - Slice 1 — T1 (P1): `fix(chat-open): spawn a reopened chat's child in the chat's own directory`.
 - Slice 2 — T2+T3 (P2, P3): `feat(workspace): close the open workspace and report a failed close`.
 - Slice 3 — T4 (P4): `refactor(helpers): require hostId on HelpersContainer`.
+- Slice 4 — T8 (P8): `feat(footer): render worktree changes in three states, never as a word`.
 
 Push, PR and merge stay the owner's decision; `git log` holds the hashes.
 
