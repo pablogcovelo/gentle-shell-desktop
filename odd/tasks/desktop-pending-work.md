@@ -50,3 +50,27 @@ S11 (rule that governs the queue). "The app presents what gentle-shell already c
 L1 (owner, verbatim)
 
 "Lee el documento odd/plans/pending-work.md y empieza a implementarlo"
+
+L2 (delivery boundaries, recorded 2026-11-15)
+
+Slice boundaries as instructed by the commit-path check (it measures the whole `develop`
+branch against `origin/main`, which is far past ~400 lines because of the prior deliveries
+listed in `pending-work.md` as already delivered; that is the branch's state, not one slice):
+
+- Slice 1 — T1 (P1): `fix(chat-open): spawn a reopened chat's child in the chat's own directory`.
+- Slice 2 — T2+T3 (P2, P3): `feat(workspace): close the open workspace and report a failed close`.
+- Slice 3 — T4 (P4): `refactor(helpers): require hostId on HelpersContainer`.
+
+Push, PR and merge stay the owner's decision; `git log` holds the hashes.
+
+L3 (routing note, P5)
+
+T5 is not executable in this repository by S11: `oddPhase` from `session_state_changed` is a
+host capability that `gentle-pi` `odd/tasks/desktop-gui-parity.md` S7/T2 must publish first.
+No app-side inference is an acceptable substitute.
+
+L4 (routing note, P7)
+
+T7 starts by reading pi's resolved message types; the queue's own Blocked-by cell says guessing
+them would trade a doc lie for a code lie, so the shape is read from the installed pi package
+before any `history.ts` change.
