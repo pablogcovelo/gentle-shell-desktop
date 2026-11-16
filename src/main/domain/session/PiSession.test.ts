@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -2200,6 +2200,228 @@ describe("worktree group (desktop-rpc T8b)", () => {
     await flushReplies();
 
     expect(session.getState().workspace?.worktree).toMatchObject({ added: 30, deleted: 5 });
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Command discovery (desktop-pending-work T6, S6): the composer's slash list
+// is ONLY ever what the child answers for pi's own `get_commands` command —
+// an ordinary RPC command correlated by `id`, exactly like the identity
+// reads, never a /gentle:desktop prompt and never a hardcoded replica.
+// ---------------------------------------------------------------------------
+
+describe("command discovery (desktop-pending-work T6, S6)", () => {
+  function desktopWidgetFrame(requestId: string, data: unknown): string {
+    return JSON.stringify({
+      type: "extension_ui_request",
+      id: "ui-desktop",
+      method: "setWidget",
+      widgetKey: "gentle-desktop-rpc",
+      widgetLines: [JSON.stringify({ schema: "gentle-shell.desktop-rpc/v1", kind: "response", requestId, data })],
+    });
+  }
+
+  function controlRequestId(write: string): string {
+    const prompt = JSON.parse(write) as { type: string; message: string };
+    if (prompt.type !== "prompt" || !prompt.message.startsWith("/gentle:desktop ")) {
+      throw new Error(`expected a /gentle:desktop prompt command, got: ${write}`);
+    }
+    return (JSON.parse(prompt.message.slice("/gentle:desktop ".length)) as { requestId: string }).requestId;
+  }
+
+  async function flushReplies(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  const CAPABILITIES_DATA = {
+    schema: "gentle-shell.desktop-rpc/v1",
+    command: "gentle:desktop",
+    widget: "gentle-desktop-rpc",
+    methods: ["capabilities", "get_subscription_usage"],
+    events: ["rate_limit"],
+  };
+
+  async function adoptChannel(handle: FakeProcessHandle): Promise<void> {
+    const probeWrite = handle.writes.find((write) => write.includes("capabilities"));
+    if (!probeWrite) throw new Error("expected a capabilities probe write");
+    handle.emitStdout(desktopWidgetFrame(controlRequestId(probeWrite), CAPABILITIES_DATA));
+    await flushReplies();
+  }
+
+  function writesOf(handle: FakeProcessHandle, type: string): string[] {
+    return handle.writes.filter((write) => (JSON.parse(write) as { type?: string }).type === type);
+  }
+
+  function commandId(write: string): string {
+    const id = (JSON.parse(write) as { id?: string }).id;
+    if (!id) throw new Error(`expected a correlation id on: ${write}`);
+    return id;
+  }
+
+  function commandsReply(id: string, commands: unknown): string {
+    return JSON.stringify({ type: "response", id, command: "get_commands", success: true, data: { commands } });
+  }
+
+  /** The captured wire frame from __fixtures__/commands-contract.jsonl: the
+   * real shape pi answers with (the extension entry carries `sourceInfo`, the
+   * app ignores it). */
+  function fixtureCommands(): unknown[] {
+    const lines = readFileSync(path.join(__dirname, "..", "rpc", "__fixtures__", "commands-contract.jsonl"), "utf8")
+      .trim()
+      .split("\n");
+    const frame = JSON.parse(lines[1] ?? "{}") as { command: string; data: { commands: unknown[] } };
+    if (frame.command !== "get_commands") throw new Error(`unexpected fixture frame: ${lines[1]}`);
+    return frame.data.commands;
+  }
+
+  it("requests get_commands once, after the probe, as an ordinary correlated command, and folds the answer in the order received", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    expect(handle.writes).toHaveLength(1);
+    expect(handle.writes[0]).toContain("capabilities");
+
+    await adoptChannel(handle);
+
+    // An ORDINARY RPC command (never a /gentle:desktop prompt), requested
+    // exactly once, correlated by its own id — and the usage read stays the
+    // child's last control write, the ordering the T3 pins observe.
+    const commandWrites = writesOf(handle, "get_commands");
+    expect(commandWrites).toHaveLength(1);
+    const request = JSON.parse(commandWrites[0] ?? "{}") as { type: string; id?: string };
+    expect(request.type).toBe("get_commands");
+    expect(typeof request.id).toBe("string");
+    expect(handle.writes[handle.writes.length - 1]).toContain("/gentle:desktop");
+
+    handle.emitStdout(commandsReply(String(request.id), fixtureCommands()));
+    await flushReplies();
+
+    // The order is the child's; sourceInfo is not carried; the prompt entry
+    // genuinely has no description and none is invented.
+    expect(session.getState().commands).toEqual([
+      { name: "gentle:desktop", description: "Open the desktop control channel", source: "extension" },
+      { name: "review", description: "Run the rdd review flow", source: "prompt" },
+      { name: "skill:commit", source: "skill" },
+    ]);
+    expect(session.getState().commands?.[2]).not.toHaveProperty("description");
+    // Command chrome never becomes transcript traffic.
+    expect(session.getState().messages).toEqual([]);
+
+    // Requested ONCE per child: a later settled turn asks nothing again.
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    expect(writesOf(handle, "get_commands")).toHaveLength(1);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("a reopened chat requests get_commands too, after the probe", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {}, sessionPath: "/a/sess-1.jsonl" });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    expect(JSON.parse(handle.writes[0] ?? "{}")).toMatchObject({ type: "get_messages" });
+    handle.emitStdout(
+      JSON.stringify({ type: "response", id: commandId(handle.writes[0] ?? ""), command: "get_messages", success: true, data: { messages: [] } }),
+    );
+    await flushReplies();
+    expect(handle.writes[1]).toContain("capabilities");
+
+    await adoptChannel(handle);
+    expect(writesOf(handle, "get_commands")).toHaveLength(1);
+
+    handle.emitStdout(commandsReply(commandId(writesOf(handle, "get_commands")[0] ?? ""), fixtureCommands()));
+    await flushReplies();
+    expect(session.getState().commands).toHaveLength(3);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("drops an entry without a non-empty string name, an entry with an unknown source, and a non-string description", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+    const id = commandId(writesOf(handle, "get_commands")[0] ?? "");
+
+    handle.emitStdout(commandsReply(id, [
+      { name: "review", description: "Run the rdd review flow", source: "prompt" },
+      { name: "", source: "prompt" }, // empty name
+      { source: "prompt" }, // no name at all
+      { name: 42, source: "prompt" }, // non-string name
+      { name: "mystery", source: "host" }, // unknown source — dropped, never coerced
+      { name: "no-description-string", description: 7, source: "skill" },
+      { name: "skill:commit", source: "skill" },
+    ]));
+    await flushReplies();
+
+    // Fail closed: the broken entries contribute nothing, in neither state.
+    expect(session.getState().commands).toEqual([
+      { name: "review", description: "Run the rdd review flow", source: "prompt" },
+      { name: "skill:commit", source: "skill" },
+    ]);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("a malformed or failed correlated answer stores nothing — never an invented list", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+    const id = commandId(writesOf(handle, "get_commands")[0] ?? "");
+
+    // The first malformed variant is genuinely correlated (it settles the
+    // pending id); the later ones arrive late — every one of them must leave
+    // the list absent, because there is no previous list to keep.
+    handle.emitStdout(commandsReply(id, "not-an-array")); // non-array commands
+    await flushReplies();
+    expect(session.getState().commands).toBeUndefined();
+
+    handle.emitStdout(JSON.stringify({ type: "response", id, command: "get_commands", success: false, error: "boom" }));
+    handle.emitStdout(JSON.stringify({ type: "response", id, command: "get_commands", success: true })); // data missing entirely
+    await flushReplies();
+    expect(session.getState().commands).toBeUndefined();
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("a mismatched or wrong-command answer changes nothing; the right one still folds", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+    const id = commandId(writesOf(handle, "get_commands")[0] ?? "");
+
+    // A different id, then the pending id under a different command: neither
+    // may fold, and neither may consume the pending id.
+    handle.emitStdout(commandsReply("not-the-pending-id", fixtureCommands()));
+    handle.emitStdout(JSON.stringify({ type: "response", id, command: "get_state", success: true, data: {} }));
+    await flushReplies();
+    expect(session.getState().commands).toBeUndefined();
+
+    handle.emitStdout(commandsReply(id, fixtureCommands()));
+    await flushReplies();
+    expect(session.getState().commands).toHaveLength(3);
 
     handle.resolveExited({ code: 0, signal: null });
   });

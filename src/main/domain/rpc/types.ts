@@ -46,6 +46,16 @@ export type RpcCommand =
    */
   | { readonly type: "get_session_stats"; readonly id?: string }
   | { readonly type: "get_messages"; readonly id?: string }
+  /**
+   * pi's own slash-command discovery (desktop-pending-work T6, S6): an
+   * ordinary RPC command correlated by `id`, exactly like
+   * `get_session_stats`/`get_state` — PiSession asks for it once, after the
+   * channel probe adopts, and folds the answer into `ChatState.commands`.
+   * That answer is the only source of the composer's slash list: no
+   * hardcoded `/gentle:*` replica is kept anywhere (S6/S11), and it is NOT
+   * a desktop-rpc method, so it never rides the widget channel.
+   */
+  | { readonly type: "get_commands"; readonly id?: string }
   | RpcExtensionUIResponse;
 
 /**

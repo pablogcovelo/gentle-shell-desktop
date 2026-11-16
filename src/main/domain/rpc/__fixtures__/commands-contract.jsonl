@@ -1,0 +1,2 @@
+{"type":"get_commands","id":"commands-1"}
+{"type":"response","id":"commands-1","command":"get_commands","success":true,"data":{"commands":[{"name":"gentle:desktop","description":"Open the desktop control channel","source":"extension","sourceInfo":{"path":"/home/dev/.pi/extensions/desktop"}},{"name":"review","description":"Run the rdd review flow","source":"prompt"},{"name":"skill:commit","source":"skill"}]}}

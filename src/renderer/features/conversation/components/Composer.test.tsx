@@ -2,9 +2,10 @@
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { ChatCommand } from "@shared/bridge-types";
 import { Composer } from "./Composer";
 
-function Harness(props: { readonly initial?: string; readonly onPickFile?: () => Promise<string | null> }) {
+function Harness(props: { readonly initial?: string; readonly onPickFile?: () => Promise<string | null>; readonly commands?: readonly ChatCommand[] }) {
   const [value, setValue] = useState(props.initial ?? "");
   return (
     <Composer
@@ -14,8 +15,32 @@ function Harness(props: { readonly initial?: string; readonly onPickFile?: () =>
       onSend={vi.fn()}
       onAbort={vi.fn()}
       onPickFile={props.onPickFile}
+      commands={props.commands}
     />
   );
+}
+
+/** Demo commands in the exact shape `get_commands` answers (S6): the order
+ * is the child's, one entry has no description, and there is no argument
+ * hint anywhere. */
+const DEMO_COMMANDS: readonly ChatCommand[] = [
+  { name: "review", description: "Run the rdd review flow", source: "extension" },
+  { name: "plan", description: "Turn the request into an ODD plan", source: "prompt" },
+  { name: "skill:commit", source: "skill" },
+];
+
+/** A stateful harness that keeps the draft in React state (like
+ * ConversationContainer) and hands the same onSend spy to every render, so
+ * submit assertions survive re-renders caused by completing a command. */
+function renderSlashComposer(options: { readonly commands?: readonly ChatCommand[] } = {}) {
+  const onSend = vi.fn();
+  function Harness() {
+    const [value, setValue] = useState("");
+    return <Composer value={value} working={false} onChange={setValue} onSend={onSend} onAbort={vi.fn()} commands={options.commands} />;
+  }
+  render(<Harness />);
+  const textarea = screen.getByPlaceholderText("Tell Gentle what you need…");
+  return { textarea, onSend };
 }
 
 describe("Composer", () => {
@@ -190,4 +215,148 @@ it("renders the microphone always but disabled, with the reason in its accessibl
   expect(microphone).toBeDisabled();
   expect(microphone).toHaveAccessibleName(/no audio capture/);
 });
+});
+
+// ---------------------------------------------------------------------------
+// The slash-command list (desktop-pending-work T6, S6): the list is ONLY
+// what the child answered for `get_commands`, filtered by the typed token,
+// completing through the same draft contract — never a hardcoded replica.
+// ---------------------------------------------------------------------------
+
+describe("Composer: slash command list (desktop-pending-work T6, S6)", () => {
+  it("renders no list without a commands prop", () => {
+    const { textarea } = renderSlashComposer();
+    fireEvent.change(textarea, { target: { value: "/rev" } });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(textarea).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("renders no list when the draft has no slash token", () => {
+    const { textarea } = renderSlashComposer({ commands: DEMO_COMMANDS });
+    fireEvent.change(textarea, { target: { value: "hello" } });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("renders no popup for an empty command list — no empty box, no placeholder entry", () => {
+    const { textarea } = renderSlashComposer({ commands: [] });
+    fireEvent.change(textarea, { target: { value: "/" } });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("opens on /, lists the child's commands in the order received, and exposes the list through aria", () => {
+    const { textarea } = renderSlashComposer({ commands: DEMO_COMMANDS });
+    fireEvent.change(textarea, { target: { value: "/" } });
+
+    const listbox = screen.getByRole("listbox", { name: "Slash commands" });
+    expect(textarea).toHaveAttribute("aria-expanded", "true");
+    expect(textarea).toHaveAttribute("aria-controls", listbox.id);
+    const options = within(listbox).getAllByRole("option");
+    // The order is the child's: the list is never sorted or rebuilt locally.
+    expect(options.map((option) => option.textContent)).toEqual([
+      "/reviewRun the rdd review flow",
+      "/planTurn the request into an ODD plan",
+      "/skill:commit",
+    ]);
+  });
+
+  it("filters case-insensitively by the typed token", () => {
+    const { textarea } = renderSlashComposer({ commands: DEMO_COMMANDS });
+    fireEvent.change(textarea, { target: { value: "/RE" } });
+
+    const listbox = screen.getByRole("listbox");
+    const options = within(listbox).getAllByRole("option");
+    expect(options).toHaveLength(1);
+    expect(options[0]).toHaveTextContent("/review");
+    // A token matching nothing keeps the list closed (no empty popup).
+    fireEvent.change(textarea, { target: { value: "/zzz" } });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("ArrowDown and ArrowUp move the highlight with wrapping", () => {
+    const { textarea } = renderSlashComposer({ commands: DEMO_COMMANDS });
+    fireEvent.change(textarea, { target: { value: "/" } });
+
+    const listbox = screen.getByRole("listbox");
+    const options = within(listbox).getAllByRole("option");
+    expect(options.map((option) => option.getAttribute("aria-selected"))).toEqual(["false", "false", "false"]);
+
+    fireEvent.keyDown(textarea, { key: "ArrowDown" });
+    expect(options.map((option) => option.getAttribute("aria-selected"))).toEqual(["true", "false", "false"]);
+    fireEvent.keyDown(textarea, { key: "ArrowDown" });
+    expect(options.map((option) => option.getAttribute("aria-selected"))).toEqual(["false", "true", "false"]);
+    fireEvent.keyDown(textarea, { key: "ArrowUp" });
+    expect(options.map((option) => option.getAttribute("aria-selected"))).toEqual(["true", "false", "false"]);
+    // Wrapping: up from the first entry lands on the last.
+    fireEvent.keyDown(textarea, { key: "ArrowUp" });
+    expect(options.map((option) => option.getAttribute("aria-selected"))).toEqual(["false", "false", "true"]);
+    // Wrapping the other way: down from the last lands on the first.
+    fireEvent.keyDown(textarea, { key: "ArrowDown" });
+    expect(options.map((option) => option.getAttribute("aria-selected"))).toEqual(["true", "false", "false"]);
+  });
+
+  it("completes the highlighted command on Enter instead of submitting", () => {
+    const { textarea, onSend } = renderSlashComposer({ commands: DEMO_COMMANDS });
+    fireEvent.change(textarea, { target: { value: "/rev" } });
+    fireEvent.keyDown(textarea, { key: "ArrowDown" });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+
+    expect(textarea).toHaveValue("/review ");
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("completes a command on click, keeping it to the same draft contract", () => {
+    const { textarea, onSend } = renderSlashComposer({ commands: DEMO_COMMANDS });
+    fireEvent.change(textarea, { target: { value: "/pla" } });
+    fireEvent.click(within(screen.getByRole("listbox")).getByRole("option", { name: /plan/ }));
+
+    expect(textarea).toHaveValue("/plan ");
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("closes the list on Escape without clearing the draft, and Enter then submits normally", () => {
+    const { textarea, onSend } = renderSlashComposer({ commands: DEMO_COMMANDS });
+    fireEvent.change(textarea, { target: { value: "/rev" } });
+    fireEvent.keyDown(textarea, { key: "Escape" });
+
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(textarea).toHaveValue("/rev");
+    expect(textarea).toHaveAttribute("aria-expanded", "false");
+
+    // No list open: Enter keeps exactly its current behaviour.
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the list closed for the dismissed token while typing re-opens it", () => {
+    const { textarea } = renderSlashComposer({ commands: DEMO_COMMANDS });
+    fireEvent.change(textarea, { target: { value: "/rev" } });
+    fireEvent.keyDown(textarea, { key: "Escape" });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+
+    // Any other keystroke keeps typing and the list re-filters (a token
+    // that still matches). "/r" matches "review" and is not the dismissed
+    // token.
+    fireEvent.change(textarea, { target: { value: "/r" } });
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+
+    // Back to the dismissed token: it stays closed.
+    fireEvent.change(textarea, { target: { value: "/rev" } });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+
+    // Completing closes the list: the draft is no longer a slash token.
+    fireEvent.change(textarea, { target: { value: "/p" } });
+    fireEvent.keyDown(textarea, { key: "ArrowDown" });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    expect(textarea).toHaveValue("/plan ");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("submits normally with commands available when the draft is not a slash token", () => {
+    const { textarea, onSend } = renderSlashComposer({ commands: DEMO_COMMANDS });
+    fireEvent.change(textarea, { target: { value: "hello world" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
 });

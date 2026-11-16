@@ -1,4 +1,5 @@
-import { useId, useState, useLayoutEffect, useRef, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
+import { useId, useState, useLayoutEffect, useRef, useEffect, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
+import type { ChatCommand } from "@shared/bridge-types";
 import "./Composer.css";
 
 export interface ComposerProps {
@@ -16,6 +17,12 @@ export interface ComposerProps {
    * draft — it never reads or uploads the file. Omitted hides the
    * attachment action entirely (a bridge without a picker). */
   readonly onPickFile?: () => Promise<string | null>;
+  /** The slash commands the child answered for `get_commands`
+   * (desktop-pending-work T6, S6), in the order it sent them. Absent or
+   * empty means the child did not answer (or answered none): the list is
+   * simply not available — no empty popup, no placeholder entry, and never
+   * a hardcoded `/gentle:*` replica (S6/S11). */
+  readonly commands?: readonly ChatCommand[];
 }
 
 /** The fixed palette: literal characters, no emoji data source. */
@@ -87,7 +94,7 @@ function EmojiPanel({ id, onPick, onClose }: EmojiPanelProps) {
  * `disabled`) while working: a disabled textarea would stop receiving the
  * Escape keydown the abort shortcut depends on.
  */
-export function Composer({ value, working, onChange, onSend, onAbort, ready = true, onPickFile }: ComposerProps) {
+export function Composer({ value, working, onChange, onSend, onAbort, ready = true, onPickFile, commands }: ComposerProps) {
   // A pane that does not know its host has nowhere to send: offering an enabled
   // Send there only produces a request main must refuse, so it waits instead.
   const canSend = ready && !working && value.trim().length > 0;
@@ -95,6 +102,36 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
   const [emojiOpen, setEmojiOpen] = useState(false);
   const emojiPanelId = useId();
   const fieldRef = useRef<HTMLTextAreaElement>(null);
+
+  // The slash-command list (desktop-pending-work T6, S6). The token is the
+  // typed text after a leading "/" while no space has been typed yet; the
+  // visible entries are the child's own commands filtered by it,
+  // case-insensitively, in the order received.
+  const slashToken = /^\/\S*$/.test(value) ? value.slice(1) : undefined;
+  const matches =
+    commands && slashToken !== undefined
+      ? commands.filter((command) => command.name.toLowerCase().startsWith(slashToken.toLowerCase()))
+      : [];
+  const commandsListId = useId();
+  // Escape dismisses the list for the CURRENT token only: the next typed
+  // character changes the token, so the list re-opens and re-filters, while
+  // returning to the dismissed token keeps it closed.
+  const [dismissedToken, setDismissedToken] = useState<string | undefined>(undefined);
+  const listOpen = slashToken !== undefined && matches.length > 0 && dismissedToken !== slashToken;
+  // Nothing is highlighted until an arrow key moves there; Enter only
+  // completes a HIGHLIGHTED command (S6), so a freshly opened list does not
+  // silently swallow a submit.
+  const [activeIndex, setActiveIndex] = useState(-1);
+  useEffect(() => {
+    setActiveIndex(-1);
+  }, [slashToken, matches.length]);
+
+  /** Completes the draft to `/name ` — through the same onChange contract
+   * that owns it; the completed token is the whole draft, since a token
+   * only exists while no space has been typed. */
+  const completeCommand = (name: string): void => {
+    onChange(`/${name} `);
+  };
   useLayoutEffect(() => {
     const field = fieldRef.current;
     if (!field) return;
@@ -114,12 +151,37 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
+    // While the slash list is open it owns ArrowDown/ArrowUp (highlight,
+    // wrapping), Enter (complete the HIGHLIGHTED command instead of
+    // submitting) and Escape (dismiss for this token) — desktop-pending-work
+    // T6, S6. Every other keystroke falls through and keeps typing; the list
+    // re-filters from the new draft.
+    if (listOpen && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      event.preventDefault();
+      const delta = event.key === "ArrowDown" ? 1 : -1;
+      setActiveIndex((index) => {
+        const count = matches.length;
+        if (count === 0) return -1;
+        if (index < 0) return delta === 1 ? 0 : count - 1;
+        return (index + delta + count) % count;
+      });
+      return;
+    }
     if (event.key === "Escape") {
+      if (listOpen) {
+        setDismissedToken(slashToken);
+        return;
+      }
       if (working) onAbort();
       return;
     }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
+      const highlighted = listOpen && activeIndex >= 0 ? matches[activeIndex] : undefined;
+      if (highlighted) {
+        completeCommand(highlighted.name);
+        return;
+      }
       if (canSend) onSend();
     }
   };
@@ -162,6 +224,8 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
           readOnly={working}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
+          aria-expanded={listOpen}
+          aria-controls={listOpen ? commandsListId : undefined}
         />
           <div className="gc-composer__tools">
             <button
@@ -187,6 +251,35 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
               </button>
             ) : null}
             {emojiOpen ? <EmojiPanel id={emojiPanelId} onPick={handlePickEmoji} onClose={() => setEmojiOpen(false)} /> : null}
+        {listOpen ? (
+          // Anchored inside the composer box, just above it (the EmojiPanel
+          // popup precedent), in the order the child answered. An entry
+          // without a description renders only its name; no argument hint
+          // exists on the wire and none is invented (S6/S11).
+          <ul
+            className="gc-composer__commands"
+            id={commandsListId}
+            role="listbox"
+            aria-label="Slash commands"
+          >
+            {matches.map((command, index) => (
+              <li
+                key={command.name}
+                role="option"
+                id={`${commandsListId}-option-${index}`}
+                aria-selected={index === activeIndex}
+                className={index === activeIndex ? "gc-composer__command is-active" : "gc-composer__command"}
+                // Keep the textarea focused and the draft intact; the click
+                // itself completes the entry.
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => completeCommand(command.name)}
+              >
+                <span className="gc-composer__command-name">/{command.name}</span>
+                {command.description ? <span className="gc-composer__command-desc">{command.description}</span> : null}
+              </li>
+            ))}
+          </ul>
+        ) : null}
         <div className="gc-composer__foot">
             {/** No audio pipeline exists: disclose the unavailable action. */}
             <button

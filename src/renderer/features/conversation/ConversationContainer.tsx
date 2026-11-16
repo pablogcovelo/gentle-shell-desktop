@@ -511,6 +511,10 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
               // without a file picker (or a cancelled pick, which answers
               // null) changes nothing.
               onPickFile={bridge.chooseFile ? () => bridge.chooseFile!() : undefined}
+              // S6 (desktop-pending-work T6): the composer's slash list is
+              // whatever the child answered for `get_commands` — absent means
+              // the child did not answer, and the feature is simply off.
+              commands={chatState.commands}
             />
           </div>
           {/* The artboard's fixed three-section inspector (T3): the chat's own

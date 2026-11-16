@@ -191,6 +191,16 @@ function emptyState(): ChatState {
         { category: "rdd", glyph: "🌹", patterns: ["gentle_review*"], heading: "rdd" },
       ],
     },
+    // desktop-pending-work T6 (S6) demo: a couple of commands in the shape
+    // `get_commands` answers, so the composer's slash list is exercisable
+    // under `pnpm dev:web` without a child. The skill entry has no
+    // description, exactly like the wire's entries without one — and there
+    // is no argument hint on the wire, so none is invented here.
+    commands: [
+      { name: "review", description: "Run the rdd review flow", source: "extension" },
+      { name: "plan", description: "Turn the request into an ODD plan", source: "prompt" },
+      { name: "skill:commit", source: "skill" },
+    ],
     // desktop-rpc T8 demo workspace facts: a session-effective profile label,
     // an MCP inventory, and — T8b — a plausible worktree so the footer's
     // worktree group is exercisable in the preview without a child. The group

@@ -1,6 +1,8 @@
 import { MESSAGE_ROLE, type ChatMessage } from "@shared/bridge-types";
 import {
   STOP_HELPER_OUTCOME,
+  type ChatCommand,
+  type ChatCommandSource,
   type ChatState,
   type DialogAnswer,
   type HelperAgentState,
@@ -168,6 +170,13 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
   private pendingStatsRequestId: string | undefined;
   private pendingStateRequestId: string | undefined;
   private identityRequestCounter = 0;
+  /** Counts the `get_commands` requests this session has sent
+   * (desktop-pending-work T6, S6). The composer's slash list is whatever
+   * the child answered for this pi-level command — correlated by `id` like
+   * the identity reads, with its own counter and its own pending id so a
+   * late or mismatched answer can never fold. */
+  private commandsRequestCounter = 0;
+  private pendingCommandsRequestId: string | undefined;
 
   constructor(options: PiSessionOptions) {
     super();
@@ -339,8 +348,11 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
         this.state = this.attachStopChannel(this.state);
         this.emit("state", this.state);
         // Identity first, usage last: the usage read stays the child's last
-        // control write, the ordering the T3 pins observe.
+        // control write, the ordering the T3 pins observe. The command list
+        // is read once, right behind the identity (it is an ordinary RPC
+        // command, so it must also stay ahead of that last widget write).
         this.requestIdentity();
+        this.requestCommands();
         this.requestVocabulary();
         this.requestWorkspace();
         this.requestWorktree();
@@ -370,6 +382,44 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
     const stateId = `state-${this.identityRequestCounter++}`;
     this.pendingStateRequestId = stateId;
     this.send({ type: "get_state", id: stateId });
+  }
+
+  /**
+   * Asks the child for its slash commands ONCE (`get_commands`, desktop-
+   * pending-work T6, S6) right after the capabilities probe adopts the
+   * channel — the same place the identity/vocabulary/workspace facts are
+   * read. This is a pi-level RPC command, NOT a desktop-rpc method: it
+   * goes through the same raw command writer and the same id/correlation
+   * pattern as `get_session_stats`/`get_state`, with its own counter and
+   * its own pending id. Gated on the adopted channel like every other
+   * control write; a failed or malformed answer leaves the list absent
+   * (the composer then offers nothing — never an invented entry).
+   */
+  private requestCommands(): void {
+    if (this.probeState !== "ok") return;
+    const id = `commands-${this.commandsRequestCounter++}`;
+    this.pendingCommandsRequestId = id;
+    this.send({ type: "get_commands", id });
+  }
+
+  /**
+   * Folds a `get_commands` reply, once, and only when its `id` matches the
+   * request it answers (a late or mismatched answer changes nothing). The
+   * parse is fail-closed (S6): a malformed frame, a non-array `commands`,
+   * or an entry without a non-empty string `name` contributes nothing, and
+   * an unknown `source` is dropped rather than coerced — the stored list is
+   * only ever what the child answered, never repaired or extended.
+   */
+  private applyCommandsResponse(state: ChatState, response: RpcResponse): ChatState {
+    // A reply that lands after the child exited belongs to a session nobody
+    // is using: nothing may fold (the same live-child guard as identity).
+    if (!this.process) return state;
+    if (response.command !== "get_commands" || response.id !== this.pendingCommandsRequestId) return state;
+    this.pendingCommandsRequestId = undefined;
+    if (!response.success) return state;
+    const commands = parseCommandList(response.data);
+    if (!commands) return state;
+    return { ...state, commands };
   }
 
   /**
@@ -826,6 +876,7 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
         const historyWasPending = this.pendingHistoryRequestId !== undefined;
         this.state = this.applyHistoryResponse(this.state, decoded);
         this.state = this.applyIdentityResponse(this.state, decoded);
+        this.state = this.applyCommandsResponse(this.state, decoded);
         // Correction R3-001: the reopened chat's capabilities probe is
         // issued HERE, after the history response has landed, so the
         // child's writes are [get_messages, probe] and its last write is
@@ -918,6 +969,39 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
     this.emit("error", error);
     this.emit("state", this.state);
   }
+}
+
+/** The source values the wire documents for a slash command (desktop-
+ * pending-work T6): anything else is dropped, never coerced. */
+const COMMAND_SOURCES: ReadonlySet<string> = new Set<string>(["extension", "prompt", "skill"] satisfies readonly ChatCommandSource[]);
+
+/**
+ * Folds a `get_commands` answer's command list, fail-closed (desktop-
+ * pending-work T6, S6): a non-record payload or a non-array `commands`
+ * yields `undefined` (nothing folds), and an entry without a non-empty
+ * string `name`, with an unknown `source`, or with a non-string
+ * `description` contributes nothing. The order is the child's and is kept;
+ * `sourceInfo` and any argument hint on the wire are NOT carried (there is
+ * no argument hint on the wire, and none may be invented).
+ */
+function parseCommandList(data: unknown): readonly ChatCommand[] | undefined {
+  if (typeof data !== "object" || data === null) return undefined;
+  const raw = (data as { commands?: unknown }).commands;
+  if (!Array.isArray(raw)) return undefined;
+  const commands: ChatCommand[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const { name, description, source } = entry as Record<string, unknown>;
+    if (typeof name !== "string" || name.length === 0) continue;
+    if (typeof description !== "undefined" && typeof description !== "string") continue;
+    if (typeof source !== "string" || !COMMAND_SOURCES.has(source)) continue;
+    commands.push(
+      description === undefined
+        ? { name, source: source as ChatCommandSource }
+        : { name, description, source: source as ChatCommandSource },
+    );
+  }
+  return commands;
 }
 
 function appendUserMessage(state: ChatState, text: string): ChatState {

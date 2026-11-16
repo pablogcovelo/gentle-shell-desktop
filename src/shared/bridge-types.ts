@@ -430,6 +430,29 @@ export interface ChatState {
    * one half never clobbers the other. Last-known (S12): refreshed at
    * the named lifecycle boundaries, never a live push. */
   readonly session?: SessionIdentityView;
+  /** The slash commands the child answered for pi's own `get_commands`
+   * command (desktop-pending-work T6, S6), in the order the child sent them.
+   * This is ONLY ever what the child answered — no hardcoded `/gentle:*`
+   * replica, no invented entry, no argument hint (S11). Optional: absent
+   * means the child did not answer (or the answer failed or was malformed
+   * and folded nothing), so the composer simply does not offer the list. */
+  readonly commands?: readonly ChatCommand[];
+}
+
+/** Where a slash command the child answers for `get_commands` came from
+ * (pi's `RpcSlashCommand.source`; unknown values are dropped, never
+ * coerced). */
+export type ChatCommandSource = "extension" | "prompt" | "skill";
+
+/** One slash command the child answered for (the wire's `RpcSlashCommand`:
+ * `name` is required, `description` can genuinely be absent for extension
+ * commands, and there is NO argument hint on the wire — none is ever
+ * invented here). Lives here because main decodes it and the renderer's
+ * composer renders it (the Scope Rule). */
+export interface ChatCommand {
+  readonly name: string;
+  readonly description?: string;
+  readonly source: ChatCommandSource;
 }
 
 /**

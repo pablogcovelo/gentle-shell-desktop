@@ -45,6 +45,7 @@ S11 (rule that governs the queue). "The app presents what gentle-shell already c
 | T7 | P7 | S7 | inline | see `git log` |
 | T8 | P8 | S8, S10 | inline | see `git log` |
 | T9 | review | R3-001, R3-002, R3-003 (L6) | inline | see `git log` |
+| T10 | review | R1-1, R1-2 notes + R2-001/R3-001 fixed (L6) | inline | same commit as T9 |
 
 ## Log
 
@@ -86,6 +87,20 @@ L7 (debt from the approved review, not worked on purpose)
   leaves behind.
 - R1-1 (the fallback spawn directory is session-recorded, not revalidated) and R1-2 (the
   registry's drop-before-await is base behaviour) are notes: neither is a defect introduced here.
+
+L8 (T6 delivered, 2026-11-16)
+
+Command discovery is in: `get_commands` is modelled in the `RpcCommand` union, requested once by
+`PiSession` right after the channel probe adopts (ahead of the usage read, so that write stays the
+child's last control write), correlated by id and folded fail-closed into the new optional
+`ChatState.commands`. The composer's listbox is only ever that answer — prefix-filtered, keyboard
+navigable, completing the draft to `/name `; submission still goes through the existing `prompt`
+path and interactive results still ride the existing dialogs. Nothing hardcodes `/gentle:*`.
+
+Decisions worth recording: Enter completes only a HIGHLIGHTED entry (a freshly opened list does not
+swallow a submit), Escape dismisses the list for the current token only, and the filter is a
+case-insensitive prefix match. The renderer's RED was not captured separately from the component
+(the tests were authored in the same pass) — reported as such rather than claimed.
 
 L2 (delivery boundaries, recorded 2026-11-15)
 

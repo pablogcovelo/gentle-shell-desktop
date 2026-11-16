@@ -343,4 +343,19 @@ it("keeps the rest of the workspace facts when a chat's worktree could not be me
   expect(opened.state.workspace?.profile).toBeDefined();
   expect(opened.state.workspace?.mcp).toBeDefined();
 });
+
+// desktop-pending-work T6 (S6): the preview's composer popup is exercisable
+// without a child — a couple of demo commands in the wire's shape, one of
+// them without a description, exactly like `get_commands` answers.
+it("seeds the demo state with demo commands so the composer's slash list is exercisable without a child", async () => {
+  const { state } = await mockBridge.newChat();
+
+  expect(state.commands).toHaveLength(3);
+  for (const command of state.commands ?? []) {
+    expect(command.name.length).toBeGreaterThan(0);
+    expect(["extension", "prompt", "skill"]).toContain(command.source);
+  }
+  // The demo mirrors the wire honestly: one entry without a description.
+  expect(state.commands?.filter((command) => command.description === undefined)).toHaveLength(1);
+});
 });
