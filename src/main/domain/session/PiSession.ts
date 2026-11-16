@@ -24,7 +24,7 @@ import {
   unavailableWorktreeChanges,
 } from "../rpc/workspaceInfo";
 import { mergeUsageProviders, parseRateLimitEvent, parseSubscriptionUsage } from "../rpc/usage";
-import { extractHistoryMessages, historyToMessages } from "../rpc/history";
+import { extractHistoryMessages, historyToMessages, historyToToolCalls } from "../rpc/history";
 import { extractTodoPanel } from "../rpc/todoPanel";
 import type { RpcCommand, RpcEvent, RpcResponse } from "../rpc/types";
 import type { LauncherLocator, ProcessSpawner, SpawnedProcess } from "../../ports";
@@ -936,11 +936,24 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
     // only fills the panel when nothing live has arrived yet — mirroring the
     // live-messages rule below, which history must never clobber either.
     const todo = state.todo ?? extractTodoPanel(history);
+    // Tool-call detail recovery (desktop-pending-work T7, S7): a reopened
+    // chat's rows are rebuilt from the same history, so args/result/error
+    // survive a reload. Recovery happens ONLY while the state has no live
+    // rows yet (`toolCalls` absent or empty): a live row that arrived while
+    // the history answer was in flight always wins — no recovered row is
+    // ever written over one, and a recovered id a live row already owns is
+    // never resurrected (the reducer, not this code, folds later live
+    // events: a duplicate start is skipped and an end replaces by id).
+    // An empty recovery leaves `toolCalls` absent, exactly as it was.
+    const recoveredToolCalls = state.toolCalls && state.toolCalls.length > 0 ? undefined : historyToToolCalls(history);
+    const toolCalls = recoveredToolCalls && recoveredToolCalls.length > 0 ? recoveredToolCalls : undefined;
     // Never clobber messages a live prompt already appended while the
     // history request was still in flight.
-    if (state.messages.length > 0) return { ...state, todo };
+    if (state.messages.length > 0) return toolCalls ? { ...state, todo, toolCalls } : { ...state, todo };
 
-    return { ...state, messages: historyToMessages(history), todo };
+    return toolCalls
+      ? { ...state, messages: historyToMessages(history), todo, toolCalls }
+      : { ...state, messages: historyToMessages(history), todo };
   }
 
   /**

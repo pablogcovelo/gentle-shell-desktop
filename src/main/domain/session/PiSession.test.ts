@@ -786,6 +786,98 @@ describe("PiSession: Electron host follow-ups", () => {
       updatedTurn: 10,
     });
   });
+
+  // The tool shapes in these two tests are pi 0.85.1's published message
+  // types (odd/tasks/desktop-pending-work.md L11, read from the installed
+  // package). This repo has no captured get_messages payload with tool
+  // parts, so the data is inline from those published types — not a fixture
+  // claiming to be a capture.
+  it("a reopened chat recovers its tool-call rows — args, result and error — from the get_messages history", () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {}, sessionPath: "/a/sess-1.jsonl" });
+
+    session.start();
+    const sent = JSON.parse(handles[0]?.writes[0] ?? "{}");
+
+    handles[0]?.emitStdout(
+      JSON.stringify({
+        type: "response",
+        id: sent.id,
+        command: "get_messages",
+        success: true,
+        data: {
+          messages: [
+            { role: "user", content: "run it", timestamp: 0 },
+            {
+              role: "assistant",
+              content: [{ type: "toolCall", id: "call_1", name: "bash", arguments: { command: "ls" } }],
+              timestamp: 0,
+            },
+            {
+              role: "toolResult",
+              toolCallId: "call_1",
+              toolName: "bash",
+              content: [{ type: "text", text: "file.txt" }],
+              isError: false,
+              timestamp: 0,
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(session.getState().toolCalls).toEqual([
+      { id: "call_1", toolName: "bash", args: { command: "ls" }, result: "file.txt", isError: false, status: "done" },
+    ]);
+    // The text thread is unaffected by the row recovery.
+    expect(session.getState().messages).toEqual([
+      { id: "msg-0", role: "user", text: "run it" },
+    ]);
+  });
+
+  it("never clobbers a tool row a live event already produced for the same id while the history answer was in flight", () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {}, sessionPath: "/a/sess-1.jsonl" });
+
+    session.start();
+    const sent = JSON.parse(handles[0]?.writes[0] ?? "{}");
+
+    // A live tool_execution_start races ahead of the history response: it
+    // owns the row for its id, and no recovered row may overwrite it.
+    handles[0]?.emitStdout(
+      JSON.stringify({ type: "tool_execution_start", toolCallId: "call_1", toolName: "bash", args: { command: "live" } }),
+    );
+    expect(session.getState().toolCalls).toEqual([
+      { id: "call_1", toolName: "bash", args: { command: "live" }, status: "running" },
+    ]);
+
+    handles[0]?.emitStdout(
+      JSON.stringify({
+        type: "response",
+        id: sent.id,
+        command: "get_messages",
+        success: true,
+        data: {
+          messages: [
+            {
+              role: "assistant",
+              content: [
+                { type: "toolCall", id: "call_1", name: "bash", arguments: { command: "stale" } },
+                { type: "toolCall", id: "call_2", name: "read", arguments: { path: "b.md" } },
+              ],
+              timestamp: 0,
+            },
+          ],
+        },
+      }),
+    );
+
+    // The live row is untouched and no recovered row (not even for an id
+    // the live row does not own) is resurrected while live rows exist.
+    expect(session.getState().toolCalls).toEqual([
+      { id: "call_1", toolName: "bash", args: { command: "live" }, status: "running" },
+    ]);
+  });
 });
 
 describe("PiSession: desktop-rpc control plane (U1, desktop-rpc T2)", () => {

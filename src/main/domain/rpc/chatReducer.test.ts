@@ -4,13 +4,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ODD_PHASE } from "@shared/bridge-types";
 import { decodeLine } from "./codec";
-import {
-  INITIAL_CHAT_STATE,
-  MAX_NOTIFICATIONS,
-  MAX_TOOL_PAYLOAD_CHARS,
-  reduceChat,
-  type ChatState,
-} from "./chatReducer";
+import { INITIAL_CHAT_STATE, MAX_NOTIFICATIONS, reduceChat, type ChatState } from "./chatReducer";
+// The bounding constants moved to toolCalls.ts (T7: shared with the history
+// recovery path); the reducer's own behavior is unchanged.
+import { MAX_TOOL_PAYLOAD_CHARS } from "./toolCalls";
 import type { RpcEvent } from "./types";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

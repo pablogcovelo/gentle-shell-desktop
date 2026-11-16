@@ -203,3 +203,23 @@ L11 (P7 probe evidence, read from the installed pi 0.85.1 types — nothing gues
 - Therefore the recovery path is: build rows from history with the SAME bounding constants the
   live path uses, keyed by the call id the wire already gives both sides, so a live row that
   arrives after a reopen replaces its history row instead of duplicating it.
+
+L12 (T7 delivered, 2026-11-16)
+
+A reopened chat now shows the tool rows it already produced. `historyToToolCalls` builds them from the
+same history the messages come from: an assistant `toolCall` block opens a row, the `toolResult`
+message with the same `toolCallId` closes it (text content, or `details` when there is no text,
+`isError` boolean, `status: "done"`), and a result whose call is not in the window still becomes a
+done row with no args. Order is the wire's; the same 20-row cap and 4096-char bounding apply, so a
+recovered row is byte-identical to the live one it stands in for.
+
+The bounding trio moved to a leaf module (`rpc/toolCalls.ts`) imported by both the reducer and the
+history path — a move, not a copy, so the two can never drift and a reducer↔history cycle is
+structurally impossible. `PiSession.applyHistoryResponse` recovers only while the state has no live
+rows, so a row that arrived during the in-flight answer always wins and no recovered id is ever
+resurrected. The text projection is untouched: a text-less assistant message still leaves no empty
+bubble, which is why the existing pins needed no new reason.
+
+No fixture claims a capture it is not: there is no captured `get_messages` payload with tool parts in
+this repository, so the tests use inline data whose comment names pi 0.85.1's published types (L11)
+as the source.
