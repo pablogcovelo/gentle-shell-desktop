@@ -40,7 +40,7 @@ S11 (rule that governs the queue). "The app presents what gentle-shell already c
 | T2 | P2 | S2 | inline | see `git log` |
 | T3 | P3 | S3 | inline | see `git log` |
 | T4 | P4 | S4 | inline | see `git log` |
-| T5 | P5 | S5 | blocked: host `gentle-pi` S7/T2 (`oddPhase` field) | — |
+| T5 | P5 | S5, L9 | inline | see `git log` |
 | T6 | P6 | S6 | inline | see `git log` |
 | T7 | P7 | S7 | inline | see `git log` |
 | T8 | P8 | S8, S10 | inline | see `git log` |
@@ -152,3 +152,23 @@ confirmation only" is satisfied; nothing host-side blocks T6)
   and its `EmojiPanel` is the only in-composer popup precedent, with Enter already claimed by
   submit — a list must claim Arrow/Enter first.
 - Risk stands at item 3: the `RpcCommand` union change touches a shared contract.
+
+L9 (P5 unblocked — host contract verified, 2026-11-16)
+
+The owner reported that `gentle-pi`'s T2 landed at `34cf98d12` on `develop`. Verified in that
+repository before touching the app, per S11:
+
+- `session_state_changed` now carries `data.oddPhase`, an optional phase TOKEN (never the display
+  label): `"authorizing" | "exploring" | "researching" | "deciding" | "planning" | "implementing" |
+  "checking" | "closing"` (`lib/odd-phase.ts`'s `ODD_PHASES`).
+- The value is `oddPhaseRegistry.get(sessionId)` — the same process-wide registry the shell's
+  working label reads. Unknown or CLEARED means the field is OMITTED (`"oddPhase" in data === false`),
+  so a client drops its label by omission and never keeps a stale phase.
+- It rides the existing `session_state_changed` event at pi's own settle points: no new event, no
+  read method, no polling contract. The host's own wording is `"<phase>…"`, which the client must
+  NOT copy: the token travels so the app renders its own label (S5).
+- The app does not handle this event at all today, so T5 adds the first arm for it and must follow
+  the pattern the existing desktop-rpc events already use (status/notification delivery), not
+  invent a second channel or a second store.
+- S5 stands unchanged: the phase is a READ of what the child published — never inferred from
+  transcript text and never derived from a tool name.
