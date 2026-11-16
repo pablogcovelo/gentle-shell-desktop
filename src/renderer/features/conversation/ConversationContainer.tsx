@@ -466,6 +466,10 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
     <section className="gc-conversation">
       <ConversationHeader
         title={title}
+        // T5 (S5): the phase indicator is a READ of what the child published
+        // through `session_state_changed` — passed through untouched, never
+        // inferred from the transcript or a tool name. Absent renders nothing.
+        oddPhase={chatState.oddPhase}
         working={chatState.working}
         pane={pane}
         runningHelpersCount={chatState.helpers.summary.running}

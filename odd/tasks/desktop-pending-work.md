@@ -172,3 +172,15 @@ repository before touching the app, per S11:
   invent a second channel or a second store.
 - S5 stands unchanged: the phase is a READ of what the child published — never inferred from
   transcript text and never derived from a tool name.
+
+L10 (T5 delivered, 2026-11-16)
+
+The header now shows the ODD phase the child publishes. What the plumbing actually looked like,
+recorded because it was not what the queue assumed: `session_state_changed` arrives as an
+unsolicited `kind: "event"` frame on the existing widget channel, and until now PiSession's widget
+arm folded only `agents_update`/`rate_limit` — every other event frame went to
+`DesktopRpcClient.handleWidget`, which ignores events (they carry no requestId). One arm was added
+there, folding the frame through the ordinary reducer (push only when the fold changed something);
+no channel, no read method, no second store. The reducer validates the closed eight-token set,
+sets on a known token and CLEARS by omission, which is exactly how the owner's clear arrives. The
+client renders its own wording ("Implementing"), never the host's `"implementing…"`.

@@ -1,3 +1,4 @@
+import type { OddPhase } from "@shared/bridge-types";
 import { Button } from "@renderer/shared/ui/atoms/Button";
 import "./ConversationHeader.css";
 
@@ -7,6 +8,12 @@ export type ConversationPane = (typeof CONVERSATION_PANE)[keyof typeof CONVERSAT
 
 export interface ConversationHeaderProps {
   readonly title: string;
+  /** T5 (desktop-pending-work S5): the ODD phase token the child last
+   * published through desktop-rpc's `session_state_changed`, as read from
+   * ChatState.oddPhase. Absent means unknown or cleared: the indicator
+   * renders nothing at all. Never inferred here, never derived from a
+   * tool name. */
+  readonly oddPhase?: OddPhase;
   readonly working?: boolean;
   readonly pane?: ConversationPane;
   readonly runningHelpersCount?: number;
@@ -20,9 +27,25 @@ export interface ConversationHeaderProps {
   readonly onCloseWorkspace?: () => void;
 }
 
+/** The app's own wording per ODD phase token (desktop-pending-work T5,
+ * S5): the client owns its label — the host's own wording ("<phase>…") is
+ * deliberately never copied. One consistent spelling: capitalized, no
+ * trailing ellipsis, nothing more than the phase name. */
+export const ODD_PHASE_LABELS: Readonly<Record<OddPhase, string>> = {
+  authorizing: "Authorizing",
+  exploring: "Exploring",
+  researching: "Researching",
+  deciding: "Deciding",
+  planning: "Planning",
+  implementing: "Implementing",
+  checking: "Checking",
+  closing: "Closing",
+};
+
 /** The board's directory-only context bar, plus the workspace's own close
- * control (P2) once the pane knows which host it is addressing. */
-export function ConversationHeader({ title, canCloseWorkspace = false, onCloseWorkspace }: ConversationHeaderProps) {
+ * control (P2) once the pane knows which host it is addressing, and the
+ * ODD phase the child last published (T5, S5). */
+export function ConversationHeader({ title, oddPhase, canCloseWorkspace = false, onCloseWorkspace }: ConversationHeaderProps) {
   return (
     <header className="gc-conversation-header">
       <div className="gc-conversation-header__context">
@@ -32,6 +55,11 @@ export function ConversationHeader({ title, canCloseWorkspace = false, onCloseWo
           </svg>
           <span className="gc-conversation-header__title-text">{title}</span>
         </h2>
+        {/* The ODD phase the child last published through
+        `session_state_changed` (S5): chrome, not a tab and not a control —
+        plain text, no click handler, no tooltip claiming a capability.
+        Absent means unknown or cleared: nothing is rendered at all. */}
+        {oddPhase ? <span className="gc-conversation-header__phase">{ODD_PHASE_LABELS[oddPhase]}</span> : null}
         {canCloseWorkspace && onCloseWorkspace ? (
           <Button
             variant="ghost"

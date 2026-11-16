@@ -356,6 +356,26 @@ export interface WorkspaceInfo {
   readonly profile?: ActiveProfile;
 }
 
+/** The closed set of ODD phase tokens gentle-pi publishes in the
+ * `data.oddPhase` field of its desktop-rpc `session_state_changed` event
+ * (gentle-pi `lib/odd-phase.ts`'s `ODD_PHASES`; desktop-pending-work T5,
+ * S5, host contract L9). A TOKEN, never a display label: the host's own
+ * wording ("<phase>…") is deliberately NOT copied — the renderer renders
+ * its own label per token. An unrecognized value is dropped, never
+ * coerced into one of these. */
+export const ODD_PHASE = {
+  AUTHORIZING: "authorizing",
+  EXPLORING: "exploring",
+  RESEARCHING: "researching",
+  DECIDING: "deciding",
+  PLANNING: "planning",
+  IMPLEMENTING: "implementing",
+  CHECKING: "checking",
+  CLOSING: "closing",
+} as const;
+
+export type OddPhase = (typeof ODD_PHASE)[keyof typeof ODD_PHASE];
+
 export interface ChatState {
   readonly messages: readonly ChatMessage[];
   readonly working: boolean;
@@ -437,6 +457,14 @@ export interface ChatState {
    * means the child did not answer (or the answer failed or was malformed
    * and folded nothing), so the composer simply does not offer the list. */
   readonly commands?: readonly ChatCommand[];
+  /** The ODD phase the child last published through desktop-rpc's
+   * `session_state_changed` event (desktop-pending-work T5, S5), as a
+   * token from ODD_PHASE. ONLY ever what the child published for
+   * `session_state_changed`; absent means unknown or cleared, which is how
+   * the owner's clear arrives — so the indicator drops by omission and
+   * never keeps a stale phase or renders a placeholder. Never inferred
+   * from transcript text, never derived from a tool name (S5). */
+  readonly oddPhase?: OddPhase;
 }
 
 /** Where a slash command the child answers for `get_commands` came from

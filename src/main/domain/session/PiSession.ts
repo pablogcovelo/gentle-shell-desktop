@@ -80,6 +80,10 @@ class TypedEmitter<Events> {
 
 const STOP_GRACE_PERIOD_MS = 3000;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
  * Set on every spawned pi process (M2 prerequisite, see
  * odd/tasks/desktop-m2-helpers.md): only with this flag does gentle-pi
@@ -839,6 +843,23 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
           const event = parseRateLimitEvent(frame.data);
           if (event) {
             this.state = { ...this.state, usage: mergeUsageProviders(this.state.usage, event.providers) };
+            this.emit("state", this.state);
+          }
+        }
+        // The `session_state_changed` event is the ODD phase indicator's
+        // ONLY data path (desktop-pending-work T5, S5): a READ of what the
+        // child published on this same widget channel — never inferred from
+        // transcript text, never derived from a tool name. It carries no
+        // requestId (events never settle requests) and folds through the
+        // ordinary reducer arm, which validates the closed token set and
+        // implements the owner's clear (the field omitted from `data` →
+        // absent). Nothing changed means nothing is pushed.
+        if (frame?.kind === "event" && frame.event === "session_state_changed" && this.rpcClient) {
+          const data = isRecord(frame.data) ? frame.data : {};
+          const event: RpcEvent = "oddPhase" in data ? { type: "session_state_changed", oddPhase: data.oddPhase } : { type: "session_state_changed" };
+          const next = reduceChat(this.state, event);
+          if (next !== this.state) {
+            this.state = next;
             this.emit("state", this.state);
           }
         }

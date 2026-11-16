@@ -2426,3 +2426,50 @@ describe("command discovery (desktop-pending-work T6, S6)", () => {
     handle.resolveExited({ code: 0, signal: null });
   });
 });
+
+// -----------------------------------------------------------------------
+// The ODD phase (desktop-pending-work T5, S5): `session_state_changed`
+// rides the desktop-rpc widget channel as an unsolicited event (no
+// requestId — events never settle requests) and folds into
+// ChatState.oddPhase — a READ of what the child published, never inferred
+// from transcript text, never derived from a tool name. The fixture
+// carries the three wire shapes in order: a published phase, an
+// unrecognized token, and the owner's clear (the field OMITTED).
+// -----------------------------------------------------------------------
+describe("PiSession: session_state_changed (ODD phase, desktop-pending-work T5)", () => {
+  it("the captured wire frames fold the published phase, drop an unrecognized token, and clear by omission", () => {
+    const lines = readFileSync(path.join(__dirname, "..", "rpc", "__fixtures__", "session-state-changed.jsonl"), "utf8")
+      .split("\n")
+      .filter((line) => line.trim().length > 0);
+    expect(lines).toHaveLength(3);
+    const [setPhase, unknownToken, cleared] = lines;
+    if (!setPhase || !unknownToken || !cleared) throw new Error("fixture session-state-changed.jsonl is incomplete");
+
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    const pushes: ChatState[] = [];
+    session.on("state", (state) => pushes.push(state));
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    // A frame carrying a token from the closed set sets the phase.
+    handle.emitStdout(setPhase);
+    expect(session.getState().oddPhase).toBe("exploring");
+    expect(pushes).toHaveLength(1);
+
+    // An unrecognized token contributes nothing: no fold, no push, and the
+    // last published phase is kept — never coerced to something else.
+    handle.emitStdout(unknownToken);
+    expect(session.getState().oddPhase).toBe("exploring");
+    expect(pushes).toHaveLength(1);
+
+    // Cleared means the field is OMITTED from data: the indicator drops by
+    // omission — never a placeholder, never a stale phase.
+    handle.emitStdout(cleared);
+    expect("oddPhase" in session.getState()).toBe(false);
+    expect(pushes).toHaveLength(2);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+});

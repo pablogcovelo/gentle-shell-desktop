@@ -25,4 +25,33 @@ describe("ConversationHeader", () => {
 
     expect(screen.queryByRole("button", { name: "Close this workspace" })).not.toBeInTheDocument();
   });
+
+  // T5 (desktop-pending-work S5): the phase indicator renders the app's own
+  // label for the token the child published through `session_state_changed`
+  // — chrome next to the workspace title, not a control: no click affordance
+  // and no role of its own.
+  it("renders the app's own label for the phase the child published, as chrome — not a control", () => {
+    render(<ConversationHeader title="project" oddPhase="implementing" />);
+
+    expect(screen.getByText("Implementing")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Implementing" })).not.toBeInTheDocument();
+  });
+
+  it("renders no phase indicator when no phase was published", () => {
+    render(<ConversationHeader title="project" />);
+
+    expect(screen.queryByText("Exploring")).not.toBeInTheDocument();
+  });
+
+  it("drops the indicator when the published phase is cleared by omission, keeping the close control", () => {
+    const view = render(
+      <ConversationHeader title="project" oddPhase="exploring" canCloseWorkspace onCloseWorkspace={() => {}} />,
+    );
+    expect(screen.getByText("Exploring")).toBeInTheDocument();
+
+    view.rerender(<ConversationHeader title="project" canCloseWorkspace onCloseWorkspace={() => {}} />);
+
+    expect(screen.queryByText("Exploring")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close this workspace" })).toBeInTheDocument();
+  });
 });

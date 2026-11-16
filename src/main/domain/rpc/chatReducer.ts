@@ -2,12 +2,14 @@ import {
   HELPER_STATUS,
   MESSAGE_ROLE,
   NOTIFICATION_SEVERITY,
+  ODD_PHASE,
   type ChatMessage,
   type ChatNotification,
   type ChatState,
   type Dialog,
   type HelperTask,
   type HelpersActivity,
+  type OddPhase,
   type ToolCallView,
   type NotificationSeverity,
 } from "@shared/bridge-types";
@@ -30,6 +32,15 @@ type GenericFireAndForgetUIRequest = {
 };
 
 const NOTIFICATION_SEVERITIES: ReadonlySet<string> = new Set<string>(Object.values(NOTIFICATION_SEVERITY));
+
+/** The closed token set the `session_state_changed` reducer arm validates
+ * `oddPhase` against (desktop-pending-work T5, S5): anything outside it is
+ * dropped, never coerced into one of the eight. */
+const ODD_PHASE_TOKENS: ReadonlySet<string> = new Set<string>(Object.values(ODD_PHASE));
+
+function isOddPhaseToken(value: unknown): value is OddPhase {
+  return typeof value === "string" && ODD_PHASE_TOKENS.has(value);
+}
 
 /**
  * How many notifications ChatState retains (desktop-rpc T2b). Chosen as a
@@ -166,6 +177,8 @@ export function reduceChat(state: ChatState, event: RpcEvent, now?: string): Cha
     }
     case "extension_ui_request":
       return applyExtensionUIRequest(state, event, now);
+    case "session_state_changed":
+      return applySessionStateChanged(state, event);
     case "extension_error":
       return { ...state, lastError: event.error };
     // turn_start/turn_end and command-response envelopes carry nothing the
@@ -307,6 +320,34 @@ function applyExtensionUIRequest(state: ChatState, event: RpcExtensionUIRequest,
       // Other fire-and-forget methods: setTitle, set_editor_text.
       return state;
   }
+}
+
+/**
+ * `session_state_changed` (desktop-pending-work T5, S5): the ODD phase
+ * indicator's ONLY data path — a READ of what the child published on the
+ * desktop-rpc widget channel, fed into this reducer by PiSession's
+ * widget-frame arm (never decoded from stdout by codec.ts). Never inferred
+ * from transcript text, never derived from a tool name.
+ *
+ * - A frame whose `oddPhase` is a token from the closed ODD_PHASE set sets
+ *   the phase.
+ * - A frame whose `oddPhase` is OMITTED clears it: unknown or cleared
+ *   means the field is absent on the wire (the owner's clear), so the
+ *   indicator drops by omission — never a stale phase, never a
+ *   placeholder.
+ * - Anything else (an unrecognized token, a non-string value) contributes
+ *   nothing: dropped, never coerced.
+ */
+function applySessionStateChanged(state: ChatState, event: Extract<RpcEvent, { type: "session_state_changed" }>): ChatState {
+  if (event.oddPhase === undefined) {
+    if (state.oddPhase === undefined) return state;
+    const { oddPhase: _cleared, ...withoutOddPhase } = state;
+    return withoutOddPhase;
+  }
+  const raw = event.oddPhase;
+  if (!isOddPhaseToken(raw)) return state;
+  if (state.oddPhase === raw) return state;
+  return { ...state, oddPhase: raw };
 }
 
 /**

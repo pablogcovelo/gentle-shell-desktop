@@ -206,6 +206,21 @@ export type RpcEvent =
     }
   | RpcExtensionUIRequest
   | { readonly type: "extension_error"; readonly extensionPath: string; readonly event: string; readonly error: string }
+  | {
+      /** gentle-pi's desktop-rpc `session_state_changed` event
+       * (desktop-pending-work T5, S5, host contract L9), fed from
+       * PiSession's widget-channel arm — it NEVER decodes from stdout in
+       * codec.ts, because it rides the `gentle-desktop-rpc` widget channel
+       * like `agents_update`/`rate_limit`, not the `--mode rpc` event
+       * stream. `oddPhase` carries the RAW wire value: present means the
+       * child published a phase (validated in the reducer against the
+       * closed ODD_PHASE token set; an unrecognized value contributes
+       * nothing, never coerced), omitted means unknown or cleared — which
+       * is how the owner's clear arrives (the field is omitted from
+       * `data`). */
+      readonly type: "session_state_changed";
+      readonly oddPhase?: unknown;
+    }
   | RpcResponse;
 
 /** Command acknowledgement envelope. The chat reducer does not act on it

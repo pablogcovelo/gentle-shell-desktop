@@ -161,6 +161,11 @@ function emptyState(): ChatState {
       ],
     },
     statuses: { "gentle-todo": "4 tasks · 1 in progress", "gentle-agents": "1 helper running" },
+    // desktop-pending-work T5 (S5) demo: a published ODD phase so the
+    // header's indicator is exercisable under `pnpm dev:web` without a
+    // child. Only ever a token from the closed set — the renderer renders
+    // its own label for it (the host's own wording is never copied).
+    oddPhase: "implementing",
     notifications: [{ message: "Mock notification: this is transient feedback, not a message.", severity: NOTIFICATION_SEVERITY.INFO }],
     // desktop-rpc T4 demo identity so `pnpm dev:web` exercises the status
     // line's identity block without a child. Every field is optional and

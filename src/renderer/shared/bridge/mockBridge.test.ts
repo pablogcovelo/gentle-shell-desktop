@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { CHAT_STATE, type ChatState } from "@shared/bridge-types";
+import { CHAT_STATE, ODD_PHASE, type ChatState } from "@shared/bridge-types";
 import { DEMO_WORKSPACE_DIRECTORY, mockBridge, resetMockBridge, setMockDirectoryPick } from "./mockBridge";
 
 function collectStates(): { states: ChatState[]; errors: string[] } {
@@ -357,5 +357,16 @@ it("seeds the demo state with demo commands so the composer's slash list is exer
   }
   // The demo mirrors the wire honestly: one entry without a description.
   expect(state.commands?.filter((command) => command.description === undefined)).toHaveLength(1);
+});
+
+// desktop-pending-work T5 (S5): the demo state carries a published ODD
+// phase so the header's indicator is exercisable under `pnpm dev:web`
+// without a child. Only ever a token from the closed set — the renderer
+// renders its own label for it (the host's own wording is never copied).
+it("seeds the demo state with a published ODD phase so the header indicator is exercisable without a child", async () => {
+  const { state } = await mockBridge.newChat();
+
+  expect(state.oddPhase).toBeDefined();
+  expect(Object.values(ODD_PHASE)).toContain(state.oddPhase);
 });
 });

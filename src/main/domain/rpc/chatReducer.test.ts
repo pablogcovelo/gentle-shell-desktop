@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { ODD_PHASE } from "@shared/bridge-types";
 import { decodeLine } from "./codec";
 import {
   INITIAL_CHAT_STATE,
@@ -902,5 +903,51 @@ describe("bounded tool payloads (T7 advisory R4-PAYLOAD)", () => {
     const marker = Number(/\[truncated: (\d+) chars\]/.exec(String(result))?.[1]);
     expect(marker).toBeGreaterThan(MAX_TOOL_PAYLOAD_CHARS);
     expect(String(result).length).toBeLessThan(MAX_TOOL_PAYLOAD_CHARS);
+  });
+});
+
+describe("reduceChat: session_state_changed — the ODD phase's only data path (desktop-pending-work T5, S5)", () => {
+  it("a frame carrying a known oddPhase token sets the phase", () => {
+    const state = reduceChat(INITIAL_CHAT_STATE, { type: "session_state_changed", oddPhase: "exploring" });
+
+    expect(state.oddPhase).toBe("exploring");
+    // Only the phase moves: nothing else in the chat state is touched.
+    expect(state.working).toBe(false);
+    expect(state.messages).toEqual([]);
+  });
+
+  it("each of the eight closed tokens sets the phase", () => {
+    for (const token of Object.values(ODD_PHASE)) {
+      expect(reduceChat(INITIAL_CHAT_STATE, { type: "session_state_changed", oddPhase: token }).oddPhase).toBe(token);
+    }
+  });
+
+  it("the same event without the oddPhase field clears a previously published phase (the owner's clear arrives by omission)", () => {
+    let state = reduceChat(INITIAL_CHAT_STATE, { type: "session_state_changed", oddPhase: "exploring" });
+    state = reduceChat(state, { type: "session_state_changed" });
+
+    expect("oddPhase" in state).toBe(false);
+  });
+
+  it("clearing an already-absent phase changes nothing", () => {
+    expect(reduceChat(INITIAL_CHAT_STATE, { type: "session_state_changed" })).toBe(INITIAL_CHAT_STATE);
+  });
+
+  it("an unrecognized token contributes nothing — dropped, never coerced (closed against the eight tokens)", () => {
+    const state = reduceChat(INITIAL_CHAT_STATE, { type: "session_state_changed", oddPhase: "exploring" });
+
+    const next = reduceChat(state, { type: "session_state_changed", oddPhase: "transcribing" });
+    expect(next).toBe(state);
+    expect(next.oddPhase).toBe("exploring");
+  });
+
+  it("a non-string oddPhase value contributes nothing too", () => {
+    expect(reduceChat(INITIAL_CHAT_STATE, { type: "session_state_changed", oddPhase: 42 })).toBe(INITIAL_CHAT_STATE);
+  });
+
+  it("re-publishing the same token changes nothing", () => {
+    const state = reduceChat(INITIAL_CHAT_STATE, { type: "session_state_changed", oddPhase: "implementing" });
+
+    expect(reduceChat(state, { type: "session_state_changed", oddPhase: "implementing" })).toBe(state);
   });
 });
