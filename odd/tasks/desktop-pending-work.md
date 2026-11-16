@@ -184,3 +184,22 @@ there, folding the frame through the ordinary reducer (push only when the fold c
 no channel, no read method, no second store. The reducer validates the closed eight-token set,
 sets on a known token and CLEARS by omission, which is exactly how the owner's clear arrives. The
 client renders its own wording ("Implementing"), never the host's `"implementing…"`.
+
+L11 (P7 probe evidence, read from the installed pi 0.85.1 types — nothing guessed)
+
+- `get_messages` answers the RAW array (`agent.state.messages`), not a projection: `data.messages`
+  of `AgentMessage`s discriminated by `role` only.
+- A tool CALL is a content block of an assistant message: `{ type: "toolCall", id, name,
+  arguments }` — `arguments` is already an object, not a JSON string.
+- A tool RESULT is its own message, never a block: `{ role: "toolResult", toolCallId, toolName,
+  content: [{ type: "text", text }], details?, isError, timestamp }`. The failure flag is the
+  boolean `isError`.
+- Every message carries `timestamp` (epoch ms). There is no "resolved" type in pi; the queue's
+  phrase means the types of the installed build, so nothing is dropped by the wire.
+- This app today: `history.ts` keeps text parts only, drops `toolResult` messages and text-less
+  assistant messages, and never produces rows; `toolCalls` is fed exclusively by the live
+  `tool_execution_start|end` events, capped at 20 rows and 4096 chars per payload. `ActionRows`
+  renders exactly `toolName`, `args`, `result`, `isError`, `status` and keys by `id`.
+- Therefore the recovery path is: build rows from history with the SAME bounding constants the
+  live path uses, keyed by the call id the wire already gives both sides, so a live row that
+  arrives after a reopen replaces its history row instead of duplicating it.
