@@ -232,6 +232,46 @@ describe("WorkspaceHostRouter close cleanup", () => {
     // last word on a close that did not complete.
     expect(pushes).toEqual([`closed:${opened.hostId}`, `error:${opened.hostId}`]);
   });
+
+  it("reports a close whose stop rejects with no reason instead of resolving as success (R3-001)", async () => {
+    const byId = new Map<string, ChatHost>();
+    let nextNumber = 1;
+    let failWithoutReason = false;
+    const openChat = vi.fn(async () => ({ messages: [], working: false, pendingDialogs: [], activity: 0, helpers: emptyHelpers() }) as ChatState);
+    const source: WorkspaceHostSource = {
+      get: (hostId) => byId.get(hostId),
+      createHost: (cwd?: string) => {
+        const host = fakeHost({ hostId: `host-${nextNumber++}`, openChat, cwd });
+        byId.set(host.hostId, host);
+        return host;
+      },
+      findByDirectory: (directory: string) => [...byId.values()].find((host) => host.cwd === directory),
+      list: () => [...byId.values()],
+      stopHost: async (hostId: string) => {
+        const host = byId.get(hostId);
+        if (!host) throw new Error(`no host for id "${hostId}"`);
+        byId.delete(hostId);
+        // A rejection whose reason is undefined is legal JavaScript; the
+        // router must not read it as "nothing failed".
+        if (failWithoutReason) throw undefined;
+      },
+    };
+
+    const router = new WorkspaceHostRouter(source);
+    const errors: string[] = [];
+    router.onError((message) => errors.push(message));
+
+    const opened = await router.openChat("chat-1");
+    failWithoutReason = true;
+
+    await expect(router.closeChat(opened.hostId)).rejects.toBeUndefined();
+
+    // Rejecting is only half the report: the renderer must be told too, or a
+    // live child outlives its workspace in silence.
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("Could not close this workspace's host");
+    expect(errors[0]).toContain("may still be running");
+  });
 });
 
 // T11 — Add workspace: a native directory picker answered by main, a

@@ -322,10 +322,17 @@ export class WorkspaceHostRouter {
     // before awaiting its child, so a rejected stop still leaves a host the
     // router must stop believing in. Keeping the wiring or the reuse entry
     // would point later opens at a host nothing owns any more.
+    //
+    // The failure is tracked with its own flag, not with `failure !== undefined`
+    // (R3-001): a promise may legally reject with `undefined`, and treating
+    // that as "nothing failed" would resolve a close whose child may still be
+    // running.
+    let failed = false;
     let failure: unknown;
     try {
       await stop(hostId);
     } catch (cause) {
+      failed = true;
       failure = cause;
     } finally {
       this.forgetHostWiring(hostId);
@@ -336,7 +343,7 @@ export class WorkspaceHostRouter {
       }
       for (const listener of this.closeListeners) listener(hostId);
     }
-    if (failure !== undefined) {
+    if (failed) {
       // P3: the source already dropped the host, so a rejected stop can leave
       // a child nothing tracks any more. Cleanup alone says nothing about it —
       // without this report the failure only reached a caller that may swallow

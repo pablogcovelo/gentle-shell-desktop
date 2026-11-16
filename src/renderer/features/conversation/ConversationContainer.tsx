@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ChatState, ChatSummary, DialogAnswer, OpenChatResult } from "@shared/bridge-types";
 import { useBridge } from "@renderer/shared/bridge/useBridge";
@@ -179,6 +179,16 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   const [resolved, setResolved] = useState<{ readonly key: string; readonly hostId: string } | undefined>(undefined);
   const currentKey = chatKeyOf(activeChat);
   const hostId = activeHostId ?? (resolved?.key === currentKey ? resolved.hostId : "");
+  // R3-002: the latest rendered addressing, readable from a promise that
+  // settles later. A close answered after the user moved on must not act on
+  // the chat they are now reading, so the handler compares against this.
+  const selectionRef = useRef({ key: currentKey, hostId });
+  selectionRef.current = { key: currentKey, hostId };
+  // R3-002: at most one close in flight. `closing` withdraws the control
+  // while it settles; `closingRef` is the synchronous guard a second click in
+  // the same tick would slip past the state update.
+  const [closing, setClosing] = useState(false);
+  const closingRef = useRef(false);
   const [bridgeError, setBridgeError] = useState<string | undefined>(undefined);
   const [draft, setDraft] = useState("");
   const [pane, setPane] = useState<ConversationPane>(CONVERSATION_PANE.CHAT);
@@ -266,6 +276,11 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   useEffect(() => {
     setPane(CONVERSATION_PANE.CHAT);
     setHelpersOpenedAt(new Date().toISOString());
+    // R3-002: a close belongs to the chat that asked for it, so a selection
+    // change ends that attempt — including the one that a successful close
+    // itself triggers by landing on a fresh chat.
+    closingRef.current = false;
+    setClosing(false);
   }, [activeChat]);
 
   useEffect(() => {
@@ -389,19 +404,30 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   // P2: the production caller for chat.close. It stops exactly the host this
   // pane addresses and nothing else; main answers through the chat.closed
   // push, which this container already turns into snapshot and mapping
-  // eviction (see forgetClosedHost). Without a host address there is nothing
-  // to close, and without the optional bridge method this build cannot close
-  // at all — said plainly instead of drawing a control that does nothing.
+  // eviction (see forgetClosedHost).
+  //
+  // Three guards, each one a review finding (R3-002, R3-003): without an
+  // address there is nothing to close, without the optional bridge method
+  // this build cannot close at all, and one close at a time keeps a second
+  // click from issuing another chat.close or a second landing.
   const handleCloseWorkspace = (): void => {
-    if (hostId === "") return;
-    const closing = bridge.closeChat?.(hostId);
-    if (!closing) {
-      setBridgeError("This build cannot close a workspace");
-      return;
-    }
-    closing
-      .then(() => onWorkspaceClosed?.())
+    const close = bridge.closeChat;
+    if (hostId === "" || !close || closingRef.current) return;
+    const closingHostId = hostId;
+    closingRef.current = true;
+    setClosing(true);
+    close
+      .call(bridge, closingHostId)
+      .then(() => {
+        // Only the pane that asked may act on the answer: a success that
+        // arrives after the user selected another chat must not replace it.
+        if (selectionRef.current.hostId !== closingHostId) return;
+        onWorkspaceClosed?.();
+      })
       .catch((cause: unknown) => {
+        closingRef.current = false;
+        setClosing(false);
+        if (selectionRef.current.hostId !== closingHostId) return;
         // Main also pushes its own report naming the reason (P3). This keeps
         // the rejection itself visible even for a bridge that does not.
         setBridgeError(errorText(cause));
@@ -444,9 +470,10 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
         pane={pane}
         runningHelpersCount={chatState.helpers.summary.running}
         onSelectPane={setPane}
-        // P2: a close needs a host to address; before the open/new
-        // resolution answers there is none, so the control stays out.
-        canCloseWorkspace={hostId !== ""}
+        // P2: a close needs a host to address and a bridge that can close;
+        // before the open/new resolution answers there is none, and while a
+        // close is in flight there is nothing left to ask (R3-002/R3-003).
+        canCloseWorkspace={hostId !== "" && bridge.closeChat !== undefined && !closing}
         onCloseWorkspace={handleCloseWorkspace}
       />
       {pane === CONVERSATION_PANE.HELPERS && <StatusLine error={error} statuses={chatState.statuses} notifications={chatState.notifications} />}

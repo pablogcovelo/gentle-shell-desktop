@@ -44,12 +44,48 @@ S11 (rule that governs the queue). "The app presents what gentle-shell already c
 | T6 | P6 | S6 | inline | see `git log` |
 | T7 | P7 | S7 | inline | see `git log` |
 | T8 | P8 | S8, S10 | inline | see `git log` |
+| T9 | review | R3-001, R3-002, R3-003 (L6) | inline | see `git log` |
 
 ## Log
 
 L1 (owner, verbatim)
 
 "Lee el documento odd/plans/pending-work.md y empieza a implementarlo"
+
+L6 (owner decision on the review's advisory findings, verbatim)
+
+"1"
+
+Read against the three options offered, that is: fix the three code defects the review found
+in this candidate now, as their own commit, and then continue the queue with T6. The remaining
+findings stay as recorded debt (L7) rather than review work on this candidate — the approved
+receipt stands and its findings are non-blocking.
+
+What T9 fixes, each with a test that failed first:
+
+- R3-001/R2-001: `closeChat` tracked a failure with `failure !== undefined`, so a promise that
+  rejected with `undefined` resolved as a successful close. The flag is now `failed`.
+- R3-002: the close success callback was not scoped to the pane that asked, so a close settling
+  after another chat was selected replaced that chat; and repeated clicks could issue several
+  closes. The handler now compares the settled answer against the latest rendered addressing and
+  allows one close in flight, withdrawing the control while it settles.
+- R3-003: the control was drawn from the host address alone, even for a bridge without
+  `chat.close`. The render gate now includes the capability.
+
+L7 (debt from the approved review, not worked on purpose)
+
+- R2-002: main's push and the renderer's own catch write the same status line for a failed close;
+  with the real IPC bridge the raw rejection can overwrite the specific "process may still be
+  running" message. Needs one owner for that message.
+- R2-003: `measured` in `ChangesGroup` reads as "completely measured" while it only means "the
+  root's counts printed"; a name like `rootMeasured` would keep the two P8 facts apart.
+- R4-001: closing a workspace during a live turn stops the child with no confirmation, unlike
+  closing the window. Product decision, not a patch.
+- R4-002: a rejected close still evicts the snapshot and the chat→host mapping while the child may
+  be live, so a retry targets a forgotten host. Needs a design decision on what a failed close
+  leaves behind.
+- R1-1 (the fallback spawn directory is session-recorded, not revalidated) and R1-2 (the
+  registry's drop-before-await is base behaviour) are notes: neither is a defect introduced here.
 
 L2 (delivery boundaries, recorded 2026-11-15)
 

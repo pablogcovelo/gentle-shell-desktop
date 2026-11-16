@@ -16,6 +16,16 @@ const EXISTING_CHAT: ChatSummary = {
   state: CHAT_STATE.IDLE,
 };
 
+/** A second chat, for the tests that need the user to move on mid-request. */
+const OTHER_CHAT: ChatSummary = {
+  id: "chat-2",
+  title: "Another task",
+  cwd: "/tmp/other",
+  updatedAt: "2026-09-21T09:30:00.000Z",
+  messageCount: 1,
+  state: CHAT_STATE.IDLE,
+};
+
 const EMPTY_HELPERS = { summary: { running: 0, queued: 0, waiting: 0, finished: 0 }, tasks: [] };
 
 function emptyState(): ChatState {
@@ -161,6 +171,71 @@ describe("ConversationContainer", () => {
     render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} />);
 
     expect(screen.queryByRole("button", { name: "Close this workspace" })).not.toBeInTheDocument();
+  });
+
+  it("draws no close control when the bridge cannot close a workspace (R3-003)", async () => {
+    const bridge = makeBridge();
+    // A bridge without the optional method cannot close anything.
+    delete (bridge as { closeChat?: unknown }).closeChat;
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} activeHostId="host-7" />);
+    await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledWith("chat-1"));
+
+    expect(screen.queryByRole("button", { name: "Close this workspace" })).not.toBeInTheDocument();
+  });
+
+  it("offers no second close while the first one is pending (R3-002)", async () => {
+    let resolveClose!: () => void;
+    const closeChat = vi.fn(() => new Promise<void>((resolve) => { resolveClose = resolve; }));
+    window.gentle = makeBridge({ closeChat });
+
+    render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} activeHostId="host-7" />);
+    await vi.waitFor(() => expect(window.gentle?.openChat).toHaveBeenCalledWith("chat-1"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Close this workspace" }));
+
+    // While the close is in flight there is no second request to make: the
+    // control is withdrawn instead of issuing another chat.close.
+    await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Close this workspace" })).not.toBeInTheDocument());
+    expect(closeChat).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveClose();
+    });
+  });
+
+  it("does not land on a fresh chat when the user moved on while the close was pending (R3-002)", async () => {
+    let resolveClose!: () => void;
+    const closeChat = vi.fn(() => new Promise<void>((resolve) => { resolveClose = resolve; }));
+    const onWorkspaceClosed = vi.fn();
+    window.gentle = makeBridge({ closeChat });
+
+    const { rerender } = render(
+      <ConversationContainer
+        activeChat={{ kind: "existing", chat: EXISTING_CHAT }}
+        activeHostId="host-7"
+        onWorkspaceClosed={onWorkspaceClosed}
+      />,
+    );
+    await vi.waitFor(() => expect(window.gentle?.openChat).toHaveBeenCalledWith("chat-1"));
+    fireEvent.click(screen.getByRole("button", { name: "Close this workspace" }));
+    await vi.waitFor(() => expect(closeChat).toHaveBeenCalledTimes(1));
+
+    // The user selected another chat before the close settled. Its success
+    // must not replace the chat they are now reading.
+    rerender(
+      <ConversationContainer
+        activeChat={{ kind: "existing", chat: OTHER_CHAT }}
+        activeHostId="host-8"
+        onWorkspaceClosed={onWorkspaceClosed}
+      />,
+    );
+    await act(async () => {
+      resolveClose();
+    });
+
+    expect(onWorkspaceClosed).not.toHaveBeenCalled();
   });
 
   it("re-opens when activeChat changes", async () => {
