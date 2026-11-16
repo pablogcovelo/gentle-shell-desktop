@@ -416,7 +416,7 @@ it("passes deps.cwd to PiSession, so the workspace's child is spawned in that di
   expect(host.cwd).toBe("/tmp/workspace-demo");
 });
 
-it("spawns with no cwd when the host was created without a workspace directory (chat.open/chat.new keep their behaviour)", async () => {
+it("spawns with no cwd for a fresh chat when the host was created without a workspace directory (chat.new)", async () => {
   const { spawner, handles } = createFakeSpawner();
   const host = new ChatHost({ spawner, locator: fakeLocator, sessionStore: fakeSessionStore([]), env: {} });
 
@@ -424,6 +424,48 @@ it("spawns with no cwd when the host was created without a workspace directory (
 
   expect(handles[0]?.cwd).toBeUndefined();
   expect(host.cwd).toBeUndefined();
+});
+
+it("spawns a reopened chat's child in that chat's own directory when the host was created without one (P1)", async () => {
+  const { spawner, handles } = createFakeSpawner();
+  const host = new ChatHost({
+    spawner,
+    locator: fakeLocator,
+    sessionStore: fakeSessionStore([
+      session({ id: "sess-9", path: "/a/sess-9.jsonl", cwd: "/home/user/project" }),
+    ]),
+    env: {},
+  });
+
+  const opening = host.openChat("sess-9");
+  await respondToHistoryRequest(handles, 0);
+  await opening;
+
+  // The gap in L30/T11: a chat reopened through chat.open used to spawn in
+  // Electron's launch directory, so the child never ran in the chat's own
+  // workspace and no worktree group could be computed for it.
+  expect(handles[0]?.cwd).toBe("/home/user/project");
+});
+
+it("keeps the host's own directory when it has one, even if the session reports another (a created workspace)", async () => {
+  const { spawner, handles } = createFakeSpawner();
+  const host = new ChatHost({
+    spawner,
+    locator: fakeLocator,
+    sessionStore: fakeSessionStore([
+      session({ id: "sess-10", path: "/a/sess-10.jsonl", cwd: "/home/user/elsewhere" }),
+    ]),
+    env: {},
+    cwd: "/tmp/workspace-demo",
+  });
+
+  const opening = host.openChat("sess-10");
+  await respondToHistoryRequest(handles, 0);
+  await opening;
+
+  // The directory the user chose for this workspace stays authoritative: a
+  // session's recorded cwd can drift, the host's binding cannot.
+  expect(handles[0]?.cwd).toBe("/tmp/workspace-demo");
 });
 
 it("carries its host id on its state and error events so a registry can fan out per host (T5a)", async () => {

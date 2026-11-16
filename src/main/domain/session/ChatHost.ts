@@ -147,12 +147,15 @@ export class ChatHost {
 
   /** Reopens an existing chat: looks up its session file path from the
    * store (ChatSummary.id is pi's session id, not a file path) and passes
-   * it to PiSession as `sessionPath` (`--session <path>`). */
+   * it to PiSession as `sessionPath` (`--session <path>`). Also passes the
+   * session's own recorded `cwd` down (P1): a host minted by chat.open has
+   * no workspace directory, and the child must still run in the chat's
+   * folder instead of Electron's launch directory. */
   async openChat(id: string): Promise<ChatState> {
     const sessions = await this.deps.sessionStore.listAll();
     const match = sessions.find((session) => session.id === id);
     if (!match) throw new Error(`ChatHost: no session found for id "${id}"`);
-    return this.startSession(match.path);
+    return this.startSession(match.path, match.cwd);
   }
 
   /** Starts a fresh chat: no sessionPath, so PiSession omits `--session`. */
@@ -197,8 +200,8 @@ export class ChatHost {
 
   /** Queues this start behind the previous one via `startChain` (see its
    * doc comment) instead of running `performStart` directly. */
-  private async startSession(sessionPath: string | undefined): Promise<ChatState> {
-    const run = this.startChain.then(() => this.performStart(sessionPath));
+  private async startSession(sessionPath: string | undefined, sessionCwd?: string): Promise<ChatState> {
+    const run = this.startChain.then(() => this.performStart(sessionPath, sessionCwd));
     // Keep the chain alive regardless of this step's outcome, so one
     // failed start (e.g. a locator error) never permanently wedges every
     // later open/new call behind a rejected promise.
@@ -209,7 +212,7 @@ export class ChatHost {
     return run;
   }
 
-  private async performStart(sessionPath: string | undefined): Promise<ChatState> {
+  private async performStart(sessionPath: string | undefined, sessionCwd?: string): Promise<ChatState> {
     await this.current?.stop();
 
     const session = new PiSession({
@@ -221,7 +224,12 @@ export class ChatHost {
       // (its `cwd` spawn option), so the child really runs there — this is
       // why ChatSummary.cwd and the footer's path report the directory the
       // user chose, not Electron's launch directory.
-      cwd: this.deps.cwd,
+      //
+      // P1: a host minted by chat.open/chat.new has no directory of its
+      // own, so a reopened chat falls back to the one its session recorded.
+      // The host's own binding still wins when it exists: the directory the
+      // user chose for a workspace is authoritative over a drifting session.
+      cwd: this.deps.cwd ?? sessionCwd,
       env: this.deps.env,
       onLog: this.deps.log,
     });

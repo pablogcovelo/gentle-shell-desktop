@@ -1,0 +1,52 @@
+# Desktop pending work — implementing the v1 queue
+
+Executes the ordered queue of `odd/plans/pending-work.md` on `develop`. This document adds no requirement: every Spec quotes that file verbatim and every Task names the P-row it implements.
+
+Work units commit on `develop` (owner decision, L2.6) with tests and docs alongside the behaviour.
+
+## Specs
+
+S1 (P1). "Bind `chat.open` to the chat's own directory so a reopened chat's child spawns in its workspace, not in Electron's launch directory. Closes the gap recorded in L30/T11 and is why the footer's worktree group appears only for created workspaces today". Where: "`ChatHost` open path + `PiSession` cwd + `chat.open` handler". Blocked by: "none (host already accepts cwd)". Risk: "item 1 (path passed to a spawn)".
+
+S2 (P2). "A workspace-close affordance: a production caller for `chat.close`, plus snapshot-cache eviction for the closed host. Without it, closing only happens at app quit and the renderer cache grows with every chat opened". Where: "renderer sidebar/header + `closedHosts` bound". Blocked by: "P1 (a workspace must have an identity to close)". Risk: "none".
+
+S3 (P3). "`closeChat` best-effort hardening: a failed late close must not leave a live host without a visible signal. Cleanup is already in `finally` (L28); what remains is the *report* of that failure to the renderer". Where: "`WorkspaceHostRouter` close path". Blocked by: "none". Risk: "item 4 (host lifetime)".
+
+S4 (P4). "Make `hostId` required on `HelpersContainer`, so the compiler refuses a parent that forgets it — the exact defect that shipped once (L24, two blockers) only because the prop was optional". Where: "`HelpersContainer` props + its call site". Blocked by: "none". Risk: "item 3 (component contract)".
+
+S5 (P5). "ODD phase indicator in the header, consuming `oddPhase` from `session_state_changed`. Never inferred from transcript text, never derived from a tool name". Where: "reducer + header". Blocked by: "**host T2** (`gentle-pi` S7/T2)".
+
+S6 (P6). "Command discovery for the composer: `/` lists what the child answers for `get_commands` (pi command, no host change), submits through `prompt`, and never keeps a hardcoded `/gentle:*` replica. Interactive results route through the existing dialogs". Where: "`PiSession` command list + composer". Blocked by: "**host T4 probe** (confirmation only; the command already exists in pi's RPC mode)". Risk: "item 3 if the command union changes".
+
+S7 (P7). "Tool-call detail recovery on reopen: `toolCalls` is live-only today, `history.ts` keeps text parts only, so a reload loses args/result/error". Where: "`rpc/history.ts` + reducer". Blocked by: "none, but it starts by reading pi's resolved message types — guessing shapes would trade a doc lie for a code lie". Risk: "item 3 (history is shared by messages and rows)".
+
+S8 (P8). "Worktree changes: **three states, one render**. (a) measured and clean → `0 files · +0/-0`; (b) measured with partial data → the counts the child did supply, with the unmeasured file marked; (c) unmeasured (failed root, unborn root, refused answer) → **also `0 files · +0/-0`**, and the group is never omitted. Accepted consequence, recorded: (c) becomes visually indistinguishable from (a), so the footer stops telling \"not measured\" apart from \"nothing changed\"; the distinction survives in the host payload, and an optional `title`/`aria-label` (\"changes were not measured\") may carry it without changing the visible copy. Requires splitting the single flag into `countsUnavailable` (root) and `filesUnmeasured` (per file) and reworking the footer render + the pins that encode the current single-state rule". Where: "`src/main/domain/rpc/workspaceInfo.ts`, `src/shared/bridge-types.ts`, `Footer.tsx`". Risk: "item 3 (the bridge type changes what the renderer sees)".
+
+S9 (sequencing). "Sequencing: P1 → P2 → P3 → P4 are all workspace-lifetime work and are cheapest as two slices (P1 alone; P2+P3 together; P4 anywhere). P5 waits for the host field. P6 is independent and small. P7 is the largest single item in v1. P8 is a decision, not a build."
+
+S10 (owner decisions already taken, verbatim from that file).
+
+L2.6: "IMPORTANTE, recuerda que las ramas actuales de trabajo de ambos repositorios son develop".
+L4: "Seguimos la lógica del TUI de gentle-shell mostrando los conteos que si se tienen pero la GUI NO puede mostrar unavailable mostrará 0 +0 -0."
+L5: "0 files · +0/-0 también en la raíz fallida, no omitimos el grupo".
+
+S11 (rule that governs the queue). "The app presents what gentle-shell already computes; it never invents a capability, a policy, an authority or a substitute flow. Host needs are specified in `gentle-pi`'s document before any app work depends on them. A missing host capability is a blocker, never an app-side workaround."
+
+## Tasks
+
+| ID | P | Spec | Route | Commit |
+| --- | --- | --- | --- | --- |
+| T1 | P1 | S1 | inline | see `git log` |
+| T2 | P2 | S2 | inline | see `git log` |
+| T3 | P3 | S3 | inline | see `git log` |
+| T4 | P4 | S4 | inline | see `git log` |
+| T5 | P5 | S5 | blocked: host `gentle-pi` S7/T2 (`oddPhase` field) | — |
+| T6 | P6 | S6 | inline | see `git log` |
+| T7 | P7 | S7 | inline | see `git log` |
+| T8 | P8 | S8, S10 | inline | see `git log` |
+
+## Log
+
+L1 (owner, verbatim)
+
+"Lee el documento odd/plans/pending-work.md y empieza a implementarlo"
