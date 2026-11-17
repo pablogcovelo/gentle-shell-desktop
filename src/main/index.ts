@@ -8,10 +8,15 @@ import {
   createNodeProcessSpawner,
   createSetupService,
 } from "./adapters";
+import { createLocalPiDevelopment } from "./adapters/localPiDevelopment";
 import { boundedStop } from "./domain/lifecycle/boundedStop";
-import { homeDirFor, resolveHomeMode } from "./domain/home/home";
 import { WorkspaceHostRegistry } from "./domain/session/WorkspaceHostRegistry";
-import { WorkspaceHostRouter, registerHandlers, validateWorkspaceDirectory } from "./ipc/registerHandlers";
+import {
+  WorkspaceHostRouter,
+  registerHandlers,
+  validateWorkspaceDirectory,
+  type WorkspaceRegistryPort,
+} from "./ipc/registerHandlers";
 
 // `import.meta.dirname` directly (not a manually computed
 // `path.dirname(fileURLToPath(import.meta.url))` `__dirname`), and under
@@ -43,15 +48,19 @@ function logPiLine(line: string): void {
   process.stderr.write(`[pi] ${line}\n`);
 }
 
-// Persisted first-run/home choice (T5), under Electron's own per-user data
-// directory. configStore.read() has no choice yet before first-run
-// resolves it (see setupService's needsChoice) — homeSettings/the dynamic
-// SessionStore below both default an absent choice to isolated through
-// resolveHomeMode (T6 follow-up), the single source of truth
-// resolveHomeArgs/homeDirFor also defer to.
+// One launch/home contract drives child flags, session listing and setup.
+// A managed supervisor fixes the home; legacy/source launchers retain the
+// persisted first-run choice and resolveHomeArgs/homeDirFor defaults.
 const configStore = createAppConfigStore(path.join(app.getPath("userData"), "config.json"));
-const homeSettings = createHomeSettings(configStore);
-const setupService = createSetupService(configStore);
+const localDevelopment = process.env.GENTLE_SHELL_DESKTOP_LOCAL_PI === "1"
+  ? createLocalPiDevelopment()
+  : undefined;
+const locator = localDevelopment?.locator ?? createLauncherLocator();
+const homeSettings = localDevelopment?.homeSettings ?? createHomeSettings(configStore, process.env, locator);
+const setupService = localDevelopment?.setupService ?? createSetupService(
+  configStore, process.env, undefined,
+  createHomeSettings(configStore, process.env, locator).managedHome,
+);
 
 // The SessionStore re-resolves the current home on every call (instead of
 // once at startup) so it reflects a home choice made mid-session, exactly
@@ -76,13 +85,25 @@ const setupService = createSetupService(configStore);
 const hostRegistry = new WorkspaceHostRegistry({
   createHostDeps: () => ({
     spawner: createNodeProcessSpawner(),
-    locator: createLauncherLocator(),
-    sessionStore: createDynamicPiSessionStore(() => homeDirFor(resolveHomeMode(configStore.read()), process.env)),
+    locator,
+    sessionStore: createDynamicPiSessionStore(homeSettings.homeDir),
     env: process.env,
     homeSettings,
     log: logPiLine,
   }),
 });
+// T1 (S1/S2): the persisted workspace registry over the app config — the
+// same config.json that holds `home`. The port is wired into
+// registerHandlers' ports object exactly like appInfo/windowControls/
+// chooseFile, so the workspace.list/add/remove channels are backed by
+// real persistence in this build (add persists most-recently-added first
+// and deduplicated; remove deletes only the persisted entry).
+const workspaceRegistry: WorkspaceRegistryPort = {
+  list: () => configStore.listWorkspaces(),
+  add: (directory) => configStore.addWorkspace(directory).workspaces ?? [],
+  remove: (directory) => configStore.removeWorkspace(directory).workspaces ?? [],
+};
+
 // T11: the two workspace channels' main-side adapters, injected into the
 // router so tests never open a real dialog nor touch the filesystem.
 // chooseDirectory opens Electron's native directory picker
@@ -129,6 +150,7 @@ function createWindow(): void {
   // native FILE picker; its null answer is a cancelled pick.
   const unregisterHandlers = registerHandlers(hostRouter, setupService, window.webContents, ipcMain, {
     appInfo: () => ({ version: app.getVersion() }),
+    workspaces: workspaceRegistry,
     windowControls: {
       minimize: () => window.minimize(),
       toggleMaximize: () => {

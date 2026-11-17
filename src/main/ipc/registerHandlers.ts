@@ -10,6 +10,7 @@ import type {
   OpenChatResult,
   PromptResult,
   StopHelperOutcome,
+  WorkspaceList,
 } from "@shared/bridge-types";
 import { IPC_CHANNELS } from "@shared/ipc-channels";
 import type { ChatHost } from "../domain/session/ChatHost";
@@ -136,6 +137,46 @@ export class WorkspaceHostRouter {
   private readonly hostUnsubscribers = new Map<string, () => void>();
   /** In-flight workspace creations keyed by directory (see createWorkspace). */
   private readonly pendingWorkspaceCreates = new Map<string, Promise<OpenChatResult>>();
+  /** Startup result -> authoritative directory discovery. Only discovery is
+   * joined across unknown opens; known unrelated startups are never barriers. */
+  private readonly pendingOpens = new Map<Promise<OpenChatResult>, Promise<string | undefined>>();
+  private readonly closingDirectories = new Map<string, Promise<void>>();
+
+  private refuseClosing(directory: string | undefined): void {
+    if (directory !== undefined && this.closingDirectories.has(directory)) {
+      throw new Error(`Workspace "${directory}" is closing`);
+    }
+  }
+
+  private trackOpen(start: () => Promise<OpenChatResult>, directory: Promise<string | undefined>): Promise<OpenChatResult> {
+    const operation = start().then((result) => {
+      const host = this.registry.get(result.hostId);
+      this.refuseClosing(host?.effectiveCwd ?? host?.cwd);
+      return result;
+    });
+    this.pendingOpens.set(operation, directory);
+    void operation.then(() => this.pendingOpens.delete(operation), () => this.pendingOpens.delete(operation));
+    return operation;
+  }
+
+  /** Joins work already begun, then closes every actual directory owner.
+   * Failures retain the persisted entry; every matching host is attempted. */
+  closeWorkspace(directory: string): Promise<void> {
+    const pending = this.closingDirectories.get(directory);
+    if (pending) return pending;
+    const earlier = [...this.pendingOpens];
+    const closing = Promise.resolve().then(async () => {
+      await Promise.allSettled(earlier.map(async ([operation, ownership]) => {
+        if (await ownership === directory) await operation;
+      }));
+      const hosts = this.registry.list().filter((host) => (host.effectiveCwd ?? host.cwd) === directory);
+      const results = await Promise.allSettled(hosts.map((host) => this.closeChat(host.hostId)));
+      const failure = results.find((result) => result.status === "rejected");
+      if (failure?.status === "rejected") throw failure.reason;
+    }).finally(() => { this.closingDirectories.delete(directory); });
+    this.closingDirectories.set(directory, closing);
+    return closing;
+  }
   /** The latest state each live host pushed, tagged by withHostId. Main
    * learns a host's state only through that host's own tagged pushes, so
    * this record IS the host's current state as main holds it — what
@@ -180,18 +221,45 @@ export class WorkspaceHostRouter {
    * minted host. The answer names the host actually routed to — never
    * "the current host" the caller did not ask for. */
   async openChat(chatId: string): Promise<OpenChatResult> {
+    let reportDirectory!: (directory: string | undefined) => void;
+    const ownership = new Promise<string | undefined>((resolve) => { reportDirectory = resolve; });
+    const boundDirectory = this.registry.get(this.chatHosts.get(chatId) ?? "")?.cwd;
+    if (boundDirectory !== undefined) reportDirectory(boundDirectory);
+    const operation = this.trackOpen(async () => {
+      // A lookup begun after close must not slip past its pending snapshot.
+      if (this.closingDirectories.size > 0) {
+        const closing = new Set(this.closingDirectories.keys());
+        const summary = (await this.listChats()).find((chat) => chat.id === chatId);
+        const directory = boundDirectory ?? summary?.cwd;
+        reportDirectory(directory);
+        if (directory !== undefined && closing.has(directory)) {
+          throw new Error(`Workspace "${directory}" is closing`);
+        }
+      }
+      return this.performOpenChat(chatId, reportDirectory);
+    }, ownership);
+    // Failed lookup has no directory to close. Sources without an early
+    // ownership observer can still report ownership through their result.
+    void operation.then((result) => {
+      const host = this.registry.get(result.hostId);
+      reportDirectory(host?.effectiveCwd ?? host?.cwd);
+    }, () => reportDirectory(undefined));
+    return operation;
+  }
+
+  private async performOpenChat(chatId: string, reportDirectory: (directory: string | undefined) => void): Promise<OpenChatResult> {
     const ownedHostId = this.chatHosts.get(chatId);
     if (ownedHostId !== undefined) {
       const host = this.registry.get(ownedHostId);
       if (host) {
-        const state = await host.openChat(chatId);
+        const state = await host.openChat(chatId, reportDirectory);
         return { hostId: ownedHostId, state: withHostId(state, ownedHostId, host.cwd) };
       }
       this.chatHosts.delete(chatId); // stale entry: that host is no longer live
     }
     const host = this.spawnHost();
     try {
-      const state = await host.openChat(chatId);
+      const state = await host.openChat(chatId, reportDirectory);
       this.lastStateByHost.set(host.hostId, withHostId(state, host.hostId, host.cwd));
       this.chatHosts.set(chatId, host.hostId);
       return { hostId: host.hostId, state: withHostId(state, host.hostId, host.cwd) };
@@ -254,10 +322,16 @@ export class WorkspaceHostRouter {
    * creating an accidental duplicate). A failed start cleans up exactly
    * like newChat: unwire, forget, stop the childless host. */
   async createWorkspace(directory: string): Promise<OpenChatResult> {
+    return this.trackOpen(() => this.beginWorkspace(directory), Promise.resolve(directory));
+  }
+
+  private async beginWorkspace(directory: string): Promise<OpenChatResult> {
+    this.refuseClosing(directory);
     if (!this.deps.validateDirectory) {
       throw new Error("WorkspaceHostRouter: no directory validator is configured");
     }
     await this.deps.validateDirectory(directory);
+    this.refuseClosing(directory);
     // Serialized per directory: two clicks on the same folder share one start
     // instead of racing (the loser used to see a host whose chat had not
     // reported a state yet and was refused).
@@ -357,6 +431,17 @@ export class WorkspaceHostRouter {
       }
       throw failure;
     }
+  }
+
+  /** T1: validates a workspace directory through the injected validator —
+   * the SAME check workspace.create runs before anything is created, so
+   * workspace.add can persist only a directory the creation path would
+   * accept. Refuses clearly when no validator is configured. */
+  async validateWorkspace(directory: string): Promise<void> {
+    if (!this.deps.validateDirectory) {
+      throw new Error("WorkspaceHostRouter: no directory validator is configured");
+    }
+    await this.deps.validateDirectory(directory);
   }
 
   /** Answers the addressed host's current state WITHOUT starting or
@@ -495,6 +580,42 @@ export interface ShellPorts {
   readonly windowControls?: WindowControlsPort;
   readonly appInfo?: () => AppInfo;
   readonly chooseFile?: () => Promise<string | null>;
+  /** T1 (S1/S2): the persisted workspace registry over the app config
+   * (src/main/index.ts builds it from the same config.json that holds
+   * `home`). `add` persists one absolute directory (most-recently-added
+   * first, deduplicated); `remove` deletes ONLY the persisted entry;
+   * `list` answers the persisted directories. Backed by a real store in
+   * the packaged app; absent in a build without one, where the registry
+   * channels refuse clearly instead of pretending. */
+  readonly workspaces?: WorkspaceRegistryPort;
+}
+
+/**
+ * T1 (S1/S2): the persisted workspace registry, injected (never imported
+ * from Electron here) so tests can back the channels with an in-memory
+ * registry. The concrete store lives in the app config
+ * (createAppConfigStore's workspaces key) and is wired in src/main/index.ts.
+ */
+export interface WorkspaceRegistryPort {
+  /** The persisted workspace directories, most-recently-added first. */
+  list(): readonly string[];
+  /** Persists one directory (the store validates absolute-ness and
+   * deduplicates). Returns the fresh persisted list. */
+  add(directory: string): readonly string[];
+  /** Deletes ONLY the persisted entry for `directory` — never a session
+   * file, a directory or a chat. A no-op for an unknown directory.
+   * Returns the fresh persisted list. */
+  remove(directory: string): readonly string[];
+}
+
+/** Opened navigation only: Pi history remains available through listChats. */
+function workspaceList(persisted: readonly string[]): WorkspaceList {
+  return { directories: [...persisted], persisted: [...persisted] };
+}
+
+function requireWorkspaceRegistry(ports: ShellPorts): WorkspaceRegistryPort {
+  if (!ports.workspaces) throw new Error("The workspace registry is unavailable in this build.");
+  return ports.workspaces;
 }
 
 /** The BrowserWindow actions the frameless chrome performs. */
@@ -535,6 +656,32 @@ export function registerHandlers(
   // directory.
   registerRequestHandler(ipc, IPC_CHANNELS.WORKSPACE_CHOOSE_DIRECTORY, () => router.chooseDirectory());
   registerRequestHandler(ipc, IPC_CHANNELS.WORKSPACE_CREATE, (_event, directory: string) => router.createWorkspace(directory));
+  // T1 (S1/S2): the workspace registry. Each of list/add/remove answers
+  // the fresh WorkspaceList, so the panel re-reads after add and after
+  // remove without a restart — one explicit re-read per action, never a
+  // push channel. add validates through the SAME validator workspace
+  // create uses, so a directory the creation path would refuse is never
+  // persisted. open is the creation path itself (workspace.create) minus
+  // the picker: selecting a persisted workspace that has no chats yet
+  // opens a new chat for that directory without asking again, with no
+  // duplicated host lifecycle logic.
+  registerRequestHandler(ipc, IPC_CHANNELS.WORKSPACE_LIST, async () => {
+    const registry = requireWorkspaceRegistry(ports);
+    return workspaceList(registry.list());
+  });
+  registerRequestHandler(ipc, IPC_CHANNELS.WORKSPACE_ADD, async (_event, directory: string) => {
+    const registry = requireWorkspaceRegistry(ports);
+    await router.validateWorkspace(directory);
+    registry.add(directory);
+    return workspaceList(registry.list());
+  });
+  registerRequestHandler(ipc, IPC_CHANNELS.WORKSPACE_REMOVE, async (_event, directory: string) => {
+    const registry = requireWorkspaceRegistry(ports);
+    await router.closeWorkspace(directory);
+    registry.remove(directory);
+    return workspaceList(registry.list());
+  });
+  registerRequestHandler(ipc, IPC_CHANNELS.WORKSPACE_OPEN, (_event, directory: string) => router.createWorkspace(directory));
   registerRequestHandler(ipc, IPC_CHANNELS.SETUP_STATUS, () => setup.status());
   registerRequestHandler(ipc, IPC_CHANNELS.CHOOSE_HOME, (_event, mode: HomeMode) => setup.chooseHome(mode));
   // The shell's own chrome (second increment): app facts, the frameless

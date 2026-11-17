@@ -163,6 +163,57 @@ describe("createBridge", () => {
     expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.WORKSPACE_CREATE, "/tmp/chosen");
   });
 
+  // T1 (S1/S2): the workspace registry channels — list, add (persist),
+  // remove (forget the persisted entry only) and open (the creation path
+  // without the picker).
+  it("listWorkspaces invokes workspace.list and answers the WorkspaceList", async () => {
+    const { ipc, invoke } = createFakeIpc();
+    invoke.mockResolvedValue({ directories: ["/tmp/a"], persisted: ["/tmp/a"] });
+    const bridge = createBridge(ipc);
+
+    const list = bridge.listWorkspaces?.bind(bridge);
+    if (!list) throw new Error("createBridge did not implement listWorkspaces");
+
+    await expect(list()).resolves.toEqual({ directories: ["/tmp/a"], persisted: ["/tmp/a"] });
+    expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.WORKSPACE_LIST);
+  });
+
+  it("addWorkspace invokes workspace.add with the directory", async () => {
+    const { ipc, invoke } = createFakeIpc();
+    invoke.mockResolvedValue({ directories: ["/tmp/a"], persisted: ["/tmp/a"] });
+    const bridge = createBridge(ipc);
+
+    const add = bridge.addWorkspace?.bind(bridge);
+    if (!add) throw new Error("createBridge did not implement addWorkspace");
+
+    await add("/tmp/a");
+    expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.WORKSPACE_ADD, "/tmp/a");
+  });
+
+  it("removeWorkspace invokes workspace.remove with the directory", async () => {
+    const { ipc, invoke } = createFakeIpc();
+    invoke.mockResolvedValue({ directories: [], persisted: [] });
+    const bridge = createBridge(ipc);
+
+    const remove = bridge.removeWorkspace?.bind(bridge);
+    if (!remove) throw new Error("createBridge did not implement removeWorkspace");
+
+    await remove("/tmp/a");
+    expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.WORKSPACE_REMOVE, "/tmp/a");
+  });
+
+  it("openWorkspace invokes workspace.open with the directory and answers the routed host", async () => {
+    const { ipc, invoke } = createFakeIpc();
+    invoke.mockResolvedValue({ hostId: "host-1", state: { messages: [] } });
+    const bridge = createBridge(ipc);
+
+    const open = bridge.openWorkspace?.bind(bridge);
+    if (!open) throw new Error("createBridge did not implement openWorkspace");
+
+    await expect(open("/tmp/a")).resolves.toEqual({ hostId: "host-1", state: { messages: [] } });
+    expect(invoke).toHaveBeenCalledWith(IPC_CHANNELS.WORKSPACE_OPEN, "/tmp/a");
+  });
+
   it("onState subscribes to the state push channel and forwards pushed state", () => {
     const { ipc, listeners } = createFakeIpc();
     const bridge = createBridge(ipc);

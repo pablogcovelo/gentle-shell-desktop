@@ -143,6 +143,12 @@ function handleLine(line) {
     return;
   }
 
+  if (cmd.type === "get_state") {
+    write({ type: "response", id: cmd.id, command: "get_state", success: true,
+      data: { sessionId: "fixture-session", thinkingLevel: "medium", model: { id: "fixture-model", name: "Fixture Model", provider: "fixture" } } });
+    return;
+  }
+
   if (cmd.type === "get_messages") {
     write({
       type: "response",
@@ -565,7 +571,11 @@ describe("PiSession: Electron host follow-ups", () => {
 
     expect(result).toEqual({ queued: false, reason: "Gentle is still working" });
     expect(session.getState().messages).toHaveLength(beforeCount);
-    expect(handles[0]?.writes).toEqual([]);
+    // T3's new probe trigger: the agent_start frame above proved the child
+    // alive, so the capabilities probe is already on stdin — the DECLINE
+    // itself must still add nothing to it.
+    expect(handles[0]?.writes.filter((write) => write.includes("capabilities"))).toHaveLength(1);
+    expect(handles[0]?.writes.filter((write) => JSON.parse(write).type === "prompt")).toHaveLength(1);
     expect(session.getState().lastError).toBe("Gentle is still working");
   });
 
@@ -578,7 +588,7 @@ describe("PiSession: Electron host follow-ups", () => {
 
     expect(result).toEqual({ queued: true });
     expect(session.getState().messages).toHaveLength(1);
-    expect(handles[0]?.writes).toHaveLength(1);
+    expect(handles[0]?.writes.filter((write) => JSON.parse(write).type === "prompt")).toEqual([`${JSON.stringify({ type: "prompt", message: "hi" })}\n`]);
   });
 
   it("merges the launcher's env (e.g. ELECTRON_RUN_AS_NODE for a JS entry) into the spawned process env", () => {
@@ -656,11 +666,7 @@ describe("PiSession: Electron host follow-ups", () => {
 
     session.start();
 
-    // desktop-rpc T3: a FRESH chat's stdin stays silent until the user
-    // acts (ChatHost.test.ts pins that contract) — no get_messages, and no
-    // control write of any kind; its first control write (the capabilities
-    // probe) waits for its first settled turn.
-    expect(handles[0]?.writes).toEqual([]);
+    expect(handles[0]?.writes.map((write) => JSON.parse(write).type)).toEqual(["get_state"]);
   });
 
   it("surfaces lastError instead of throwing when the get_messages response fails", () => {
@@ -941,7 +947,10 @@ describe("PiSession: desktop-rpc control plane (U1, desktop-rpc T2)", () => {
     );
     expect(session.getState().messages.length).toBe(messagesBefore);
     await Promise.resolve();
-    expect(client.pendingCount).toBe(1);
+    // T3's first-frame trigger: the agent_start frame above also fired the
+    // capabilities probe, which is still awaiting its correlated frame —
+    // so TWO requests are pending here (the probe and this one).
+    expect(client.pendingCount).toBe(2);
 
     // The correlated setWidget frame settles the request and never reaches
     // the chat reducer: no message, no helpers change.
@@ -963,6 +972,10 @@ describe("PiSession: desktop-rpc control plane (U1, desktop-rpc T2)", () => {
 
     const client = session.desktopRpc;
     if (!client) throw new Error("desktop-rpc client not bound after start()");
+    // A status frame first: it is the child's aliveness proof, so the
+    // capabilities probe fires here (T3) and is pending for the rest of
+    // this test — the widget frames below must not change that.
+    handle.emitStdout(JSON.stringify({ type: "agent_start" }));
     const pending = client.request("get_config");
     const getConfigRequestId = controlRequestId(handle.writes[handle.writes.length - 1] ?? "");
     const writesBefore = handle.writes.length;
@@ -977,7 +990,9 @@ describe("PiSession: desktop-rpc control plane (U1, desktop-rpc T2)", () => {
       }),
     );
     expect(handle.writes.length).toBe(writesBefore);
-    expect(client.pendingCount).toBe(1);
+    // The probe (pending) and this request (pending) — the other widget's
+    // frame settled neither.
+    expect(client.pendingCount).toBe(2);
     expect(session.getState().messages).toEqual([]);
 
     handle.emitStdout(desktopWidgetFrame(getConfigRequestId, { after: true }));
@@ -1204,24 +1219,94 @@ describe("PiSession: desktop-rpc control plane (U1, desktop-rpc T2)", () => {
     handle.resolveExited({ code: 0, signal: null });
   });
 
-  it("a fresh chat sends nothing at start; its first control write is the capabilities probe at the first settled turn", async () => {
+  it("a fresh chat bootstraps with native state and probes only once on stdout", async () => {
     const { spawner, handles } = createFakeSpawner();
     const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
     session.start();
     const handle = handles[0];
     if (!handle) throw new Error("no spawned handle");
 
-    // Silent until the user acts (ChatHost.test.ts pins that contract).
-    expect(handle.writes).toEqual([]);
+    expect(handle.writes.map((write) => JSON.parse(write).type)).toEqual(["get_state"]);
 
-    // agent_settled is the meaningful lifecycle boundary: exactly ONE
-    // probe goes out, never a repeating timer — and NO usage read, which
-    // stays gated on the probe's success.
+    // Any decoded stdout frame proves the child is alive; a plain status
+    // frame (no settled turn anywhere near) is enough. Exactly ONE probe
+    // goes out, never a repeating timer — and NO usage read, which stays
+    // gated on the probe's success.
+    handle.emitStdout(JSON.stringify({ type: "agent_start" }));
+    expect(handle.writes.filter((write) => write.includes("capabilities"))).toHaveLength(1);
+
+    const writesBefore = handle.writes.length;
     handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
-    expect(handle.writes).toHaveLength(1);
-    expect(handle.writes[0]).toMatch("capabilities");
+    expect(handle.writes).toHaveLength(writesBefore);
 
     handle.resolveExited({ code: 0, signal: null });
+  });
+
+  // Correction R3-001 keeps holding: a REOPENED chat's probe must not take
+  // `get_messages` out of last position while ChatHost's bounded history
+  // wait is observing the child. Frames that arrive while the history
+  // request is still pending (the launcher writes status/widget frames
+  // immediately on a reopened child too) prove aliveness without proving
+  // the history exchange finished, so they never probe.
+  it("a REOPENED chat's first stdout frames before the history response still do not probe — get_messages stays the child's last write (R3-001)", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {}, sessionPath: "/a/sess-1.jsonl" });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    expect(handle.writes).toHaveLength(1);
+    expect(JSON.parse(handle.writes[0] ?? "{}")).toMatchObject({ type: "get_messages" });
+
+    // A status frame before the history answer: still only the one history
+    // write on stdin. (A settled turn is the fallback that DOES probe while
+    // history is pending — the pre-existing trigger, kept.)
+    handle.emitStdout(JSON.stringify({ type: "agent_start" }));
+    expect(handle.writes).toHaveLength(1);
+
+    // The history response lands: only now does the probe take the next
+    // write (the trigger the reopened-chat tests already pin).
+    handle.emitStdout(
+      JSON.stringify({ type: "response", id: (JSON.parse(handle.writes[0] ?? "{}") as { id?: string }).id, command: "get_messages", success: true, data: { messages: [] } }),
+    );
+    expect(handle.writes).toHaveLength(2);
+    expect(handle.writes[1]).toMatch("capabilities");
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  // S5/S10: the failed prompt response is how a home with no credentials
+  // says WHY no turn can run ("No API key found ... Use /login ..."). It
+  // was decoded and then dropped, which is the whole "no recibo respuesta
+  // ninguna" defect: fold its error into ChatState.lastError, the data the
+  // status line renders.
+  it("folds a failed prompt response's error into lastError — the child's real reason reaches the status line", () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    const errorText = "No API key found for the selected model. Use /login to log into a provider via OAuth or API key.";
+    handle.emitStdout(JSON.stringify({ type: "response", command: "prompt", success: false, error: errorText }));
+
+    expect(session.getState().lastError).toBe(errorText);
+    // It is not transcript traffic and it does not move the working pill.
+    expect(session.getState().messages).toEqual([]);
+    expect(session.getState().working).toBe(false);
+  });
+
+  it("a successful prompt response changes nothing", () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "response", command: "prompt", success: true }));
+
+    expect(session.getState().lastError).toBeUndefined();
+    expect(session.getState().working).toBe(false);
   });
 
   it("a child that never answers capabilities receives no usage write at all, and the surface reports the channel unavailable", async () => {
@@ -1234,12 +1319,12 @@ describe("PiSession: desktop-rpc control plane (U1, desktop-rpc T2)", () => {
       if (!handle) throw new Error("no spawned handle");
 
       handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
-      expect(handle.writes).toHaveLength(1);
-      expect(handle.writes[0]).toMatch("capabilities");
+      expect(handle.writes.filter((write) => write.includes("capabilities"))).toHaveLength(1);
+      const writesBefore = [...handle.writes];
 
       // Another settled turn while the probe is unanswered: still nothing.
       handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
-      expect(handle.writes).toHaveLength(1);
+      expect(handle.writes).toEqual(writesBefore);
 
       // The child never answers: the probe times out.
       await vi.advanceTimersByTimeAsync(DESKTOP_RPC_DEFAULT_TIMEOUT_MS + 1);
@@ -1249,7 +1334,7 @@ describe("PiSession: desktop-rpc control plane (U1, desktop-rpc T2)", () => {
 
       // The channel stays closed: no usage write ever, even on later turns.
       handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
-      expect(handle.writes).toHaveLength(1);
+      expect(handle.writes).toEqual(writesBefore);
       expect(session.getState().usage).toBeUndefined();
     } finally {
       vi.useRealTimers();
@@ -1264,9 +1349,9 @@ describe("PiSession: desktop-rpc control plane (U1, desktop-rpc T2)", () => {
     if (!handle) throw new Error("no spawned handle");
 
     handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
-    expect(handle.writes).toHaveLength(1);
-
-    handle.emitStdout(desktopErrorWidgetFrame(controlRequestId(handle.writes[0] ?? ""), "unsupported_method"));
+    const writesBefore = [...handle.writes];
+    const probe = handle.writes.find((write) => write.includes("capabilities"))!;
+    handle.emitStdout(desktopErrorWidgetFrame(controlRequestId(probe), "unsupported_method"));
     await flushReplies();
 
     expect(session.getState().usageChannelUnavailable).toBe(true);
@@ -1274,7 +1359,7 @@ describe("PiSession: desktop-rpc control plane (U1, desktop-rpc T2)", () => {
 
     // No further control write of any kind after the failure.
     handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
-    expect(handle.writes).toHaveLength(1);
+    expect(handle.writes).toEqual(writesBefore);
   });
 
   it("a child that answers capabilities receives the usage read — the probe is sent exactly once per child", async () => {
@@ -1630,8 +1715,9 @@ describe("subagents (desktop-rpc T6)", () => {
     const handle = handles[0];
     if (!handle) throw new Error("no spawned handle");
 
+    const writesBefore = [...handle.writes];
     await expect(session.cancelHelper("m3a1-worker")).resolves.toBe("unavailable");
-    expect(handle.writes).toEqual([]);
+    expect(handle.writes).toEqual(writesBefore);
 
     handle.resolveExited({ code: 0, signal: null });
   });
@@ -1824,8 +1910,10 @@ describe("session identity (desktop-rpc T4)", () => {
     await flushReplies();
   }
 
+  /** Refresh reads exclude the separately asserted fresh bootstrap. */
   function writesOf(handle: FakeProcessHandle, type: string): string[] {
-    return handle.writes.filter((write) => (JSON.parse(write) as { type?: string }).type === type);
+    return handle.writes.filter((write, index) => (JSON.parse(write) as { type?: string }).type === type &&
+      !(type === "get_state" && index === 0));
   }
 
   function commandId(write: string): string {
@@ -1880,6 +1968,33 @@ describe("session identity (desktop-rpc T4)", () => {
     });
   }
 
+  it("bootstraps a silent fresh child with correlated raw state, identity and one gated probe", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0]!;
+    expect(handle.writes).toHaveLength(1);
+    const bootstrap = JSON.parse(handle.writes[0]!);
+    expect(bootstrap).toEqual({ type: "get_state", id: expect.any(String) });
+    expect(session.getState().messages).toEqual([]);
+    handle.emitStdout(stateReply("wrong-id"));
+    expect(session.getState().session).toBeUndefined();
+    handle.emitStdout(stateReply(bootstrap.id));
+    expect(session.getState().session).toMatchObject({ modelId: "claude-sonnet-4-20250514", thinkingLevel: "medium" });
+    expect(handle.writes.filter((write) => write.includes("capabilities"))).toHaveLength(1);
+    expect(writesOf(handle, "get_session_stats")).toEqual([]);
+    expect(handle.writes.filter((write) => write.includes("get_subscription_usage"))).toEqual([]);
+    await adoptChannel(handle);
+    expect(writesOf(handle, "get_session_stats")).toHaveLength(1);
+    expect(handle.writes.filter((write) => write.includes("capabilities"))).toHaveLength(1);
+    expect(session.getState().messages).toEqual([]);
+    handle.resolveExited({ code: 0, signal: null });
+    await flushMicrotasks();
+    const identity = session.getState().session;
+    handle.emitStdout(stateReply(bootstrap.id, { thinkingLevel: "high" }));
+    expect(session.getState().session).toEqual(identity);
+  });
+
   it("a reopened chat requests its session identity only after the probe, correlated by id, and folds both replies", async () => {
     const { spawner, handles } = createFakeSpawner();
     const session = new PiSession({ spawner, locator: fakeLocator, env: {}, sessionPath: "/a/sess-1.jsonl" });
@@ -1930,23 +2045,89 @@ describe("session identity (desktop-rpc T4)", () => {
     handle.resolveExited({ code: 0, signal: null });
   });
 
-  it("a fresh chat writes nothing until the user acts; its identity reads go out only after the probe at the first settled turn", async () => {
+  it("a fresh chat bootstraps state; its identity refresh reads go out only after the probe", async () => {
     const { spawner, handles } = createFakeSpawner();
     const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
     session.start();
     const handle = handles[0];
     if (!handle) throw new Error("no spawned handle");
 
-    // Silent until the user acts (ChatHost.test.ts pins that contract).
-    expect(handle.writes).toEqual([]);
-
-    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
-    expect(handle.writes).toHaveLength(1);
-    expect(handle.writes[0]).toContain("capabilities");
+    expect(handle.writes.map((write) => JSON.parse(write).type)).toEqual(["get_state"]);
+    handle.emitStdout(stateReply(commandId(handle.writes[0]!)));
+    expect(handle.writes.filter((write) => write.includes("capabilities"))).toHaveLength(1);
 
     await adoptChannel(handle);
     expect(writesOf(handle, "get_session_stats")).toHaveLength(1);
     expect(writesOf(handle, "get_state")).toHaveLength(1);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  // S6 (desktop-workspace-registry-and-diagnostics T4): with T3's probe
+  // timing, the footer's model AND MCP facts arrive for a fresh chat
+  // without any turn ever settling — verified end to end through the
+  // state the footer renders, not by assumption.
+  it.each([
+    { label: "configured servers", configured: { status: "present", names: ["github"] }, namespaces: [] },
+    { label: "tool namespaces only", configured: { status: "absent", names: [] }, namespaces: ["codegraph", "context7", "engram"] },
+  ])("a fresh chat's model and MCP footer facts arrive without any settled turn ($label)", async ({ configured, namespaces }) => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    const emittedStates: ChatState[] = [];
+    session.on("state", (state: ChatState) => emittedStates.push(state));
+
+    // No unsolicited startup frame or model turn is needed.
+    handle.emitStdout(stateReply(commandId(handle.writes[0]!)));
+    const probeWrite = handle.writes.find((write) => write.includes("capabilities"));
+    if (!probeWrite) throw new Error("expected a capabilities probe write");
+
+    // Adopt with mcp_status advertised.
+    handle.emitStdout(
+      desktopWidgetFrame(controlRequestId(probeWrite), {
+        schema: "gentle-shell.desktop-rpc/v1",
+        command: "gentle:desktop",
+        widget: "gentle-desktop-rpc",
+        methods: ["capabilities", "mcp_status", "get_subscription_usage"],
+        events: ["rate_limit"],
+      }),
+    );
+    await flushReplies();
+
+    // The identity read (ordinary RPC) and the MCP read (desktop-rpc) go
+    // out right behind adoption.
+    const stateWrite = writesOf(handle, "get_state")[0];
+    if (!stateWrite) throw new Error("expected a get_state write");
+    const mcpWrite = handle.writes.find((write) => write.includes("mcp_status"));
+    if (!mcpWrite) throw new Error("expected an mcp_status write");
+    handle.emitStdout(stateReply(commandId(stateWrite)));
+    handle.emitStdout(
+      desktopWidgetFrame(controlRequestId(mcpWrite), {
+        health: "unknown",
+        configured,
+        registered: [],
+        namespaces,
+      }),
+    );
+    await flushReplies();
+
+    expect(session.getState().session?.modelId).toBe("claude-sonnet-4-20250514");
+    const expectedMcp = {
+      health: "unknown",
+      configuredStatus: configured.status,
+      configuredNames: configured.names,
+      registered: [],
+      namespaces,
+    };
+    expect(session.getState().workspace?.mcp).toEqual(expectedMcp);
+    expect(emittedStates.at(-1)?.workspace?.mcp).toEqual(expectedMcp);
+    expect(emittedStates.at(-1)?.session?.modelId).toBe("claude-sonnet-4-20250514");
+    expect(session.getState().working).toBe(false);
+    expect(session.getState().messages).toEqual([]);
+    expect(emittedStates.every((state) => !state.working && state.messages.length === 0)).toBe(true);
 
     handle.resolveExited({ code: 0, signal: null });
   });
@@ -1981,6 +2162,51 @@ describe("session identity (desktop-rpc T4)", () => {
     expect(session.getState().session?.sessionCost).toBe(1.25);
     expect(session.getState().session?.thinkingLevel).toBe("high");
     expect(session.getState().session?.contextPercent).toBe(30);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  // S5: the isolated home answers "model":{"id":"unknown","name":"unknown"}
+  // and a later turn could answer model null. sessionStats normalizes both
+  // into NO model identity; the fold here must carry that normalization
+  // through — including CLEARING a model an earlier reply had folded, so
+  // the footer's no-model hint replaces a stale label instead of the wire
+  // literal "unknown" ever reaching the UI.
+  it("a get_state model of unknown or null folds as NO model identity and clears a previously folded one", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+
+    // First reply: a real model.
+    handle.emitStdout(stateReply(commandId(writesOf(handle, "get_state")[0] ?? "")));
+    await flushReplies();
+    expect(session.getState().session?.modelId).toBe("claude-sonnet-4-20250514");
+
+    // Settled turn 2: the same child, now reporting no model (the isolated
+    // home's literal unknown). The cleared answer must replace the label.
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    const secondStateId = commandId(writesOf(handle, "get_state")[1] ?? "");
+    handle.emitStdout(stateReply(secondStateId, { model: { id: "unknown", name: "unknown", provider: "anthropic" } }));
+    await flushReplies();
+
+    const identity = session.getState().session;
+    expect(identity?.modelId).toBeUndefined();
+    expect(identity?.modelName).toBeUndefined();
+    expect(identity?.thinkingLevel).toBe("medium");
+
+    // And the documented null is the same explicit no-model statement.
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    const thirdStateId = commandId(writesOf(handle, "get_state")[2] ?? "");
+    handle.emitStdout(stateReply(thirdStateId, { model: null }));
+    await flushReplies();
+    expect(session.getState().session?.modelId).toBeUndefined();
+    expect(session.getState().session?.modelName).toBeUndefined();
+    expect(session.getState().session?.thinkingLevel).toBe("medium");
 
     handle.resolveExited({ code: 0, signal: null });
   });
@@ -2376,8 +2602,8 @@ describe("command discovery (desktop-pending-work T6, S6)", () => {
     if (!handle) throw new Error("no spawned handle");
 
     handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
-    expect(handle.writes).toHaveLength(1);
-    expect(handle.writes[0]).toContain("capabilities");
+    expect(handle.writes.filter((write) => write.includes("capabilities"))).toHaveLength(1);
+    expect(writesOf(handle, "get_commands")).toEqual([]);
 
     await adoptChannel(handle);
 

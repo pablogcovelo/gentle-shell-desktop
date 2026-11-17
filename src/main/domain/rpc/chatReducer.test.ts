@@ -432,6 +432,63 @@ describe("reduceChat: errors and unhandled events", () => {
       reduceChat(INITIAL_CHAT_STATE, { type: "response", command: "prompt", success: true }),
     ).toBe(INITIAL_CHAT_STATE);
   });
+
+  // T3 (S5/S10, desktop-workspace-registry-and-diagnostics): the child's own
+  // answer to a prompt it could not run — the isolated home's
+  // "No API key found ... Use /login ..." — was decoded but never folded,
+  // so the status line showed nothing at all. The failed `prompt` response
+  // is the one command envelope that IS chat state.
+  describe("failed prompt responses", () => {
+    const FAILED_PROMPT = {
+      type: "response" as const,
+      command: "prompt",
+      success: false as const,
+      error: "No API key found for the selected model. Use /login to log into a provider via OAuth or API key.",
+    };
+
+    it("fold the child's own error text into lastError", () => {
+      const state = reduceChat(INITIAL_CHAT_STATE, FAILED_PROMPT);
+      expect(state.lastError).toBe(FAILED_PROMPT.error);
+    });
+
+    it("replace a previous lastError with the newest answer", () => {
+      const before = { ...INITIAL_CHAT_STATE, lastError: "older failure" };
+      expect(reduceChat(before, FAILED_PROMPT).lastError).toBe(FAILED_PROMPT.error);
+    });
+
+    it("leave every other field untouched", () => {
+      const state = reduceChat(INITIAL_CHAT_STATE, FAILED_PROMPT);
+      const { lastError: _error, ...rest } = state;
+      expect(rest).toEqual(INITIAL_CHAT_STATE);
+    });
+
+    it("stay no-ops for a successful prompt response", () => {
+      expect(
+        reduceChat(INITIAL_CHAT_STATE, { type: "response", command: "prompt", success: true }),
+      ).toBe(INITIAL_CHAT_STATE);
+    });
+
+    it("clear a previous error once a prompt succeeds — the retry worked", () => {
+      const refused = reduceChat(INITIAL_CHAT_STATE, FAILED_PROMPT);
+      const cleared = reduceChat(refused, { type: "response", command: "prompt", success: true });
+
+      expect(cleared.lastError).toBeUndefined();
+      const { lastError: _error, ...rest } = cleared;
+      expect(rest).toEqual(INITIAL_CHAT_STATE);
+    });
+
+    it("stay no-ops for any other command's failure — the id-correlated folds own those answers", () => {
+      expect(
+        reduceChat(INITIAL_CHAT_STATE, { type: "response", command: "abort", success: false, error: "boom" }),
+      ).toBe(INITIAL_CHAT_STATE);
+      expect(
+        reduceChat(INITIAL_CHAT_STATE, { type: "response", command: "get_messages", success: false, error: "boom" }),
+      ).toBe(INITIAL_CHAT_STATE);
+      expect(
+        reduceChat(INITIAL_CHAT_STATE, { type: "response", command: "get_state", success: false, error: "boom" }),
+      ).toBe(INITIAL_CHAT_STATE);
+    });
+  });
 });
 
 describe("reduceChat: fixture replays", () => {
@@ -866,6 +923,52 @@ describe("tool execution detail (desktop-rpc T7)", () => {
     const started = reduceChat(INITIAL_CHAT_STATE, start("c1", "read", { path: "a" }));
     expect(started.toolCalls?.[0]?.isError).toBeUndefined();
     expect(started.toolCalls?.[0]?.result).toBeUndefined();
+  });
+});
+
+describe("tool call message binding (S2)", () => {
+  function start(toolCallId: string, toolName: string, args?: unknown): RpcEvent {
+    return { type: "tool_execution_start", toolCallId, toolName, args };
+  }
+  function end(toolCallId: string, toolName: string, result: unknown, isError = false): RpcEvent {
+    return { type: "tool_execution_end", toolCallId, toolName, result, isError };
+  }
+
+  it("a live tool_execution_start binds the call to the streaming assistant message that is producing it", () => {
+    let state = reduceChat(INITIAL_CHAT_STATE, {
+      type: "message_start",
+      message: { role: "assistant", content: [] },
+    });
+    expect(state.messages[0]).toMatchObject({ id: "msg-0", role: "assistant", streaming: true });
+
+    state = reduceChat(state, start("c1", "read", { path: "a" }));
+
+    expect(state.toolCalls?.[0]).toMatchObject({
+      id: "c1",
+      toolName: "read",
+      status: "running",
+      messageId: "msg-0",
+    });
+  });
+
+  it("tool_execution_end completes that same entry without changing its message binding", () => {
+    let state = reduceChat(INITIAL_CHAT_STATE, {
+      type: "message_start",
+      message: { role: "assistant", content: [] },
+    });
+    state = reduceChat(state, start("c1", "read", { path: "a" }));
+
+    state = reduceChat(state, end("c1", "read", { lines: 42 }));
+
+    expect(state.toolCalls).toEqual([
+      { id: "c1", toolName: "read", args: { path: "a" }, result: { lines: 42 }, isError: false, status: "done", messageId: "msg-0" },
+    ]);
+  });
+
+  it("a call with no producing assistant message stays unbound (the renderer's orphan fallback owns it)", () => {
+    const started = reduceChat(INITIAL_CHAT_STATE, start("c1", "read"));
+
+    expect(started.toolCalls?.[0]?.messageId).toBeUndefined();
   });
 });
 

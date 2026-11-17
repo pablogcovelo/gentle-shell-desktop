@@ -9,7 +9,8 @@ Early preview: no signed builds yet, so you run it from source. Tested on macOS 
 ### 1. Requirements
 
 - Node.js 22.19 or newer and [pnpm](https://pnpm.io) 11.
-- The `gentle-shell` launcher, which ships with gentle-pi 3.7.0 or newer:
+- An installed `gentle-shell` supervisor wrapper on `PATH` (recommended). Desktop uses that installation's managed agent home and model configuration. An explicit executable path also works via `GENTLE_SHELL_BIN`.
+- Alternatively, a legacy `gentle-shell` launcher, which ships with gentle-pi 3.7.0 or newer:
 
   ```sh
   npm install -g gentle-pi
@@ -20,7 +21,9 @@ Early preview: no signed builds yet, so you run it from source. Tested on macOS 
 
 ### 2. Sign in to a model provider
 
-The app uses whatever pi is signed in to. Pick one:
+With a supervisor-managed installation, Desktop uses the installed supervisor's fixed agent home, sign-ins and default model. Sign in through `gentle-shell` in the terminal; Desktop does not copy credentials or offer a different home.
+
+For a legacy or explicitly selected source launcher, pick one:
 
 - **You already use pi:** nothing to do. On first run choose "Use my pi setup" and the app reuses `~/.pi/agent` (sign-ins, models, sessions) without touching its `settings.json`.
 - **You want it separate, or have no pi:** the app uses its own home, `~/.gentle-shell/agent`. Sign in there once from the terminal:
@@ -39,9 +42,13 @@ node node_modules/electron/install.js   # downloads the Electron binary; pnpm ma
 pnpm dev
 ```
 
-On first run the window asks where your chats live ("Use my pi setup" or "Keep it separate"). The screen only appears when `~/.pi/agent` exists. The choice is saved; the Workspaces sidebar then shows your existing pi chats by directory. Select a directory row to reopen its chat, or use **Ctrl/Cmd+N** to start a new chat. **Add workspace** opens the native directory picker.
+With an installed supervisor, Desktop skips home selection and reads Pi sessions from the supervisor's managed agent directory. Legacy/source launchers retain their first-run home choice ("Use my pi setup" or "Keep it separate"). The Workspaces sidebar lists only directories you have opened in Desktop, not directories discovered from saved chats. **Add workspace** picks and remembers a directory. Selecting a directory opens a fresh chat or reuses its live workspace; it never automatically resumes the most recent saved session.
 
-Use **Ctrl/Cmd+K** to open the chat search dialog. The top-right panel controls toggle the sidebar and inspector; on narrow windows, the workspace panel control opens the sidebar overlay. The rail's gear opens application settings. The inspector shows TODO, USAGE and AGENTS for the open chat. Ask for delegated work to see agents appear there, then select an agent to inspect its thread. The bottom session footer scrolls horizontally with keyboard focus in narrow windows; its version stays visible. Its MCP, skills and extensions indicators remain visible. Missing capability counts display `0`; tooltips clarify that skills and extensions counts are not yet reported by the bridge.
+Closing a workspace from its row or conversation header stops its chats and removes the directory from the sidebar. Other workspaces keep running. Pi retains the session files; Desktop does not delete chats or project files. With no open workspace, Desktop shows a placeholder and starts no replacement chat.
+
+To restore a saved chat, open its directory and enter **`/resume` in the GUI composer**. Desktop shows the Pi sessions belonging to that exact directory; select one to open it. Cancel or Escape leaves the current chat unchanged. `/resume` is handled locally, not sent to the model. Other directories' histories are not shown in that selector.
+
+Use **Ctrl/Cmd+K** to search the opened workspace directories. The top-right panel controls toggle the sidebar and inspector; on narrow windows, the workspace panel control opens the sidebar overlay. The rail's gear opens application settings. The inspector shows TODO, USAGE and AGENTS for the open chat. Ask for delegated work to see agents appear there, then select an agent to inspect its thread. The bottom session footer scrolls horizontally with keyboard focus in narrow windows; its version stays visible. Its model and MCP indicators are live: the model name — or an explicit “No model — sign in with /login” hint when nothing is signed in — and the MCP inventory arrive from the child as soon as it proves it is alive. The MCP badge counts configured servers first, then registered servers, then exposed tool namespaces when neither server inventory is populated. Its tooltip lists configured servers, registered servers and tool namespaces separately; these inventories do not verify connectivity or connection health. The skills indicator is live via the native `get_commands` catalog, counting only entries whose source is `skill`, not extension or prompt commands. It stays visible with `0` before the catalog arrives; its tooltip distinguishes an absent catalog from a reported catalog with no skills. The extensions indicator remains a `0` placeholder with an explanatory tooltip: loaded-extension module counts are not exposed by the Desktop contract and cannot be inferred from extension commands.
 
 ### Build an app bundle (optional)
 
@@ -128,7 +135,21 @@ See "What it shows" above for why the app sets `GENTLE_SHELL_INTERACTIVE_HOST=1`
 
 See `src/README.md` for why the source tree is shaped the way it is.
 
-`pnpm dev:local-pi` runs the app against a local gentle-pi checkout (default `../gentle-pi-worktrees/desktop-integration`, override with `GENTLE_SHELL_BIN=<path>/bin/gentle-shell.mjs`), useful when changing gentle-pi and the app together.
+### Default: test against the installed supervisor
+
+`pnpm dev` uses `gentle-shell` on `PATH` (or an explicit `GENTLE_SHELL_BIN` executable path). Symlinked installed wrappers are supported: Desktop validates the public `installation.json` beside the resolved installation, keeps the wrapper as the entry point, and sends no source-only `--isolated`, `--link` or `--home` flags. The same managed `Agent` directory supplies session listing. Invalid or unsupported managed descriptors fail clearly instead of falling back to plain pi. If no launcher is installed, setup and legacy session browsing remain available; opening a chat still reports the missing launcher. Fresh chats read native RPC state once to discover the actual model without sending a model prompt, then probe the extension channel once; reopened chats load history first.
+
+A conflicting `GENTLE_SHELL_HOME` or saved `link` choice is rejected rather than silently ignored. Unset the override and remove the saved `home` choice from Desktop's user-data `config.json` to use the installed home, or explicitly select a source launcher to retain that different home. No authentication files need to be moved.
+
+### Optional: test against the sibling gentle-pi checkout
+
+Run `pnpm dev:local-pi` with `../gentle-pi` checked out and its dependencies installed, **and a managed gentle-shell installation on PATH**. This command alone enables `GENTLE_SHELL_DESKTOP_LOCAL_PI=1`. To select another checkout, use `GENTLE_SHELL_BIN=/absolute/path/to/gentle-pi/bin/gentle-shell.mjs pnpm dev:local-pi`.
+
+Desktop runs the absolute source launcher with `--package-root <checkout>` and `--link`, overriding an existing npm package declaration at runtime rather than accidentally loading the installed package. It uses the installed Pi executable (and private Node on PATH when available), disables automatic setup, and fixes both child home and session listing to the installed agent home. Saved Desktop isolated/link choices are ignored without changing them; first-run home selection is skipped. Conflicting explicit home or Pi runtime overrides fail instead of silently selecting another login.
+
+**This shares writable sessions, models, configuration and login refresh state with your installation.** No reinstall or login copy is needed; no package declaration or Desktop home choice is persisted by this adapter. The source runtime itself can still write normal native configuration/session state. This is source development, not supervisor lifecycle or native-policy equivalence. Ordinary `pnpm dev` and explicit source launches without this opt-in retain their previous routing.
+
+`pnpm dev:web` uses an in-memory mock bridge, not a real agent. `dev:local-pi` is optional source development, not the default installed-runtime integration check. Child diagnostics appear in the terminal with the `[pi]` prefix.
 
 ## License
 

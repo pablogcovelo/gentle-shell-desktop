@@ -1,6 +1,10 @@
 import { accessSync, constants, existsSync } from "node:fs";
 import path from "node:path";
+import { managedAgentDir } from "./installedLaunch";
 import type { LauncherLocator, ResolvedLauncher } from "../ports";
+
+/** No launcher was selected or found; invalid selected installations are different errors. */
+export class LauncherUnavailableError extends Error {}
 
 const JS_ENTRY_EXTENSIONS = [".mjs", ".js", ".cjs"];
 
@@ -20,9 +24,9 @@ export function createLauncherLocator(env: NodeJS.ProcessEnv = process.env): Lau
       if (binPath) return resolveBinPath(binPath);
 
       const onPath = findOnPath("gentle-shell", env);
-      if (onPath) return { command: onPath, args: [] };
+      if (onPath) return resolveBinPath(onPath);
 
-      throw new Error(
+      throw new LauncherUnavailableError(
         "gentle-shell launcher not found. Install it with `npm install -g gentle-pi` " +
           "(gentle-pi 3.7.0 or newer) so `gentle-shell` is on PATH, or set GENTLE_SHELL_BIN " +
           "to its full path (`which gentle-shell`). See the README Try it section.",
@@ -32,8 +36,11 @@ export function createLauncherLocator(env: NodeJS.ProcessEnv = process.env): Lau
 }
 
 function resolveBinPath(binPath: string): ResolvedLauncher {
+  const home = managedAgentDir(binPath);
   const isJsEntry = JS_ENTRY_EXTENSIONS.includes(path.extname(binPath));
-  if (!isJsEntry) return { command: binPath, args: [] };
+  if (!isJsEntry) {
+    return { command: binPath, args: [], ...(home ? { managedAgentDir: home } : {}) };
+  }
 
   // process.execPath under Electron is the Electron binary; ELECTRON_RUN_AS_NODE
   // makes it run this JS entry as plain Node instead of launching another

@@ -387,6 +387,62 @@ describe("historyToToolCalls (desktop-pending-work T7, S7)", () => {
     expect(historyToToolCalls([])).toEqual([]);
   });
 
+  it("carries the enclosing assistant message id so a reopened chat keeps the same grouping (S2)", () => {
+    const messages: RpcMessage[] = [
+      { role: "user", content: "run ls", timestamp: 0 },
+      {
+        role: MESSAGE_ROLE.ASSISTANT,
+        content: [
+          { type: "toolCall", id: "call_1", name: "bash", arguments: { command: "ls" } },
+          { type: "text", text: "listed" },
+        ],
+        timestamp: 0,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call_1",
+        toolName: "bash",
+        content: [{ type: "text", text: "file.txt\n" }],
+        isError: false,
+        timestamp: 0,
+      },
+    ];
+
+    const rows = historyToToolCalls(messages);
+
+    expect(rows[0]?.messageId).toBe("msg-1");
+    // The binding is the id the enclosing message actually carries in the
+    // thread, under the same positional scheme historyToMessages uses.
+    expect(historyToMessages(messages).map((message) => message.id)).toContain("msg-1");
+  });
+
+  it("a call inside an assistant message the text projection drops stays unbound (the renderer's fallback owns it)", () => {
+    const messages: RpcMessage[] = [
+      {
+        role: MESSAGE_ROLE.ASSISTANT,
+        content: [{ type: "toolCall", id: "call_1", name: "read", arguments: {} }],
+        timestamp: 0,
+      },
+    ];
+
+    expect(historyToToolCalls(messages)[0]?.messageId).toBeUndefined();
+  });
+
+  it("a result-only row has no enclosing assistant message and stays unbound", () => {
+    const messages: RpcMessage[] = [
+      {
+        role: "toolResult",
+        toolCallId: "call_9",
+        toolName: "grep",
+        content: [{ type: "text", text: "match" }],
+        isError: false,
+        timestamp: 0,
+      },
+    ];
+
+    expect(historyToToolCalls(messages)[0]?.messageId).toBeUndefined();
+  });
+
   it("leaves the text-only message projection untouched: the same history still yields the same ChatMessages", () => {
     const messages: RpcMessage[] = [
       { role: "user", content: "run ls", timestamp: 0 },

@@ -6,10 +6,11 @@ import type { IpcMain, WebContents } from "electron";
 import type { ChatState } from "@shared/bridge-types";
 import { IPC_CHANNELS } from "@shared/ipc-channels";
 import { ChatHost } from "../domain/session/ChatHost";
+import { createAppConfigStore } from "../adapters/appConfigStore";
 import type { LauncherLocator, ProcessSpawner, SessionInfoLike, SessionStore, SpawnedProcess } from "../ports";
 import type { SetupService } from "../ports";
 import { WorkspaceHostRegistry } from "../domain/session/WorkspaceHostRegistry";
-import { WorkspaceHostRouter, registerHandlers, validateWorkspaceDirectory, type WorkspaceHostSource, type WorkspaceRouterDeps } from "./registerHandlers";
+import { WorkspaceHostRouter, registerHandlers, validateWorkspaceDirectory, type WorkspaceHostSource, type WorkspaceRegistryPort, type WorkspaceRouterDeps } from "./registerHandlers";
 
 function fakeHost(overrides: Partial<ChatHost> = {}): ChatHost {
   return {
@@ -140,6 +141,160 @@ describe("WorkspaceHostRouter workspace creation races", () => {
     expect(byId.size).toBe(1);
     expect(a.hostId).toBe(b.hostId);
     expect(hostNewChat).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("directory closure", () => {
+  it("closes A after discovering pending B ownership without awaiting B startup or validation", async () => {
+    vi.useFakeTimers();
+    const { spawner, handles, events } = createFakeSpawner();
+    let releaseLookup!: (sessions: SessionInfoLike[]) => void;
+    let releaseValidation!: () => void;
+    const saved = [session({ id: "saved-B", cwd: "/tmp/B" })];
+    const store: SessionStore = { listAll: () => new Promise((resolve) => { releaseLookup = resolve; }) };
+    const registry = new WorkspaceHostRegistry({ createHostDeps: () => ({ spawner, locator: fakeLocator, sessionStore: store, env: {} }) });
+    const router = new WorkspaceHostRouter(registry, { validateDirectory: (directory) => directory === "/tmp/B-create"
+      ? new Promise((resolve) => { releaseValidation = resolve; }) : Promise.resolve() });
+    const closed: string[] = [];
+    router.onClosed((id) => closed.push(id));
+    const a = await router.createWorkspace("/tmp/A");
+    const openingB = router.openChat("saved-B");
+    const creatingB = router.createWorkspace("/tmp/B-create");
+    let bStarted = false;
+    void openingB.then(() => { bStarted = true; });
+    let aClosed = false;
+    const closing = router.closeWorkspace("/tmp/A").then(() => { aClosed = true; });
+    const duplicate = router.closeWorkspace("/tmp/A");
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(aClosed).toBe(false); // unknown metadata could still belong to A
+      releaseLookup(saved);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(handles[1]!.cwd).toBe("/tmp/B");
+      expect(events).toContain("endStdin:0");
+      handles[0]!.resolveExited({ code: 0, signal: null });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(aClosed).toBe(true); // B's get_messages and validator are still gated
+      expect(bStarted).toBe(false);
+      expect(closed).toEqual([a.hostId]);
+      expect(events).toEqual(["spawn:0", "spawn:1", "endStdin:0"]);
+      await expect(router.refreshChat(a.hostId)).rejects.toThrow(`No live workspace host for id "${a.hostId}" (unknown or already stopped)`);
+    } finally {
+      // Release every deterministic gate, even in the intended RED case.
+      releaseValidation();
+      await respondToHistoryRequest(handles, 1);
+      handles[0]!.resolveExited({ code: 0, signal: null });
+      await Promise.all([openingB, creatingB, closing, duplicate]);
+      vi.useRealTimers();
+    }
+    const b = await openingB;
+    await expect(router.sendMessage(b.hostId, "only B")).resolves.toEqual({ queued: true });
+    expect(handles[1]!.writes.some((write) => write.includes('"message":"only B"'))).toBe(true);
+    expect(handles[0]!.writes.some((write) => write.includes("only B"))).toBe(false);
+    expect(saved).toEqual([session({ id: "saved-B", cwd: "/tmp/B" })]);
+  });
+
+  it("attempts every owner on failure and retains the persistent entry", async () => {
+    const a = fakeHost({ hostId: "host-1", cwd: "/tmp/A" });
+    const resumed = fakeHost({ hostId: "host-2", effectiveCwd: "/tmp/A" });
+    const b = fakeHost({ hostId: "host-3", cwd: "/tmp/B" });
+    const source = fakeHostSource(a, resumed, b);
+    const dropped = new Set<string>();
+    const get = source.get;
+    const list = source.list;
+    source.get = (id) => dropped.has(id) ? undefined : get(id);
+    source.list = () => list().filter((host) => !dropped.has(host.hostId));
+    const stopHost = vi.fn(async (id: string) => {
+      dropped.add(id); // registry's existing drop-before-stop contract
+      if (id === a.hostId) throw new Error("stop uncertain");
+    });
+    source.stopHost = stopHost;
+    const router = new WorkspaceHostRouter(source);
+    const ipc = fakeIpcMain();
+    const remove = vi.fn();
+    registerHandlers(router, fakeSetup(), fakeWebContents().webContents, ipc, {
+      workspaces: { list: () => ["/tmp/A", "/tmp/B"], add: () => [], remove },
+    });
+    await expect(registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_REMOVE)({}, "/tmp/A")).rejects.toThrow("stop uncertain");
+    expect(stopHost.mock.calls).toEqual([[a.hostId], [resumed.hostId]]);
+    expect(remove).not.toHaveBeenCalled();
+    expect(source.get(a.hostId)).toBeUndefined();
+    expect(source.get(resumed.hostId)).toBeUndefined();
+    expect(source.get(b.hostId)).toBe(b);
+  });
+
+  it("joins a workspace start already inside newChat and rejects its late answer", async () => {
+    const { spawner, handles, events } = createFakeSpawner();
+    const registry = new WorkspaceHostRegistry({ createHostDeps: () => ({ spawner, locator: fakeLocator, sessionStore: fakeSessionStore([]), env: {} }) });
+    const router = new WorkspaceHostRouter(registry, { validateDirectory: async () => {} });
+    const opening = router.createWorkspace("/tmp/A");
+    // Validation completes, but the host's queued performStart has not yet run.
+    await Promise.resolve();
+    const rejected = expect(opening).rejects.toThrow('Workspace "/tmp/A" is closing');
+    const closing = router.closeWorkspace("/tmp/A");
+    const duplicate = router.closeWorkspace("/tmp/A");
+    await vi.waitFor(() => expect(events).toContain("endStdin:0"));
+    handles[0]!.resolveExited({ code: 0, signal: null });
+    await Promise.all([closing, duplicate, rejected]);
+    expect(events).toEqual(["spawn:0", "endStdin:0"]);
+    expect(registry.list()).toEqual([]);
+    const reopened = await router.createWorkspace("/tmp/A");
+    expect(reopened.hostId).toBe("host-2");
+    expect(handles[1]!.args).not.toContain("--session");
+  });
+  it("closes fresh and legacy resumed hosts, retaining history and unrelated routing", async () => {
+    const { spawner, handles, events } = createFakeSpawner();
+    const saved = [session()];
+    const store = fakeSessionStore(saved);
+    const registry = new WorkspaceHostRegistry({ createHostDeps: () => ({ spawner, locator: fakeLocator, sessionStore: store, env: {} }) });
+    const router = new WorkspaceHostRouter(registry, { validateDirectory: async () => {} });
+    const closed: string[] = [];
+    router.onClosed((id) => closed.push(id));
+    const a = await router.createWorkspace("/tmp/proj");
+    const b = await router.createWorkspace("/tmp/B");
+    const opening = router.openChat("sess-1");
+    await respondToHistoryRequest(handles, 2);
+    const resumed = await opening;
+    const closing = router.closeWorkspace("/tmp/proj");
+    await vi.waitFor(() => expect(events).toContain("endStdin:0"));
+    handles[0]!.resolveExited({ code: 0, signal: null });
+    await vi.waitFor(() => expect(events).toContain("endStdin:2"));
+    handles[2]!.resolveExited({ code: 0, signal: null });
+    await closing;
+    expect(closed.sort()).toEqual([a.hostId, resumed.hostId].sort());
+    expect(events.filter((event) => event.startsWith("endStdin:"))).toEqual(["endStdin:0", "endStdin:2"]);
+    await expect(router.sendMessage(a.hostId, "no")).rejects.toThrow(`No live workspace host for id "${a.hostId}" (unknown or already stopped)`);
+    await expect(router.sendMessage(b.hostId, "still usable")).resolves.toEqual({ queued: true });
+    expect(await router.listChats()).toHaveLength(1);
+    expect(await store.listAll()).toEqual(saved);
+  });
+
+  it("joins pending validation, metadata lookup and duplicate closes without publishing late results", async () => {
+    const { spawner, handles, events } = createFakeSpawner();
+    let releaseValidation!: () => void;
+    let releaseLookup!: (sessions: SessionInfoLike[]) => void;
+    const store: SessionStore = { listAll: () => new Promise((resolve) => { releaseLookup = resolve; }) };
+    const registry = new WorkspaceHostRegistry({ createHostDeps: () => ({ spawner, locator: fakeLocator, sessionStore: store, env: {} }) });
+    const router = new WorkspaceHostRouter(registry, { validateDirectory: () => new Promise((resolve) => { releaseValidation = resolve; }) });
+    const closed: string[] = [];
+    router.onClosed((id) => closed.push(id));
+    const creating = router.createWorkspace("/tmp/proj");
+    const opening = router.openChat("sess-1");
+    const rejectedCreate = expect(creating).rejects.toThrow('Workspace "/tmp/proj" is closing');
+    const rejectedOpen = expect(opening).rejects.toThrow('Workspace "/tmp/proj" is closing');
+    const closing = router.closeWorkspace("/tmp/proj");
+    const duplicate = router.closeWorkspace("/tmp/proj");
+    releaseValidation();
+    await vi.waitFor(() => expect(releaseLookup).toBeTypeOf("function"));
+    releaseLookup([session()]);
+    await respondToHistoryRequest(handles, 0);
+    await vi.waitFor(() => expect(events).toContain("endStdin:0"));
+    handles[0]!.resolveExited({ code: 0, signal: null });
+    await Promise.all([closing, duplicate, rejectedCreate, rejectedOpen]);
+    expect(handles).toHaveLength(1);
+    expect(events).toEqual(["spawn:0", "endStdin:0"]);
+    expect(closed).toEqual(["host-1"]);
+    expect(registry.list().every((host) => !host.isAlive)).toBe(true);
   });
 });
 
@@ -373,6 +528,174 @@ describe("workspace.create (T11)", () => {
     const picked = setup({ routerDeps: { chooseDirectory: vi.fn().mockResolvedValue("/tmp/chosen") } });
     await expect(registeredHandler(picked.ipc, IPC_CHANNELS.WORKSPACE_CHOOSE_DIRECTORY)({})).resolves.toBe("/tmp/chosen");
     expect(picked.handles).toHaveLength(0); // choosing alone starts no child
+  });
+});
+
+// T1 (S1/S2) — the persisted workspace registry channels: the panel's
+// list (persisted opened directories), add (validate, then
+// persist), remove (close directory owners and remove entry) and open (the creation
+// path without the picker). Each of list/add/remove answers the fresh
+// WorkspaceList — one explicit re-read per action, no push channel.
+describe("workspace registry channels (T1)", () => {
+  function fakeWorkspaceRegistry(persisted: string[]): WorkspaceRegistryPort {
+    const list = [...persisted];
+    return {
+      list: vi.fn(() => [...list]),
+      add: vi.fn((directory: string) => {
+        if (!list.includes(directory)) list.unshift(directory);
+        return [...list];
+      }),
+      remove: vi.fn((directory: string) => {
+        const index = list.indexOf(directory);
+        if (index >= 0) list.splice(index, 1);
+        return [...list];
+      }),
+    };
+  }
+
+  function setup(persisted: string[], routerDeps: WorkspaceRouterDeps = { validateDirectory: vi.fn().mockResolvedValue(undefined) }): {
+    ipc: IpcMain;
+    handles: FakeProcessHandle[];
+    registry: ReturnType<typeof fakeWorkspaceRegistry>;
+  } {
+    const { spawner, handles } = createFakeSpawner();
+    const store = fakeSessionStore([session({ id: "sess-1", path: "/home/sessions/proj/sess-1.jsonl", cwd: "/tmp/proj" })]);
+    const ipc = fakeIpcMain();
+    const registry = fakeWorkspaceRegistry(persisted);
+    const router = new WorkspaceHostRouter(
+      realHostSource(() => ({ spawner, locator: fakeLocator, sessionStore: store, env: {} })),
+      routerDeps,
+    );
+    registerHandlers(router, fakeSetup(), fakeWebContents().webContents, ipc, { workspaces: registry });
+    return { ipc, handles, registry };
+  }
+
+  it("closed navigation survives a config reload even with saved Pi history", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "gentle-workspace-reload-"));
+    try {
+      const configPath = join(scratch, "config.json");
+      const config = createAppConfigStore(configPath);
+      config.write({ home: "isolated" });
+      config.addWorkspace("/tmp/proj");
+      const { spawner, handles } = createFakeSpawner();
+      const sessions = [session()];
+      const store = fakeSessionStore(sessions);
+      const router = new WorkspaceHostRouter(new WorkspaceHostRegistry({ createHostDeps: () => ({ spawner, locator: fakeLocator, sessionStore: store, env: {} }) }));
+      const ipc = fakeIpcMain();
+      registerHandlers(router, fakeSetup(), fakeWebContents().webContents, ipc, { workspaces: {
+        list: () => config.listWorkspaces(),
+        add: (directory) => config.addWorkspace(directory).workspaces ?? [],
+        remove: (directory) => config.removeWorkspace(directory).workspaces ?? [],
+      } });
+      await expect(registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_REMOVE)({}, "/tmp/proj")).resolves.toEqual({ directories: [], persisted: [] });
+      const reloaded = createAppConfigStore(configPath);
+      expect(reloaded.read()).toEqual({ home: "isolated", workspaces: [] });
+      expect(await store.listAll()).toEqual(sessions);
+      expect(handles).toEqual([]);
+      await expect(registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_LIST)({})).resolves.toEqual({ directories: [], persisted: [] });
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it("workspace.list answers persisted opened directories in registry order", async () => {
+    const { ipc } = setup(["/tmp/persisted-a", "/tmp/proj"]);
+
+    await expect(registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_LIST)({})).resolves.toEqual({
+      directories: ["/tmp/persisted-a", "/tmp/proj"],
+      persisted: ["/tmp/persisted-a", "/tmp/proj"],
+    });
+  });
+
+  it("workspace.list excludes a session directory the registry never persisted", async () => {
+    const { ipc } = setup([]);
+
+    await expect(registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_LIST)({})).resolves.toEqual({
+      directories: [],
+      persisted: [],
+    });
+  });
+
+  it("workspace.add validates the directory BEFORE persisting: an invalid one is refused and persists nothing", async () => {
+    const { ipc, registry, handles } = setup([], {
+      validateDirectory: vi.fn().mockRejectedValue(new Error('"relative/path" is not an absolute path')),
+    });
+
+    await expect(registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_ADD)({}, "relative/path")).rejects.toThrow(
+      /not an absolute path/,
+    );
+    expect(registry.add).not.toHaveBeenCalled();
+    expect(registry.list()).toEqual([]);
+    expect(handles).toHaveLength(0); // nothing was created either
+  });
+
+  it("workspace.add persists a valid directory and answers the fresh list including it", async () => {
+    const { ipc, registry } = setup([]);
+
+    const answer = (await registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_ADD)({}, "/tmp/added")) as {
+      directories: readonly string[];
+      persisted: readonly string[];
+    };
+
+    expect(registry.add).toHaveBeenCalledWith("/tmp/added");
+    // A persisted directory with no chat yet is still a row (S1): it is
+    // listed even though pi has no session for it.
+    expect(answer.persisted).toEqual(["/tmp/added"]);
+    expect(answer.directories).toEqual(["/tmp/added"]);
+  });
+
+  it("workspace.remove removes navigation without starting a history host", async () => {
+    const { ipc, handles } = setup(["/tmp/persisted"]);
+
+    const answer = (await registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_REMOVE)({}, "/tmp/persisted")) as {
+      directories: readonly string[];
+      persisted: readonly string[];
+    };
+
+    expect(answer.persisted).toEqual([]);
+    // Saved history is not opened navigation.
+    expect(answer.directories).toEqual([]);
+    expect(handles).toHaveLength(0); // no child was spawned or stopped
+  });
+
+  it("workspace.remove leaves saved history out of the opened list", async () => {
+    const { ipc } = setup([]);
+
+    const answer = (await registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_REMOVE)({}, "/tmp/proj")) as {
+      directories: readonly string[];
+      persisted: readonly string[];
+    };
+
+    expect(answer.persisted).toEqual([]);
+    expect(answer.directories).toEqual([]);
+  });
+
+  it("workspace.open is the creation path without the picker: validates, spawns the host with that directory as cwd", async () => {
+    const { ipc, handles } = setup([]);
+
+    const opened = (await registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_OPEN)({}, "/tmp/opened")) as {
+      hostId: string;
+      state: ChatState;
+    };
+
+    expect(opened.hostId).toBe("host-1");
+    expect(handles).toHaveLength(1);
+    expect(handles[0]!.cwd).toBe("/tmp/opened");
+    expect(opened.state.workspacePath).toBe("/tmp/opened");
+  });
+
+  it("the registry channels refuse clearly when no registry is configured", async () => {
+    const { spawner } = createFakeSpawner();
+    const store = fakeSessionStore([]);
+    const ipc = fakeIpcMain();
+    const router = new WorkspaceHostRouter(
+      realHostSource(() => ({ spawner, locator: fakeLocator, sessionStore: store, env: {} })),
+    );
+    registerHandlers(router, fakeSetup(), fakeWebContents().webContents, ipc);
+
+    await expect(registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_LIST)({})).rejects.toThrow(/workspace registry is unavailable/);
+    await expect(registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_ADD)({}, "/tmp/a")).rejects.toThrow(/workspace registry is unavailable/);
+    await expect(registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_REMOVE)({}, "/tmp/a")).rejects.toThrow(/workspace registry is unavailable/);
   });
 });
 

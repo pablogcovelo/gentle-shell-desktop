@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { CHAT_STATE, type ChatSummary } from "@shared/bridge-types";
-import { ChatList } from "./ChatList";
+import { ChatList, type WorkspaceGroup } from "./ChatList";
 
 const NOW = new Date("2026-09-21T12:00:00.000Z");
 
@@ -83,6 +83,76 @@ describe("ChatList", () => {
     expect(screen.getByRole("button", { name: /Alpha/ })).not.toHaveTextContent("Alpha");
     expect(screen.getByRole("button", { name: /Alpha/ })).toHaveTextContent("project");
   });
+
+describe("ChatList workspace groups (T1)", () => {
+  const groups: WorkspaceGroup[] = [
+    { directory: "/tmp/added", chats: [], persisted: true },
+    { directory: "/tmp/project", chats: [makeChat({ id: "a", title: "Alpha", cwd: "/tmp/project" })], persisted: false },
+  ];
+
+  it("renders one workspace row per directory and its chat rows underneath", () => {
+    render(<ChatList chats={[]} groups={groups} onSelect={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: "added — workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "project — workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Alpha/ })).toBeInTheDocument();
+  });
+
+  it("marks the selected chat's workspace row current", () => {
+    render(<ChatList chats={[makeChat({ id: "a", cwd: "/tmp/project" })]} groups={groups} selectedId="a" onSelect={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: "project — workspace" })).toHaveAttribute("aria-current", "true");
+    expect(screen.getByRole("button", { name: "added — workspace" })).not.toHaveAttribute("aria-current");
+  });
+
+  it("keeps the remove action on persisted rows only — a session-only row has nothing persisted to forget", () => {
+    render(<ChatList chats={[]} groups={groups} onSelect={vi.fn()} onRemoveWorkspace={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: "Remove workspace added" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove workspace project" })).not.toBeInTheDocument();
+  });
+
+  // S4: the highlight box is the row, so the selected workspace's close
+  // control sits inside the box's top-right corner instead of in a separate
+  // column that made the right inset differ from the left one.
+  it("draws the selected workspace highlight on the row itself, around its close control", () => {
+    const persistedGroups: WorkspaceGroup[] = [
+      { directory: "/tmp/added", chats: [], persisted: true },
+      { directory: "/tmp/project", chats: [makeChat({ id: "a", title: "Alpha", cwd: "/tmp/project" })], persisted: true },
+    ];
+
+    render(<ChatList chats={[makeChat({ id: "a", cwd: "/tmp/project" })]} groups={persistedGroups} selectedId="a" onSelect={vi.fn()} onRemoveWorkspace={vi.fn()} />);
+
+    const row = screen.getByRole("button", { name: "project — workspace" }).closest("li");
+    expect(row).toHaveClass("gc-workspace-row", "gc-workspace-row--selected");
+    expect(row).toContainElement(screen.getByRole("button", { name: "Remove workspace project" }));
+  });
+
+  it("reports the picked workspace directory without touching chat selection", () => {
+    const onSelectWorkspace = vi.fn();
+    render(<ChatList chats={[]} groups={groups} onSelect={vi.fn()} onSelectWorkspace={onSelectWorkspace} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "added — workspace" }));
+
+    expect(onSelectWorkspace).toHaveBeenCalledWith("/tmp/added");
+  });
+
+  it("reports the directory to forget when a persisted row's remove action is clicked", () => {
+    const onRemoveWorkspace = vi.fn();
+    render(<ChatList chats={[]} groups={groups} onSelect={vi.fn()} onRemoveWorkspace={onRemoveWorkspace} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove workspace added" }));
+
+    expect(onRemoveWorkspace).toHaveBeenCalledWith("/tmp/added");
+  });
+
+  it("renders chats that belong to no workspace group flat underneath the groups", () => {
+    const stray = makeChat({ id: "stray", title: "Stray", cwd: "" });
+    render(<ChatList chats={[stray]} groups={groups} onSelect={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: /Stray/ })).toBeInTheDocument();
+  });
+});
 
 it("shows the branch under the selected workspace's name and nowhere else", () => {
   const chats = [

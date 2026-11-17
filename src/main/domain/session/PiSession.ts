@@ -143,8 +143,8 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
   private worktreeRequestEpoch = 0;
   /** The desktop control channel's adoption state for THIS child's
    * lifetime (T3 correction). S10: `capabilities` is the only support
-   * probe — until it succeeds for the live child, NOTHING is written to
-   * the child's stdin on our initiative, because on a child without the
+   * probe — until it succeeds for the live child, extension reads stay
+   * gated (the native get_state bootstrap is safe), because on a child without the
    * bundled desktop extension a `/gentle:desktop {…}` prompt is an
    * unregistered slash string that would fall through as an ordinary
    * prompt (a model call and transcript pollution). Failed stays failed
@@ -245,15 +245,13 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
       // landing first would write a `/gentle:desktop` line and take
       // `get_messages` out of last position while ChatHost's bounded
       // history wait is still observing it (correction R3-001). A FRESH
-      // chat stays silent on stdin until the user acts
-      // (ChatHost.test.ts pins that contract); its first control write is
-      // the probe at its first settled turn (agent_settled, below), and
-      // the `rate_limit` event is the live usage path before that — a
-      // provider's first response records windows and pushes them without
-      // any request. See probeChannel/requestUsage for the full trigger
-      // set (never a timer).
+      // child may emit no unsolicited startup frames. One correlated native
+      // state read bootstraps identity without a model prompt; its reply
+      // triggers the existing once-only capabilities probe.
       if (this.sessionPath) {
         this.requestHistory();
+      } else {
+        this.requestState();
       }
     } catch (error) {
       this.surfaceError(toError(error));
@@ -331,11 +329,23 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
    *     a provider's `pending`, which means the provider has not reported
    *     yet).
    *
-   * Issued from exactly two places, both lifecycle boundaries and neither
-   * a timer: a REOPENED chat's start (before the history request, so
-   * `get_messages` stays the child's last write), and a FRESH chat's
-   * first settled turn (its start stays stdin-silent — ChatHost.test.ts
-   * pins that). `probeState !== "idle"` makes repeat calls no-ops.
+   * Issued from three places, all lifecycle boundaries and none a timer
+   * (desktop-workspace-registry-and-diagnostics T3):
+   *
+   *   1. a FRESH chat's first decoded stdout frame, normally the native
+   *      bootstrap get_state reply. No unsolicited startup frame or settled
+   *      model turn is required.
+   *   2. a REOPENED chat's history response (correction R3-001): frames
+   *      that arrive while the history request is still pending prove
+   *      aliveness without proving the history exchange finished, so
+   *      they do NOT probe — `get_messages` keeps its last-write position
+   *      while ChatHost's bounded history wait is observing it.
+   *   3. the first settled turn as the FALLBACK (agent_settled), for a
+   *      child whose earlier frames never made it to a probe under the
+   *      rules above.
+   *
+   * `probeState !== "idle"` makes repeat calls no-ops (the once-only
+   * guard); a failed probe stays failed for the child's lifetime.
    */
   private probeChannel(): void {
     const rpc = this.rpcClient;
@@ -375,14 +385,19 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
    * Reads the session identity from pi's own RPC commands (desktop-rpc T4):
    * `get_session_stats` for cost, tokens and context usage, `get_state` for
    * the effective model and thinking level. Both are ordinary commands
-   * correlated by `id`, never desktop-rpc prompts, and both are gated on the
-   * adopted channel like every other control write.
+   * correlated by `id`, never desktop-rpc prompts. Refreshes are gated on
+   * the adopted channel; the fresh-child bootstrap reuses only the state read.
    */
   private requestIdentity(): void {
     if (this.probeState !== "ok") return;
     const statsId = `stats-${this.identityRequestCounter++}`;
     this.pendingStatsRequestId = statsId;
     this.send({ type: "get_session_stats", id: statsId });
+    this.requestState();
+  }
+
+  /** Native read: no model invocation or extension-channel dependency. */
+  private requestState(): void {
     const stateId = `state-${this.identityRequestCounter++}`;
     this.pendingStateRequestId = stateId;
     this.send({ type: "get_state", id: stateId });
@@ -806,6 +821,15 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
       const decoded = decodeLine(line);
       if ("kind" in decoded) return; // unknown/unmodeled line: nothing to fold or emit
 
+      // The first decoded frame (including the native bootstrap reply)
+      // proves aliveness without waiting for a model turn. While a reopened chat's
+      // history request is still pending the probe waits for its response
+      // instead (correction R3-001). `probeChannel` no-ops once it has
+      // started or failed, so later frames never re-probe.
+      if (this.process && this.probeState === "idle" && this.pendingHistoryRequestId === undefined) {
+        this.probeChannel();
+      }
+
       // The desktop-rpc control channel answers on a `gentle-desktop-rpc`
       // setWidget frame (S10/S11): feed the client and stop — this frame
       // is never chat state, so reduceChat must not see it. Any other
@@ -890,9 +914,11 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
       // channel state must survive the reducer's wholesale helpers
       // replacement (desktop-rpc T6, see settleHelpers).
       this.state = this.settleHelpers(this.state, now);
-      // reduceChat has no case for "response" (its default arm returns
-      // state unchanged), so folding the get_messages history response in
-      // here, right after, never fights it.
+      // reduceChat's "response" arm folds only a FAILED prompt response
+      // (the child's own reason a turn could not run, S5); the id-
+      // correlated folds below own every other response and keep priority
+      // over it, so folding the get_messages history response in here,
+      // right after, never fights it.
       if (decoded.type === "response") {
         const historyWasPending = this.pendingHistoryRequestId !== undefined;
         this.state = this.applyHistoryResponse(this.state, decoded);

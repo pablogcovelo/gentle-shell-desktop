@@ -4,7 +4,7 @@ import { resolveToolCategory } from "@shared/toolVocabulary";
 import "./ActionRows.css";
 
 export interface ActionRowsProps {
-  /** The tool executions this chat has seen, newest last (ChatState.toolCalls). */
+  /** The tool calls this group shows, oldest first (ChatState.toolCalls). */
   readonly toolCalls?: readonly ToolCallView[];
   /** The vocabulary the child published. Absent until it answers
    * `tool_vocabulary`, and then every row falls back to its raw tool name —
@@ -13,27 +13,24 @@ export interface ActionRowsProps {
 }
 
 /**
- * The chat's non-conversational activity, as the terminal shows it: one
- * collapsed row per tool execution with the glyph the child's own vocabulary
- * assigns to it, expandable to the exact arguments and result.
- *
- * Deliberately NOT messages: a tool call never becomes a bubble, and the rows
- * live beside the thread rather than inside it, so the transcript keeps
- * meaning "what was said".
+ * One collapsed row per tool execution with the glyph the child's own
+ * vocabulary assigns to it, expandable to the exact arguments and result —
+ * the same rows the TUI shows (S2). The group renders INSIDE the message
+ * that produced the calls (MessageBubble), never as a standalone list at the
+ * transcript end: the only place it appears outside a bubble is the orphan
+ * fallback in MessageThread, for calls whose producing message cannot be
+ * resolved. Deliberately NOT messages: a tool call never becomes a bubble.
  */
 export function ActionRows({ toolCalls, vocabulary }: ActionRowsProps) {
   const calls = toolCalls ?? [];
   if (calls.length === 0) return null;
 
   return (
-    <section className="gc-action-rows" aria-label="Tool activity">
-      <p className="gc-action-rows__caption">Tool activity</p>
-      <ul className="gc-action-rows__list">
-        {calls.map((call) => (
-          <ActionRow key={call.id} call={call} vocabulary={vocabulary} />
-        ))}
-      </ul>
-    </section>
+    <ul className="gc-action-rows" data-testid="gc-action-rows" aria-label="Tool actions">
+      {calls.map((call) => (
+        <ActionRow key={call.id} call={call} vocabulary={vocabulary} />
+      ))}
+    </ul>
   );
 }
 
@@ -42,7 +39,9 @@ function ActionRow({ call, vocabulary }: { call: ToolCallView; vocabulary?: Tool
   const entry = resolveToolCategory(vocabulary, call.toolName);
   const glyph = entry?.glyph ?? "•";
   const label = entry?.heading ?? call.toolName;
-  const state = call.status === "running" ? "running" : call.isError ? "failed" : "done";
+  let state = "done";
+  if (call.status === "running") state = "running";
+  else if (call.isError) state = "failed";
 
   return (
     <li className="gc-action-row" data-category={entry?.category ?? "unknown"} data-status={state}>

@@ -42,8 +42,9 @@ export const IPC_CHANNELS = {
   CLOSED_PUSH: "chat.closed",
   /** Opens Electron's native directory picker from the main process (T11)
    * and answers the chosen absolute directory path, or null when the user
-   * cancelled. Choosing alone creates nothing — workspace.create is the
-   * request that does. */
+   * cancelled. Choosing alone creates nothing — workspace.add (persist)
+   * and workspace.create/workspace.open (open a chat) are the requests
+   * that do. */
   WORKSPACE_CHOOSE_DIRECTORY: "workspace.chooseDirectory",
   /** Creates a workspace bound to an absolute directory (T11): the
    * directory is validated in main BEFORE anything is created (exists, is
@@ -53,6 +54,24 @@ export const IPC_CHANNELS = {
    * + state like chat.open/chat.new; an invalid directory is refused with
    * a clear message and leaves no host, no chat and no state behind. */
   WORKSPACE_CREATE: "workspace.create",
+  /** T1 (S1/S2): the Workspaces panel's directories — the persisted
+   * workspace registry UNION the directories pi already has sessions for,
+   * persisted entries first, deduplicated. Answers a WorkspaceList. */
+  WORKSPACE_LIST: "workspace.list",
+  /** T1 (S2): persists the picked directory in the app config (next to
+   * `home`), AFTER the same validation workspace.create runs, and answers
+   * the fresh WorkspaceList so the panel re-renders without a restart. */
+  WORKSPACE_ADD: "workspace.add",
+  /** T1: removes ONLY the persisted registry entry — never a session
+   * file, a directory or a chat — and answers the fresh WorkspaceList.
+   * A directory without a persisted entry is a no-op. */
+  WORKSPACE_REMOVE: "workspace.remove",
+  /** T1: opens a chat for a workspace directory WITHOUT the native
+   * picker — the same creation path as workspace.create (validated
+   * first, an already-open directory reusing its host, the child spawned
+   * with that directory as cwd). Selecting a persisted workspace that
+   * has no chats yet uses this. */
+  WORKSPACE_OPEN: "workspace.open",
   /** First-run status (T5): whether to show the home-choice screen. */
   SETUP_STATUS: "setup.status",
   /** Persists the chosen home mode (T5). */

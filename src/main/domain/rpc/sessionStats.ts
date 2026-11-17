@@ -99,8 +99,26 @@ function toContextUsage(
   };
 }
 
+/**
+ * The wire's statement "this session has no model", expressed as explicit
+ * clears of the model identity fields (S5, desktop-workspace-registry-and-
+ * diagnostics): the caller (PiSession) spreads the parsed partial over the
+ * last-known identity, so explicit undefined values REPLACE a model an
+ * earlier reply had folded — an omitted field would silently keep it.
+ */
+const NO_MODEL: Partial<SessionIdentityView> = { modelId: undefined, modelName: undefined, modelProvider: undefined };
+
 function toModel(value: unknown): Partial<SessionIdentityView> {
+  // Documented absence ("a full Model object or null") is an explicit
+  // no-model statement from the child: clear the identity, never keep a
+  // stale one under it.
+  if (value === null) return NO_MODEL;
   if (!isRecord(value) || typeof value.id !== "string" || value.id.length === 0) return {};
+  // The isolated home with nothing signed in answers the literal
+  // "unknown" ("model":{"id":"unknown","name":"unknown"}). That is the
+  // same statement in disguise — normalize it here so the wire value never
+  // reaches the UI's label as if it were a model name.
+  if (value.id === "unknown") return NO_MODEL;
   return {
     modelId: value.id,
     ...(typeof value.name === "string" && value.name.length > 0 ? { modelName: value.name } : {}),

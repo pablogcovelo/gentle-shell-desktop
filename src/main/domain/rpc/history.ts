@@ -84,9 +84,24 @@ function toChatMessage(message: RpcMessage, index: number): ChatMessage | undefi
  */
 export function historyToToolCalls(messages: readonly RpcMessage[]): ToolCallView[] {
   const rows: ToolCallView[] = [];
+  // S2: a tool call is content of its enclosing assistant message, so the
+  // row's messageId is that message's id — under the SAME positional scheme
+  // historyToMessages uses (`msg-<index>`, counted over the messages that
+  // actually yield a ChatMessage: every user message, and an assistant one
+  // only when its text survives the empty-bubble rule). A call inside an
+  // assistant message the text projection drops (tool-only content) stays
+  // unbound: the renderer's orphan fallback owns such rows, never a guessed
+  // reassignment to some other message's id.
+  let chatMessageCount = 0;
   for (const message of messages) {
+    if (message.role === MESSAGE_ROLE.USER) {
+      chatMessageCount += 1;
+      continue;
+    }
     if (message.role === MESSAGE_ROLE.ASSISTANT) {
-      openToolCallRows(message.content, rows);
+      const messageId = extractText(message).trim().length > 0 ? `msg-${chatMessageCount}` : undefined;
+      if (messageId !== undefined) chatMessageCount += 1;
+      openToolCallRows(message.content, messageId, rows);
       continue;
     }
     if (message.role === "toolResult") {
@@ -104,7 +119,7 @@ export function historyToToolCalls(messages: readonly RpcMessage[]): ToolCallVie
  * row — the same invariant the live path enforces (chatReducer: "A
  * duplicate start must not open a second row for the same call"), so a
  * later live row for the same id always wins instead of duplicating. */
-function openToolCallRows(content: unknown, rows: ToolCallView[]): void {
+function openToolCallRows(content: unknown, messageId: string | undefined, rows: ToolCallView[]): void {
   if (!Array.isArray(content)) return;
   for (const block of content) {
     if (!isRecord(block)) continue;
@@ -115,7 +130,13 @@ function openToolCallRows(content: unknown, rows: ToolCallView[]): void {
     // a shape this function does not understand — fail closed, never coerce.
     if (!isRecord(args)) continue;
     if (rows.some((row) => row.id === id)) continue;
-    rows.push({ id, toolName: name, args: boundedPayload(args), status: "running" });
+    rows.push({
+      id,
+      toolName: name,
+      args: boundedPayload(args),
+      status: "running",
+      ...(messageId !== undefined ? { messageId } : {}),
+    });
   }
 }
 

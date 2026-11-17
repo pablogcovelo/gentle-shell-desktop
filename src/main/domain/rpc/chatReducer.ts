@@ -19,7 +19,14 @@ import { emptyHelpersActivity, parseHelpersActivity } from "./helpersActivity";
 // the leaf module toolCalls.ts and are imported, not duplicated, here.
 import { MAX_TOOL_CALLS, boundedPayload } from "./toolCalls";
 import { TODO_STATE_CUSTOM_TYPE, parseTodoPanel } from "./todoPanel";
-import type { AssistantMessageEvent, FireAndForgetMethod, RpcEvent, RpcExtensionUIRequest, RpcMessage } from "./types";
+import type {
+  AssistantMessageEvent,
+  FireAndForgetMethod,
+  RpcEvent,
+  RpcExtensionUIRequest,
+  RpcMessage,
+  RpcResponse,
+} from "./types";
 
 /**
  * The generic fire-and-forget branch of RpcExtensionUIRequest (setWidget,
@@ -118,11 +125,19 @@ export function reduceChat(state: ChatState, event: RpcEvent, now?: string): Cha
       if (event.type === "tool_execution_start") {
         // A duplicate start must not open a second row for the same call.
         if (existing) return next;
+        // S2: bind the row to the assistant message that is producing it —
+        // the last message in state at this point. pi's live flow opens that
+        // message with message_start before its tool calls execute (see
+        // __fixtures__/prompt-turn.jsonl), so it is the streaming assistant
+        // message. Unbound when there is none: the renderer's orphan
+        // fallback owns such rows, so nothing is ever dropped.
+        const last = state.messages[state.messages.length - 1];
         const started: ToolCallView = {
           id: event.toolCallId,
           toolName: event.toolName,
           args: boundedPayload(event.args),
           status: "running",
+          ...(last && last.role === MESSAGE_ROLE.ASSISTANT ? { messageId: last.id } : {}),
         };
         return { ...next, toolCalls: [...calls, started].slice(-MAX_TOOL_CALLS) };
       }
@@ -133,6 +148,9 @@ export function reduceChat(state: ChatState, event: RpcEvent, now?: string): Cha
         result: boundedPayload(event.result),
         isError: event.isError,
         status: "done",
+        // The end frame rewrites payload fields only: the start's message
+        // binding is carried through untouched.
+        ...(existing?.messageId === undefined ? {} : { messageId: existing.messageId }),
       };
       return {
         ...next,
@@ -145,12 +163,38 @@ export function reduceChat(state: ChatState, event: RpcEvent, now?: string): Cha
       return applySessionStateChanged(state, event);
     case "extension_error":
       return { ...state, lastError: event.error };
-    // turn_start/turn_end and command-response envelopes carry nothing the
-    // chat view needs; agent_start/agent_end/agent_settled already drive
-    // `working`, and the assistant text is driven by message_*/text_* deltas.
+    case "response":
+      return applyCommandResponse(state, event);
+    // turn_start/turn_end and the remaining command-response envelopes
+    // carry nothing the chat view needs; agent_start/agent_end/agent_settled
+    // already drive `working`, and the assistant text is driven by
+    // message_*/text_* deltas.
     default:
       return state;
   }
+}
+
+/**
+ * Command acknowledgement envelopes (desktop-workspace-registry-and-
+ * diagnostics T3, S5/S10). The one envelope whose failure is chat state is
+ * the `prompt` response: a child that cannot run the turn answers
+ * `{command:"prompt", success:false, error:"No API key found ... Use /login
+ * ..."}` — the home's real reason the turn never produced anything. It was
+ * decoded and then dropped, which is the whole "no recibo respuesta
+ * ninguna" defect: fold its error into `lastError`, the field the status
+ * line renders. A successful prompt response changes nothing about the
+ * transcript, and every OTHER command's failure stays a no-op here: the
+ * id-correlated folds in PiSession (history, identity, commands) own those
+ * answers and keep priority over anything this arm could say.
+ *
+ * A successful prompt CLEARS a previous error: the refusal belonged to the
+ * prompt that failed, so a user who signs in in a terminal and retries must
+ * not keep the red line for the pane's whole life (verifier advisory).
+ */
+function applyCommandResponse(state: ChatState, event: RpcResponse): ChatState {
+  if (event.command !== "prompt") return state;
+  if (event.success) return state.lastError === undefined ? state : { ...state, lastError: undefined };
+  return { ...state, lastError: event.error };
 }
 
 function openAssistantMessage(state: ChatState, message: RpcMessage): ChatState {

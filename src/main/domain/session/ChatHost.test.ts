@@ -118,6 +118,25 @@ async function respondToHistoryRequest(
 }
 
 describe("ChatHost", () => {
+  it("stop joins metadata discovery before the session start is queued", async () => {
+    const { spawner, handles, events } = createFakeSpawner();
+    let release!: (sessions: SessionInfoLike[]) => void;
+    const store: SessionStore = { listAll: () => new Promise((resolve) => { release = resolve; }) };
+    const host = new ChatHost({ spawner, locator: fakeLocator, sessionStore: store, env: {} });
+    const opening = host.openChat("sess-1");
+    await Promise.resolve();
+    const stopping = host.stop();
+    release([session()]);
+    await respondToHistoryRequest(handles, 0);
+    await vi.waitFor(() => expect(events).toContain("endStdin:0"));
+    handles[0]!.resolveExited({ code: 0, signal: null });
+    await Promise.all([opening, stopping]);
+    expect(host.isAlive).toBe(false);
+    expect(host.effectiveCwd).toBe("/tmp/proj");
+    expect(host.cwd).toBeUndefined(); // creation-bound directory reuse stays unchanged
+    expect(events).toEqual(["spawn:0", "endStdin:0"]);
+    expect(handles[0]!.args).toContain("--session");
+  });
   it("reports isAlive only while its child is running", async () => {
     const { spawner, handles } = createFakeSpawner();
     const store = fakeSessionStore([session({ id: "sess-1", path: "/home/sessions/proj/sess-1.jsonl" })]);
@@ -237,12 +256,18 @@ describe("ChatHost", () => {
     const host = new ChatHost({ spawner, locator: fakeLocator, sessionStore: fakeSessionStore([]), env: {} });
 
     await host.newChat();
+    expect(handles[0]?.writes.map((write) => JSON.parse(write).type)).toEqual(["get_state"]);
     handles[0]?.emitStdout(JSON.stringify({ type: "agent_start" }));
+    // T3's new probe trigger: the first stdout frame proved the child
+    // alive, so the capabilities probe is now on stdin. The DECLINE itself
+    // still writes nothing new — the point this test has always pinned.
+    expect(handles[0]?.writes.filter((write) => write.includes("capabilities"))).toHaveLength(1);
+    const writesBefore = [...handles[0]!.writes];
 
     const result = await host.sendMessage("another message");
 
     expect(result).toEqual({ queued: false, reason: "Gentle is still working" });
-    expect(handles[0]?.writes).toEqual([]);
+    expect(handles[0]?.writes).toEqual(writesBefore);
   });
 
   it("startSession serializes overlapping open/new calls: the previous session is fully stopped before the next spawns, and the last request wins", async () => {
@@ -317,7 +342,11 @@ describe("ChatHost", () => {
 
     await host.answerDialog("dlg-1", { value: "A" });
 
-    expect(handles[0]?.writes).toEqual([`${JSON.stringify({ type: "extension_ui_response", id: "dlg-1", value: "A" })}\n`]);
+    // T3's new probe trigger: the dialog frame was the child's first stdout
+    // frame, so the capabilities probe preceded the dialog answer on stdin.
+    expect(handles[0]?.writes.filter((write) => write.includes("capabilities"))).toHaveLength(1);
+    expect(handles[0]?.writes.filter((write) => JSON.parse(write).type === "extension_ui_response")).toEqual([`${JSON.stringify({ type: "extension_ui_response", id: "dlg-1", value: "A" })}\n`]);
+    expect(handles[0]?.writes.at(-1)).toEqual(`${JSON.stringify({ type: "extension_ui_response", id: "dlg-1", value: "A" })}\n`);
   });
 
   it("abort() with no chat open rejects instead of throwing synchronously", async () => {

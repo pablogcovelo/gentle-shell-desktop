@@ -1,4 +1,4 @@
-import type { McpStatus, SessionIdentityView, WorktreeChanges, WorkspaceInfo } from "@shared/bridge-types";
+import type { ChatCommand, McpStatus, SessionIdentityView, WorktreeChanges, WorkspaceInfo } from "@shared/bridge-types";
 import "./Footer.css";
 
 export interface FooterProps {
@@ -22,6 +22,8 @@ export interface FooterProps {
    * channel). The design's last footer fact; absent means no version is
    * rendered, never a placeholder. */
   readonly appVersion?: string;
+  /** Native get_commands catalog; absent means it has not been reported. */
+  readonly commands?: readonly ChatCommand[];
 }
 
 /**
@@ -39,20 +41,24 @@ export interface FooterProps {
  * `title`, never in the visible copy). Capabilities are the MCP
  * inventory, never health: pi does not expose whether a server is
  * connected, so no wording here may ever claim it. The capabilities group
- * stays mounted even before inventory arrives. Skills and extensions have
- * no bridge counts yet: show zero placeholders with explanatory tooltips,
- * per the owner's stable-layout requirement. The identity group carries
+ * stays mounted even before inventory arrives. Skills count the native
+ * get_commands entries with source=skill; absent inventory falls back to
+ * zero with a caveat. Extensions retain a zero placeholder because command
+ * entries do not measure loaded extension modules. The identity group carries
  * the session's effective model, thinking level and profile (S10), each
  * only when the child supplied it. The context group is a small meter plus
  * the real `contextPercent`: absent or `null` renders nothing — never 0%.
  * The version renders only when the app reported one.
  */
-export function Footer({ workspace, workspacePath, session, appVersion }: FooterProps) {
+export function Footer({ workspace, workspacePath, session, appVersion, commands }: FooterProps) {
   const mcp = workspace?.mcp;
   const worktree = workspacePath !== undefined ? workspace?.worktree : undefined;
 
   const profileLabel = workspace?.profile?.label;
   const contextPercent = session?.contextPercent;
+  // S5: the wire sends many decimals; the TUI shows whole numbers, so the
+  // footer uses the same rounding (half up) and the meter agrees with it.
+  const roundedContextPercent = contextPercent != null ? Math.round(contextPercent) : null;
 
   return (
     <section className="gc-footer" aria-label="Session footer" tabIndex={0} title="Scroll horizontally to see all session details in narrow windows.">
@@ -61,15 +67,15 @@ export function Footer({ workspace, workspacePath, session, appVersion }: Footer
         <span>{workspacePath ?? "~/"}</span>
       </span>
       {worktree ? <ChangesGroup worktree={worktree} /> : null}
-      <CapabilitiesGroup mcp={mcp} />
+      <CapabilitiesGroup mcp={mcp} commands={commands} />
       {session ? <IdentityGroup session={session} profileLabel={profileLabel} /> : null}
-      {contextPercent != null ? (
+      {roundedContextPercent != null ? (
         <span className="gc-footer__group gc-footer__context" aria-label="Context used">
           <span className="gc-footer__label">context</span>
           <span className="gc-footer__meter" aria-hidden="true">
-            <span style={{ width: `${contextPercent}%` }} />
+            <span style={{ width: `${roundedContextPercent}%` }} />
           </span>
-          <span className="gc-footer__context-used">{contextPercent}%</span>
+          <span className="gc-footer__context-used">{roundedContextPercent}%</span>
         </span>
       ) : null}
       {appVersion ? <span className="gc-footer__version">{appVersion.startsWith("v") ? appVersion : `v${appVersion}`}</span> : null}
@@ -78,10 +84,26 @@ export function Footer({ workspace, workspacePath, session, appVersion }: Footer
 }
 
 /**
+ * The explicit, actionable copy for a chat whose identity was read and that
+ * reports no model (desktop-workspace-registry-and-diagnostics T4, S6): the
+ * wire's literal `unknown` is normalized away upstream, so what arrives
+ * here is an identity with no model at all — a hint, not a placeholder.
+ */
+const NO_MODEL_HINT = "No model — sign in with /login";
+const NO_MODEL_TOOLTIP =
+  "No model is signed in for this chat. /login is a terminal command — run it in the gentle-shell terminal to sign in to a provider.";
+
+/**
  * Session identity (desktop-rpc T4, moved here by S10): the design's
  * `·`-separated facts, in the artboard's order. Each fact renders only when
  * the child actually reported it — a fact the child did not send renders
- * nothing, never a placeholder.
+ * nothing, never a placeholder. The one exception is a READ identity with
+ * no model (S6): a successful `get_state` always supplies a `thinkingLevel`
+ * (it is required on the wire), so a folded identity that still has no
+ * model label is a chat with nothing signed in — say so explicitly instead
+ * of rendering the child's `unknown` (normalized away upstream) or a
+ * silently missing group. A session without a `thinkingLevel` has not had
+ * its identity answered yet, and claiming "No model" then would be a lie.
  */
 function IdentityGroup({
   session,
@@ -92,13 +114,20 @@ function IdentityGroup({
 }) {
   const modelLabel = session?.modelName ?? session?.modelId;
   const thinkingLevel = session?.thinkingLevel;
+  const noModel = !modelLabel && thinkingLevel !== undefined;
 
   if (!modelLabel && !thinkingLevel && !profileLabel) return null;
 
   return (
     <span className="gc-footer__group gc-footer__identity" aria-label="Session identity">
-      {modelLabel ? <span className="gc-footer__model">{modelLabel}</span> : null}
-      {modelLabel && thinkingLevel ? <DotSeparator /> : null}
+      {noModel ? (
+        <span className="gc-footer__model gc-footer__model--none" title={NO_MODEL_TOOLTIP}>
+          {NO_MODEL_HINT}
+        </span>
+      ) : modelLabel ? (
+        <span className="gc-footer__model">{modelLabel}</span>
+      ) : null}
+      {(modelLabel || noModel) && thinkingLevel ? <DotSeparator /> : null}
       {thinkingLevel ? <span className="gc-footer__thinking">{thinkingLevel}</span> : null}
       {(thinkingLevel || modelLabel) && profileLabel ? <DotSeparator /> : null}
       {profileLabel ? <span>{profileLabel}</span> : null}
@@ -150,15 +179,32 @@ function ChangesGroup({ worktree }: { worktree: WorktreeChanges }) {
 /** Inventory wording only. `health` is deliberately not rendered: it is
  * always "unknown", and printing it would invite someone to read a green dot
  * into a channel that cannot report one. */
-function CapabilitiesGroup({ mcp }: { mcp?: McpStatus }) {
-  const names = mcp ? (mcp.configuredNames.length > 0 ? mcp.configuredNames.length : mcp.registered.length) : 0;
+function CapabilitiesGroup({ mcp, commands }: { mcp?: McpStatus; commands?: readonly ChatCommand[] }) {
+  const skills = commands?.filter((command) => command.source === "skill").length ?? 0;
+  const skillsTitle = commands === undefined
+    ? `Skills: ${skills} — command catalog has not been reported`
+    : `Skills: ${skills} — loaded skills reported by get_commands`;
+  // These inventories may use different names for the same server. Never
+  // sum them: preserve configured/registered precedence, then use exposed
+  // tool namespaces when those are the only inventory the child supplies.
+  const [names, source] = mcp?.configuredNames.length
+    ? [mcp.configuredNames.length, "configured servers"]
+    : mcp?.registered.length
+      ? [mcp.registered.length, "registered servers"]
+      : mcp?.namespaces.length
+        ? [mcp.namespaces.length, "tool namespaces"]
+        : [0, "configured servers"];
+  const label = `MCP: ${names} ${source}`;
+  const inventory = mcp
+    ? `Configured servers (${mcp.configuredStatus}): ${mcp.configuredNames.join(", ") || "none"}; Registered servers: ${mcp.registered.join(", ") || "none"}; Tool namespaces: ${mcp.namespaces.join(", ") || "none"}; Connection health is not reported`
+    : "MCP inventory has not been reported";
   return (
     <span className="gc-footer__group" role="group" aria-label="Capabilities">
-      <span className="gc-footer__capability" role="img" aria-label={`MCP: ${names} configured servers`} title={`MCP: ${names} configured servers`}>
+      <span className="gc-footer__capability" role="img" aria-label={label} title={inventory}>
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 3v5M16 3v5M6 8h12v4a6 6 0 0 1-12 0V8ZM12 18v4" /></svg>
         <span>{names}</span>
       </span>
-      <span className="gc-footer__capability" data-capability="skills" role="img" aria-label="Skills: 0" title="Skills: 0 — count not reported by the bridge">
+      <span className="gc-footer__capability" data-capability="skills" role="img" aria-label={`Skills: ${skills}`} title={skillsTitle}>
         {/* Lucide Puzzle — ISC License
          * Copyright (c) 2026 Lucide Icons and Contributors
          * Permission to use, copy, modify, and/or distribute this software for any
@@ -173,7 +219,7 @@ function CapabilitiesGroup({ mcp }: { mcp?: McpStatus }) {
          * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
          */}
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z" /></svg>
-        <span>0</span>
+        <span>{skills}</span>
       </span>
       <span className="gc-footer__capability" data-capability="extensions" role="img" aria-label="Extensions: 0" title="Extensions: 0 — count not reported by the bridge">
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 11h8v10H3V11ZM3 3h8v8H3V3ZM11 13h8v8h-8v-8ZM15 2h7v7h-7V2Z" /></svg>

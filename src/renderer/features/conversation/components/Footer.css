@@ -35,6 +35,9 @@
 .gc-footer__deleted { color: var(--red); }
 .gc-footer__identity { gap: 6px; }
 .gc-footer__model { color: var(--text); }
+/* The no-model hint (desktop-workspace T4, S6): an actionable warning, not a
+   model name — red so "nothing is signed in" reads at a glance. */
+.gc-footer__model--none { color: var(--red); }
 .gc-footer__thinking { color: var(--blue); }
 .gc-footer__dot { color: var(--muted); }
 .gc-footer__context { gap: 8px; }

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { CHAT_STATE, type ChatState, type ChatSummary, type GentleBridge } from "@shared/bridge-types";
+import { CHAT_STATE, type ChatState, type ChatSummary, type GentleBridge, type WorkspaceList } from "@shared/bridge-types";
 import { ChatsContainer } from "./ChatsContainer";
 
 function makeBridge(overrides: Partial<GentleBridge> = {}): GentleBridge {
@@ -41,10 +41,18 @@ it("names the panel heading Workspaces", async () => {
   expect(await screen.findByRole("heading", { name: "Workspaces" })).toBeInTheDocument();
 });
 
-it("shows a message when listChats rejects", async () => {
-  window.gentle = makeBridge({ listChats: vi.fn().mockRejectedValue(new Error("bridge not ready")) });
-  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} />);
-  expect(await screen.findByText("Chats are not available yet: bridge not ready")).toBeInTheDocument();
+it("never discovers history or resurrects closed rows through a flat fallback or remainder", async () => {
+  const bridge = makeBridge({ listChats: vi.fn().mockResolvedValue([makeChat({ title: "Closed history" }), makeChat({ id: "orphan", cwd: "", title: "Orphan history" })]) });
+  window.gentle = bridge;
+  const props = { onSelectChat: vi.fn(), onNewChat: vi.fn() };
+  const view = render(<ChatsContainer {...props} workspaces={{ directories: ["/tmp/open"], persisted: ["/tmp/open"] }} />);
+  await act(async () => {});
+  expect(screen.queryByRole("button", { name: /Closed history|Orphan history/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "open — workspace" })).toBeInTheDocument();
+  view.rerender(<ChatsContainer {...props} />);
+  await act(async () => {});
+  expect(screen.queryByRole("button", { name: /Closed history|Orphan history/ })).not.toBeInTheDocument();
+  expect(bridge.listChats).not.toHaveBeenCalled();
 });
 
 it("calls onNewChat through Ctrl+N without a visible New chat button", async () => {
@@ -58,88 +66,15 @@ it("calls onNewChat through Ctrl+N without a visible New chat button", async () 
   expect(onNewChat).toHaveBeenCalled();
 });
 
-it("calls onSelectChat with the chat when a list item is clicked", async () => {
-  const chat: ChatSummary = {
-    id: "chat-1",
-    title: "Refactor the store",
-    cwd: "/tmp/project",
-    updatedAt: "2026-09-21T09:00:00.000Z",
-    messageCount: 3,
-    state: CHAT_STATE.IDLE,
-  };
-  window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([chat]) });
-  const onSelectChat = vi.fn();
-
-  render(<ChatsContainer onSelectChat={onSelectChat} onNewChat={vi.fn()} />);
-  (await screen.findByRole("button", { name: /Refactor the store/ })).click();
-
-  expect(onSelectChat).toHaveBeenCalledWith(chat);
-});
-
-it("renders a directory row without a state pill", async () => {
-  const chat = makeChat({ id: "chat-1", title: "Alpha", cwd: "/tmp/project" });
-  window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([chat]) });
-
-  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} />);
-  const row = await screen.findByRole("button", { name: /Alpha/ });
-
-  expect(row).toHaveTextContent("project");
-  expect(row).not.toHaveTextContent("idle");
-});
-
-it("renders no directory when the chat's cwd is empty", async () => {
-  const chat = makeChat({ id: "chat-1", title: "Alpha", cwd: "" });
-  window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([chat]) });
-
-  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} />);
-  const row = await screen.findByRole("button", { name: /Alpha/ });
-
-  expect(row).not.toHaveTextContent("tmp");
-  expect(row).toHaveTextContent("Alpha");
-  expect(row).not.toHaveTextContent("idle");
-});
-
-it("filters chats by title, case-insensitively", async () => {
-  const alpha = makeChat({ id: "a", title: "Alpha chat" });
-  const beta = makeChat({ id: "b", title: "Beta chat" });
-  window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([alpha, beta]) });
-
-  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} query="ALPH" />);
-
-  expect(await screen.findByRole("button", { name: /Alpha chat/ })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Beta chat/ })).not.toBeInTheDocument();
-});
-
-it("filters chats by their directory", async () => {
-  const alpha = makeChat({ id: "a", title: "Alpha chat", cwd: "/home/dev/gentle-core" });
-  const beta = makeChat({ id: "b", title: "Beta chat", cwd: "/home/dev/shell" });
-  window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([alpha, beta]) });
-
-  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} query="gentle-core" />);
-
-  expect(await screen.findByRole("button", { name: /Alpha chat/ })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Beta chat/ })).not.toBeInTheDocument();
-});
-
-it("renders every chat for a blank query", async () => {
-  const alpha = makeChat({ id: "a", title: "Alpha chat" });
-  const beta = makeChat({ id: "b", title: "Beta chat" });
-  window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([alpha, beta]) });
-
-  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} query="   " />);
-
-  expect(await screen.findByRole("button", { name: /Alpha chat/ })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /Beta chat/ })).toBeInTheDocument();
-});
-
-it("reports when no chat matches the query", async () => {
-  const alpha = makeChat({ id: "a", title: "Alpha chat" });
-  window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([alpha]) });
-
-  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} query="zzz" />);
-
-  expect(await screen.findByText('No chats match "zzz".')).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Alpha chat/ })).not.toBeInTheDocument();
+it.each(["ALPH", "/tmp/alpha", "   ", "zzz"])("filters opened directory rows for query %s without consulting chat titles", async (query) => {
+  const bridge = makeBridge({ listChats: vi.fn().mockResolvedValue([makeChat({ title: "Secret title" })]) });
+  window.gentle = bridge;
+  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} workspaces={{ directories: ["/tmp/alpha", "/tmp/beta"], persisted: ["/tmp/alpha", "/tmp/beta"] }} query={query} />);
+  await act(async () => {});
+  expect(screen.queryByRole("button", { name: "alpha — workspace" }) !== null).toBe(query !== "zzz");
+  expect(screen.queryByRole("button", { name: "beta — workspace" }) !== null).toBe(query.trim() === "");
+  if (query === "zzz") expect(screen.getByText('No workspaces match "zzz".')).toBeInTheDocument();
+  expect(bridge.listChats).not.toHaveBeenCalled();
 });
 
 const EMPTY_STATE: ChatState = {
@@ -149,6 +84,121 @@ const EMPTY_STATE: ChatState = {
   activity: 0,
   helpers: { summary: { running: 0, queued: 0, waiting: 0, finished: 0 }, tasks: [] },
 };
+
+// T1 (S1/S2) — the Workspaces panel rows: one row per workspace directory
+// (persisted UNION pi-session directories), remove on persisted rows only,
+// and the add/remove/select flows through the bridge.
+describe("ChatsContainer workspace registry (T1)", () => {
+  const SESSION_CHAT = makeChat({ id: "chat-1", title: "A chat", cwd: "/tmp/project" });
+  const WORKSPACES: WorkspaceList = { directories: ["/tmp/added", "/tmp/project"], persisted: ["/tmp/added"] };
+
+  it("renders one row per workspace directory — a persisted directory with no chat yet is still a row", async () => {
+    window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([SESSION_CHAT]) });
+
+    render(
+      <ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} workspaces={WORKSPACES} />,
+    );
+
+    expect(await screen.findByRole("button", { name: "added — workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "project — workspace" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /A chat/ })).not.toBeInTheDocument();
+  });
+
+  it("offers closure on every opened directory row regardless of legacy persisted metadata", async () => {
+    window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([SESSION_CHAT]) });
+
+    render(
+      <ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} workspaces={WORKSPACES} />,
+    );
+
+    expect(await screen.findByRole("button", { name: "Remove workspace added" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove workspace project" })).toBeInTheDocument();
+  });
+
+  it("remove deletes only the persisted entry: bridge.removeWorkspace with the directory, the fresh list reported up, no host touched", async () => {
+    const fresh: WorkspaceList = { directories: ["/tmp/project"], persisted: [] };
+    const removeWorkspace = vi.fn().mockResolvedValue(fresh);
+    const closeChat = vi.fn();
+    const onWorkspacesChanged = vi.fn();
+    window.gentle = makeBridge({ removeWorkspace, closeChat });
+
+    render(
+      <ChatsContainer
+        onSelectChat={vi.fn()}
+        onNewChat={vi.fn()}
+        workspaces={WORKSPACES}
+        onWorkspacesChanged={onWorkspacesChanged}
+      />,
+    );
+    (await screen.findByRole("button", { name: "Remove workspace added" })).click();
+
+    await vi.waitFor(() => expect(removeWorkspace).toHaveBeenCalledWith("/tmp/added"));
+    await vi.waitFor(() => expect(onWorkspacesChanged).toHaveBeenCalledWith(fresh));
+    expect(closeChat).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a failed remove beside the action instead of silently keeping the row", async () => {
+    window.gentle = makeBridge({ removeWorkspace: vi.fn().mockRejectedValue(new Error("disk refused")) });
+
+    render(
+      <ChatsContainer
+        onSelectChat={vi.fn()}
+        onNewChat={vi.fn()}
+        workspaces={WORKSPACES}
+        onWorkspacesChanged={vi.fn()}
+      />,
+    );
+    (await screen.findByRole("button", { name: "Remove workspace added" })).click();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/disk refused/);
+  });
+
+  it("selecting a workspace row reports the directory without ever opening the native picker", async () => {
+    const chooseDirectory = vi.fn();
+    const onSelectWorkspace = vi.fn();
+    window.gentle = makeBridge({ chooseDirectory, listChats: vi.fn().mockResolvedValue([]) });
+
+    render(
+      <ChatsContainer
+        onSelectChat={vi.fn()}
+        onNewChat={vi.fn()}
+        workspaces={WORKSPACES}
+        onSelectWorkspace={onSelectWorkspace}
+        onWorkspaceCreated={vi.fn()}
+      />,
+    );
+    (await screen.findByRole("button", { name: "added — workspace" })).click();
+
+    expect(onSelectWorkspace).toHaveBeenCalledWith("/tmp/added");
+    expect(chooseDirectory).not.toHaveBeenCalled();
+  });
+
+  it("Add workspace persists the picked directory first, reports the fresh list, then opens its pane", async () => {
+    const fresh: WorkspaceList = { directories: ["/tmp/new-ws"], persisted: ["/tmp/new-ws"] };
+    const addWorkspace = vi.fn().mockResolvedValue(fresh);
+    const chooseDirectory = vi.fn().mockResolvedValue("/tmp/new-ws");
+    const createWorkspace = vi.fn().mockResolvedValue({ hostId: "host-1", state: EMPTY_STATE });
+    const onWorkspacesChanged = vi.fn();
+    const onWorkspaceCreated = vi.fn();
+    window.gentle = makeBridge({ chooseDirectory, addWorkspace, createWorkspace });
+
+    render(
+      <ChatsContainer
+        onSelectChat={vi.fn()}
+        onNewChat={vi.fn()}
+        onWorkspaceCreated={onWorkspaceCreated}
+        workspaces={WORKSPACES}
+        onWorkspacesChanged={onWorkspacesChanged}
+      />,
+    );
+    (await screen.findByRole("button", { name: "Add workspace" })).click();
+
+    await vi.waitFor(() => expect(createWorkspace).toHaveBeenCalledWith("/tmp/new-ws"));
+    expect(addWorkspace).toHaveBeenCalledWith("/tmp/new-ws");
+    await vi.waitFor(() => expect(onWorkspacesChanged).toHaveBeenCalledWith(fresh));
+    await vi.waitFor(() => expect(onWorkspaceCreated).toHaveBeenCalledWith({ hostId: "host-1", state: EMPTY_STATE }));
+  });
+});
 
 it("does not adopt a workspace created after the user moved on", async () => {
   let releaseCreate: (() => void) | undefined;

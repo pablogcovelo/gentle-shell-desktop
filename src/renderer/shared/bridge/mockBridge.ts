@@ -25,6 +25,7 @@ import {
   type SetupStatus,
   type StopHelperOutcome,
   type WorkspaceInfo,
+  type WorkspaceList,
 } from "@shared/bridge-types";
 
 /**
@@ -257,7 +258,25 @@ function mockNotification(text: string): ChatNotification {
 
 let currentState: ChatState = emptyState();
 let nextMessageId = 0;
+let mockGeneration = 0;
 let nextDialogId = 0;
+
+// Opened-directory registry, independent of Pi-owned example history.
+// Entries are most-recently-added first and deduplicated.
+let persistedWorkspaces: string[] = [];
+let exampleChats: readonly ChatSummary[] = EXAMPLE_CHATS;
+
+/** Overrides the mock's session list (tests only; the preview always uses
+ * the demo chats). Call with [] to simulate a machine with no pi
+ * sessions, or undefined to restore the demo chats. */
+export function setMockChats(chats: readonly ChatSummary[] | undefined): void {
+  exampleChats = chats ?? EXAMPLE_CHATS;
+}
+
+/** The panel never discovers directories from saved session history. */
+function workspaceUnion(): WorkspaceList {
+  return { directories: [...persistedWorkspaces], persisted: [...persistedWorkspaces] };
+}
 
 // T5b — the mock implements the same host-identity contract as the real
 // bridge: openChat/newChat mint (or reuse) a host id and answer it, every
@@ -292,6 +311,34 @@ export function setMockDirectoryPick(pick: string | null | undefined): void {
 /** Host id -> the directory it was created for (T11): how the mock reuses
  * an already-open workspace's host instead of minting a second one. */
 const directoryByHostId = new Map<string, string>();
+const statesByHostId = new Map<string, ChatState>();
+
+/** Absolute-path check without node:path (this module runs in the
+ * renderer, whose tsconfig has no node types): a leading separator or a
+ * drive path. Mirrors what the real main process enforces through
+ * validateWorkspaceDirectory. */
+function isAbsolutePath(candidate: string): boolean {
+  return candidate.startsWith("/") || candidate.startsWith("\\") || /^[a-zA-Z]:[\\/]/.test(candidate);
+}
+
+/** The creation path the Add-workspace flow and workspace.open share
+ * (T11/T1): bind a host to the directory — reusing an already-open
+ * directory's host instead of minting a second child — and carry the
+ * directory as workspacePath. */
+async function createWorkspaceFor(directory: string): Promise<OpenChatResult> {
+  helpersScenarioToken += 1; // invalidate any growth loop from a previously open chat
+  const existing = [...directoryByHostId.entries()].find(([, dir]) => dir === directory)?.[0];
+  if (existing !== undefined) {
+    currentHostId = existing;
+    setState({ ...statesByHostId.get(existing)!, hostId: existing, workspacePath: directory });
+    return { hostId: existing, state: currentState };
+  }
+  const hostId = mintHostId();
+  directoryByHostId.set(hostId, directory);
+  currentHostId = hostId;
+  setState({ ...emptyState(), hostId, workspacePath: directory });
+  return { hostId, state: currentState };
+}
 
 const stateListeners = new Set<(state: ChatState) => void>();
 const errorListeners = new Set<(message: string, hostId: string) => void>();
@@ -306,9 +353,12 @@ function mintHostId(): string {
 /** Rejects anything that is not the live host: an unknown or stopped id
  * must never fall back to the open chat (U6a), in the mock as in main. */
 function requireHost(hostId: string): void {
-  if (hostId !== currentHostId) {
+  const state = statesByHostId.get(hostId);
+  if (!state) {
     throw new Error(`No live workspace host for id "${hostId}" (unknown or already stopped)`);
   }
+  currentHostId = hostId;
+  currentState = state;
 }
 
 /**
@@ -322,6 +372,7 @@ function requireHost(hostId: string): void {
  * this module backs never wants its own state wiped mid-session.
  */
 export function resetMockBridge(): void {
+  mockGeneration += 1;
   helpersScenarioToken += 1; // invalidate any in-flight D4 growth loop
   homeChoice = undefined;
   currentState = emptyState();
@@ -332,7 +383,10 @@ export function resetMockBridge(): void {
   nextHostNumber = 1;
   hostIdByChat.clear();
   directoryByHostId.clear();
+  statesByHostId.clear();
   directoryPick = undefined;
+  persistedWorkspaces = [];
+  exampleChats = EXAMPLE_CHATS;
   stateListeners.clear();
   errorListeners.clear();
   closeListeners.clear();
@@ -340,6 +394,7 @@ export function resetMockBridge(): void {
 
 function setState(state: ChatState): void {
   currentState = state;
+  if (state.hostId) statesByHostId.set(state.hostId, state);
   for (const listener of stateListeners) listener(state);
 }
 
@@ -353,6 +408,8 @@ function delay(ms: number): Promise<void> {
 }
 
 async function streamReply(userText: string): Promise<void> {
+  const hostId = currentHostId;
+  const generation = mockGeneration;
   const reply = `Got it — you said: "${userText}". This is a mock reply for the browser preview.`;
   const words = reply.split(" ");
   const assistantMessage = makeMessage(MESSAGE_ROLE.ASSISTANT, "", true);
@@ -362,19 +419,21 @@ async function streamReply(userText: string): Promise<void> {
   let text = "";
   for (const [index, word] of words.entries()) {
     await delay(STREAM_DELAY_MS);
+    const state = statesByHostId.get(hostId);
+    if (!state || mockGeneration !== generation) return;
     text += index === 0 ? word : ` ${word}`;
     setState({
-      ...currentState,
-      messages: currentState.messages.map((message) => (message.id === assistantMessage.id ? { ...message, text } : message)),
+      ...state,
+      messages: state.messages.map((message) => (message.id === assistantMessage.id ? { ...message, text } : message)),
     });
   }
 
+  const final = statesByHostId.get(hostId);
+  if (!final || mockGeneration !== generation) return;
   setState({
-    ...currentState,
+    ...final,
     working: false,
-    messages: currentState.messages.map((message) =>
-      message.id === assistantMessage.id ? { ...message, streaming: false } : message,
-    ),
+    messages: final.messages.map((message) => message.id === assistantMessage.id ? { ...message, streaming: false } : message),
   });
 }
 
@@ -397,18 +456,25 @@ function makeDialogForKeyword(text: string): Dialog | undefined {
 }
 
 async function openDialog(text: string): Promise<void> {
+  const hostId = currentHostId;
+  const generation = mockGeneration;
   const dialog = makeDialogForKeyword(text);
   if (!dialog) return;
 
   await delay(STREAM_DELAY_MS);
   // The dialog carries the host that asked it (T5b), so an answer can be
   // addressed without guessing.
-  setState({ ...currentState, working: true, pendingDialogs: [...currentState.pendingDialogs, { ...dialog, hostId: currentHostId }] });
+  const state = statesByHostId.get(hostId);
+  if (!state || generation !== mockGeneration) return;
+  setState({ ...state, working: true, pendingDialogs: [...state.pendingDialogs, { ...dialog, hostId }] });
 }
 
 async function failReply(): Promise<void> {
+  const hostId = currentHostId;
+  const generation = mockGeneration;
   await delay(STREAM_DELAY_MS);
-  for (const listener of errorListeners) listener("Mock error: pretend this failed for the browser preview.", currentHostId);
+  if (!statesByHostId.has(hostId) || generation !== mockGeneration) return;
+  for (const listener of errorListeners) listener("Mock error: pretend this failed for the browser preview.", hostId);
 }
 
 function describeAnswer(answer: DialogAnswer): string {
@@ -653,9 +719,21 @@ export function setMockFilePick(pick: string | null | undefined): void {
   filePick = pick;
 }
 
+function closeHost(hostId: string): void {
+  requireHost(hostId);
+  helpersScenarioToken += 1;
+  for (const [chatId, owner] of hostIdByChat) {
+    if (owner === hostId) hostIdByChat.delete(chatId);
+  }
+  directoryByHostId.delete(hostId);
+  statesByHostId.delete(hostId);
+  currentHostId = "";
+  for (const listener of closeListeners) listener(hostId);
+}
+
 export const mockBridge: GentleBridge = {
   async listChats(): Promise<ChatSummary[]> {
-    return EXAMPLE_CHATS;
+    return [...exampleChats];
   },
 
   async openChat(id: string): Promise<OpenChatResult> {
@@ -665,9 +743,12 @@ export const mockBridge: GentleBridge = {
     const hostId = hostIdByChat.get(id) ?? mintHostId();
     hostIdByChat.set(id, hostId);
     currentHostId = hostId;
+    const directory = exampleChats.find((chat) => chat.id === id)?.cwd;
+    if (directory) directoryByHostId.set(hostId, directory);
     setState({
-      ...emptyState(),
+      ...(statesByHostId.get(hostId) ?? emptyState()),
       hostId,
+      workspacePath: directory,
       // Only the worktree is overridden: the demo keeps the profile and MCP
       // inventory the same chat already showed.
       ...(id === "chat-migration"
@@ -710,8 +791,11 @@ export const mockBridge: GentleBridge = {
       return { queued: true };
     }
     if (lower.includes("notify")) {
+      const generation = mockGeneration;
       await delay(STREAM_DELAY_MS);
-      setState({ ...currentState, notifications: [...(currentState.notifications ?? []), mockNotification(text)] });
+      const state = statesByHostId.get(hostId);
+      if (!state || generation !== mockGeneration) return { queued: true };
+      setState({ ...state, notifications: [...(state.notifications ?? []), mockNotification(text)] });
       return { queued: true };
     }
     if (lower.includes("delete") || lower.includes("name") || lower.includes("?")) {
@@ -756,13 +840,7 @@ export const mockBridge: GentleBridge = {
   // renderer forgets the host on that report). No close button exists in
   // the UI; this is reachable through the bridge only.
   async closeChat(hostId: string): Promise<void> {
-    requireHost(hostId);
-    helpersScenarioToken += 1; // invalidate any growth loop for the closed chat
-    for (const [chatId, owner] of hostIdByChat) {
-      if (owner === hostId) hostIdByChat.delete(chatId);
-    }
-    currentHostId = "";
-    for (const listener of closeListeners) listener(hostId);
+    closeHost(hostId);
   },
 
   // T11: the mock picker answers the demo pick (or a test's override);
@@ -778,19 +856,35 @@ export const mockBridge: GentleBridge = {
   // router: an already-open directory reuses its host instead of minting a
   // second child, and the created host's state carries the directory as
   // workspacePath (the footer's path).
-  async createWorkspace(directory: string): Promise<OpenChatResult> {
-    helpersScenarioToken += 1; // invalidate any growth loop from a previously open chat
-    const existing = [...directoryByHostId.entries()].find(([, dir]) => dir === directory)?.[0];
-    if (existing !== undefined) {
-      currentHostId = existing;
-      setState({ ...currentState, hostId: existing, workspacePath: directory });
-      return { hostId: existing, state: currentState };
+  createWorkspace(directory: string): Promise<OpenChatResult> {
+    return createWorkspaceFor(directory);
+  },
+
+  // Registry-only navigation; removing a directory closes its hosts while
+  // leaving the example Pi history untouched. Open is fresh/live reuse.
+  async listWorkspaces(): Promise<WorkspaceList> {
+    return workspaceUnion();
+  },
+
+  async addWorkspace(directory: string): Promise<WorkspaceList> {
+    if (directory.length === 0 || !isAbsolutePath(directory)) {
+      throw new Error(`"${directory}" is not an absolute path — the workspace registry stores absolute directories only`);
     }
-    const hostId = mintHostId();
-    directoryByHostId.set(hostId, directory);
-    currentHostId = hostId;
-    setState({ ...emptyState(), hostId, workspacePath: directory });
-    return { hostId, state: currentState };
+    if (!persistedWorkspaces.includes(directory)) persistedWorkspaces = [directory, ...persistedWorkspaces];
+    return workspaceUnion();
+  },
+
+  async removeWorkspace(directory: string): Promise<WorkspaceList> {
+    const hosts = [...directoryByHostId].filter(([, cwd]) => cwd === directory).map(([hostId]) => hostId);
+    for (const hostId of hosts) closeHost(hostId);
+    persistedWorkspaces = persistedWorkspaces.filter((entry) => entry !== directory);
+    return workspaceUnion();
+  },
+
+  openWorkspace(directory: string): Promise<OpenChatResult> {
+    // The same creation path as the Add-workspace flow (createWorkspace),
+    // minus the picker — no duplicated host lifecycle logic.
+    return createWorkspaceFor(directory);
   },
 
   onClosed(callback: (hostId: string) => void): () => void {

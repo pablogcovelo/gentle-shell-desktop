@@ -33,6 +33,8 @@ export interface ProcessSpawner {
 }
 
 export interface ResolvedLauncher {
+  /** Fixed home selected by a validated installed supervisor descriptor. */
+  readonly managedAgentDir?: string;
   readonly command: string;
   readonly args: readonly string[];
   /**

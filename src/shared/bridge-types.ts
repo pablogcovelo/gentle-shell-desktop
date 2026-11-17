@@ -281,6 +281,14 @@ export interface ToolCallView {
   readonly result?: unknown;
   readonly isError?: boolean;
   readonly status: "running" | "done";
+  /** The id of the assistant message that produced this call (S2), under
+   * the same `msg-<index>` scheme both producers use. The reducer binds it
+   * to the open streaming assistant message; history recovery binds it to
+   * the enclosing history message. Optional by contract: a call whose
+   * producing message cannot be resolved stays unbound, and the renderer's
+   * orphan fallback owns such rows — every producer and fixture keeps
+   * compiling without it. */
+  readonly messageId?: string;
 }
 
 /** One published action category: a glyph, and the tools (exact names) or
@@ -744,6 +752,18 @@ export interface PiDetection {
   readonly hasModels: boolean;
 }
 
+/**
+ * Opened workspace directories, backed only by Desktop's persisted registry.
+ * Pi-owned session history is deliberately separate and is read through
+ * listChats for the GUI /resume selector, never to repopulate this list.
+ * Exact directory strings are retained; `persisted` names the registered
+ * entries and is kept for bridge compatibility.
+ */
+export interface WorkspaceList {
+  readonly directories: readonly string[];
+  readonly persisted: readonly string[];
+}
+
 /** GentleBridge.setupStatus()'s result: whether first-run should be shown
  * (no home choice persisted yet AND pi was detected) and what detectPi
  * found either way, so the screen can render its detection card even when
@@ -866,6 +886,26 @@ export interface GentleBridge {
    * implement it (src/preload/bridge.ts, the mock bridge); older test
    * fakes may not. */
   createWorkspace?(directory: string): Promise<OpenChatResult>;
+  /** Opened workspace directories only (see WorkspaceList), not Pi session
+   * history. Add/remove answer the fresh list; no separate push channel. */
+  listWorkspaces?(): Promise<WorkspaceList>;
+  /** T1 (S2): persists the picked directory in the app config, AFTER the
+   * same validation workspace.create runs (an invalid directory is
+   * refused and persists nothing), and answers the fresh WorkspaceList so
+   * the row appears immediately and survives a restart. Optional: both
+   * real bridges implement it. */
+  addWorkspace?(directory: string): Promise<WorkspaceList>;
+  /** Closes all hosts owned by this directory, including pending starts,
+   * removes its opened-workspace entry and returns the fresh WorkspaceList.
+   * Pi sessions and project files are retained. Failures reject without
+   * claiming that uncertain processes have stopped. */
+  removeWorkspace?(directory: string): Promise<WorkspaceList>;
+  /** T1: opens a chat for a workspace directory WITHOUT the native
+   * picker — the same creation path as workspace.create (validated first,
+   * an already-open directory reusing its host, the child spawned with
+   * that directory as cwd). Selecting a persisted workspace that has no
+   * chats yet uses this. Optional: both real bridges implement it. */
+  openWorkspace?(directory: string): Promise<OpenChatResult>;
 }
 
 declare global {

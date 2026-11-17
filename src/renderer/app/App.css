@@ -53,3 +53,19 @@ body { font: 14px/1.55 "Segoe UI", system-ui, sans-serif; }
   }
   .gc-app--nav-open .gc-conversation { opacity: .35; pointer-events: none; }
 }
+
+/* T2 (S3/S4): the true empty state — plain text plus the Add-workspace
+hint, centered in the conversation column. No chrome, no composer, no
+child process behind it. */
+.gc-conversation--empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  padding: 24px;
+  color: var(--muted);
+}
+.gc-conversation__empty-title { margin: 0; font-size: 15px; font-weight: 600; color: var(--text); }
+.gc-conversation__empty-hint { margin: 0; font-size: 12px; max-width: 420px; }

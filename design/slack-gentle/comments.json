@@ -525,6 +525,18 @@
       "status": "resolved",
       "sentAt": "2026-11-13T20:45:28.004Z",
       "resolvedAt": "2026-11-13T20:46:04.836Z"
+    },
+    {
+      "id": "5c4zcgfk",
+      "file": "01-workspace.html",
+      "selector": "#chat-panel > div:nth-of-type(1) > div:nth-of-type(2)",
+      "excerpt": "Example agent activity · no live tool calls Engram · search “empty chat” 3 results ≡ read · MessageThread.tsx Read-only → Delegating · gentle-ai-explore Running ✎ edit · MessageThread.tsx In progress rdd · scope Read-only",
+      "comment": "Un agente ha reportado que los distintos esados que puede devolver gentle sell son los siguientes (read ≡ · edit ✎ · write + · search ⌕/⌖ · list ☷ · bash $ · delegation →◎↩⨯✉↻☰ · rdd 🌹) y no solo los que hay aquí contemplados",
+      "createdAt": "2026-11-17T19:09:25.305Z",
+      "status": "resolved",
+      "sentAt": "2026-11-17T19:09:25.323Z",
+      "resolvedAt": "2026-11-17T19:10:43.091Z",
+      "resolution": "Expanded the example activity to every reported state (read ≡, edit ✎, write +, search ⌕/⌖, list ☷, bash $, delegation →◎↩⨯✉↻☰, rdd 🌹) plus a full vocabulary note."
     }
   ]
 }

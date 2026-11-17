@@ -1,15 +1,22 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChatSummary, OpenChatResult, SetupStatus } from "@shared/bridge-types";
+import type { ChatSummary, OpenChatResult, SetupStatus, WorkspaceList } from "@shared/bridge-types";
 import { useBridge } from "@renderer/shared/bridge/useBridge";
 import { ChatsContainer } from "@renderer/features/chats/ChatsContainer";
-import { ConversationContainer, type ActiveChat } from "@renderer/features/conversation/ConversationContainer";
+import {
+  ConversationContainer,
+  type ActiveChat,
+} from "@renderer/features/conversation/ConversationContainer";
 import { FirstRunContainer } from "@renderer/features/first-run/FirstRunContainer";
 import { AppRail, RailTools } from "./components/AppRail";
 import { AppDialogs, APP_DIALOG, type AppDialogName } from "./components/AppDialogs";
 import { TopBar, type WindowControls } from "./components/TopBar";
 import "./App.css";
 
-const NEW_CHAT: ActiveChat = { kind: "new", epoch: 0 };
+// T2 (S3/S4): the app starts with NO chat and NO workspace selected —
+// never the synthetic `{kind:"new"}` chat that used to spawn a child on
+// first paint. The workspace list resolves after mount and decides what
+// happens next (placeholder, or one selected workspace with its chat).
+const NO_CHAT: ActiveChat = { kind: "none" };
 
 const SCREEN = {
   LOADING: "loading",
@@ -35,7 +42,12 @@ type Screen = (typeof SCREEN)[keyof typeof SCREEN];
 export function App() {
   const bridge = useBridge();
   const [screen, setScreen] = useState<Screen>(SCREEN.LOADING);
-  const [activeChat, setActiveChat] = useState<ActiveChat>(NEW_CHAT);
+  const [activeChat, setActiveChat] = useState<ActiveChat>(NO_CHAT);
+  // T1: the Workspaces panel's directories (persisted UNION pi-session
+  // directories), owned here because the selection default and the empty
+  // state need the same list the panel renders. Undefined while the first
+  // read is in flight. Re-set after every add/remove (onWorkspacesChanged).
+  const [workspaces, setWorkspaces] = useState<WorkspaceList | undefined>(undefined);
   // The open workspace's branch, reported by the conversation pane and shown
   // under the workspace's name in the sidebar (owner decision).
   const [activeBranch, setActiveBranch] = useState<string | undefined>(undefined);
@@ -45,6 +57,11 @@ export function App() {
   // answer for the new one, and passed back down as every request's
   // routing key.
   const [activeHostId, setActiveHostId] = useState<string | undefined>(undefined);
+  const registryRevision = useRef(0);
+  const [workspaceRevision, setWorkspaceRevision] = useState(0);
+  const pendingCloses = useRef(new Map<string, Promise<WorkspaceList>>());
+  const closeQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const closedHostIds = useRef(new Set<string>());
   // Every "New chat" click is a distinct pane identity (its own welcome
   // intro, T9b): the counter starts after the initial chat's epoch 0 and is
   // bumped once per click, so no two unsaved chats ever share a key.
@@ -55,6 +72,13 @@ export function App() {
   // again, which would spawn a second child for the same workspace. Cleared
   // on every selection change so a stale creation can never adopt.
   const [createdWorkspace, setCreatedWorkspace] = useState<{ readonly chatKey: string; readonly result: OpenChatResult } | undefined>(undefined);
+  const [resolvedDirectory, setResolvedDirectory] = useState<string | undefined>();
+  const activeDirectory = activeChat.kind === "workspace" ? activeChat.directory
+    : activeChat.kind === "existing" ? activeChat.chat.cwd
+    : activeChat.kind === "new" ? createdWorkspace?.result.state.workspacePath ?? resolvedDirectory : undefined;
+  const activeDirectoryRef = useRef(activeDirectory);
+  activeDirectoryRef.current = activeDirectory;
+  useEffect(() => bridge.onClosed?.((id) => { closedHostIds.current.add(id); }), [bridge]);
   // Panel visibility (artboard "Workspace"): the chrome's two toggles collapse
   // the directory column and the plan/usage/agents panel. Held as two booleans
   // on the shell so the modifier classes below stay the only source of layout.
@@ -121,6 +145,42 @@ export function App() {
     };
   }, [bridge]);
 
+  // T1: the first workspace read — the panel's rows and the selection
+  // default both come from it. A failed read fails open to "no workspaces
+  // persisted": the placeholder shows instead of blocking the app, exactly
+  // like the setup-status read above.
+  useEffect(() => {
+    let cancelled = false;
+    const revision = registryRevision.current;
+    bridge
+      .listWorkspaces?.()
+      .then((list) => {
+        if (!cancelled && registryRevision.current === revision) setWorkspaces(list);
+      })
+      .catch(() => {
+        if (!cancelled) setWorkspaces({ directories: [], persisted: [] });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [bridge]);
+
+  // T2 (S3/S4/S11): when the list resolves, the app is either empty (the
+  // placeholder stays, no child is ever spawned) or exactly one workspace
+  // is selected — the first directory — and its pane opens (the most
+  // recent session, else a new chat; ConversationContainer resolves that).
+  // A selection the user already made always wins: only a still-"none"
+  // pane takes the default.
+  useEffect(() => {
+    if (!workspaces || activeChat.kind !== "none") return;
+    const first = workspaces.directories[0];
+    if (first) openPane({ kind: "workspace", directory: first });
+    // openPane is a stable-enough local (a plain state wrapper); its
+    // identity is deliberately not a dependency, exactly like
+    // onHostResolved in ConversationContainer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaces, activeChat]);
+
   useEffect(() => {
     if (screen !== SCREEN.CHAT) return;
     const keydown = (event: KeyboardEvent): void => {
@@ -156,27 +216,82 @@ export function App() {
     }
   }, [narrow, navigationOpen, searchOpen]);
 
+  // Every selection change shares one rule (T5b/T11): the old host id must
+  // never answer for the new pane, and a stale creation must not adopt into
+  // it.
+  const openPane = (chat: ActiveChat): void => {
+    setActiveHostId(undefined);
+    setActiveBranch(undefined);
+    setResolvedDirectory(undefined);
+    setCreatedWorkspace(undefined);
+    setActiveChat(chat);
+  };
+
   const handleSelectChat = (chat: ChatSummary): void => {
     setNavigationOpen(false);
     setSearchOpen(false);
     setQuery("");
-    setActiveHostId(undefined); // the old host id must not answer for the new chat (T5b)
-    setCreatedWorkspace(undefined); // a stale creation must not adopt into this pane (T11)
-    setActiveChat({ kind: "existing", chat });
+    openPane({ kind: "existing", chat });
+  };
+
+  // T1: a workspace row was picked — open that directory's pane. Selecting
+  // a persisted workspace that has no chats opens a new chat for it without
+  // the picker (ConversationContainer resolves the pane through
+  // workspace.open; the Add-workspace flow is never re-run).
+  const handleSelectWorkspace = (directory: string): void => {
+    if (pendingCloses.current.has(directory)) return;
+    setNavigationOpen(false);
+    setSearchOpen(false);
+    setQuery("");
+    openPane({ kind: "workspace", directory });
+  };
+
+  // T1: the panel re-read the list (after add or after remove — the
+  // add/remove answers carry the fresh union; no push channel). S11: while
+  // at least one workspace remains, one is always selected; if the removed
+  // directory was the active pane, the selection moves to the next
+  // workspace — or back to the placeholder when none is left. The active
+  // pane's directory is either the selected workspace or (for a pane just
+  // created through the Add flow) the directory its adopted host runs in.
+  const handleWorkspacesChanged = (fresh: WorkspaceList): void => {
+    registryRevision.current += 1;
+    setWorkspaces(fresh);
+    const directory = activeDirectoryRef.current;
+    if (directory && !fresh.directories.includes(directory)) {
+      const next = fresh.directories[0];
+      openPane(next ? { kind: "workspace", directory: next } : { kind: "none" });
+    }
+  };
+
+  // Both close controls share one operation. Serialize distinct directory
+  // removals so an older registry answer cannot resurrect another closed row.
+  const handleCloseWorkspace = (directory: string): Promise<WorkspaceList> => {
+    const pending = pendingCloses.current.get(directory);
+    if (pending) return pending;
+    registryRevision.current += 1;
+    setWorkspaceRevision((revision) => revision + 1);
+    const operation = closeQueue.current.catch(() => undefined).then(async () => {
+      if (!bridge.removeWorkspace) throw new Error("This bridge cannot close a workspace directory");
+      const fresh = await bridge.removeWorkspace(directory);
+      handleWorkspacesChanged(fresh);
+      return fresh;
+    }).finally(() => { pendingCloses.current.delete(directory); });
+    pendingCloses.current.set(directory, operation);
+    closeQueue.current = operation;
+    return operation;
   };
 
   const handleNewChat = (): void => {
     setNavigationOpen(false);
     setQuery("");
-    setActiveHostId(undefined);
-    setCreatedWorkspace(undefined);
-    setActiveChat({ kind: "new", epoch: nextNewChatEpoch.current++ });
+    openPane({ kind: "new", epoch: nextNewChatEpoch.current++ });
   };
 
   /** T11: opens the pane of a workspace just created through "Add
    * workspace". Its own unsaved-pane epoch — the same identity rule as
    * "New chat" — with the resolution handed straight down for adoption. */
   const handleWorkspaceCreated = (result: OpenChatResult): void => {
+    if (closedHostIds.current.has(result.hostId) || pendingCloses.current.has(result.state.workspacePath ?? "")) return;
     const epoch = nextNewChatEpoch.current++;
     setActiveHostId(undefined);
     setActiveChat({ kind: "new", epoch });
@@ -228,24 +343,41 @@ export function App() {
           onSelectChat={handleSelectChat}
           onNewChat={handleNewChat}
           onWorkspaceCreated={handleWorkspaceCreated}
+          onSelectWorkspace={handleSelectWorkspace}
+          workspaces={workspaces}
+          onWorkspacesChanged={handleWorkspacesChanged}
+          onCloseWorkspace={handleCloseWorkspace}
+          workspaceRevision={workspaceRevision}
+          selectedDirectory={activeDirectory}
           selectedChatId={activeChat.kind === "existing" ? activeChat.chat.id : undefined}
           activeBranch={activeBranch}
           query={query}
           navigationTools={<RailTools onOpenSettings={() => setDialog(APP_DIALOG.SETTINGS)} onOpenShortcuts={() => setDialog(APP_DIALOG.SHORTCUTS)} />}
           navigationOpen={narrow && navigationOpen}
         />
-        <ConversationContainer
-          footerTarget={footerTarget}
-          activeChat={activeChat}
-          activeHostId={activeHostId}
-          createdWorkspace={createdWorkspace}
-          onHostResolved={setActiveHostId}
-          onWorktreeBranch={setActiveBranch}
-          // P2: closing the open workspace lands on a fresh chat. The closed
-          // chat stays in the sidebar (its session is still on disk) and
-          // selecting it again mints a new host, so nothing is lost.
-          onWorkspaceClosed={handleNewChat}
-        />
+        {activeChat.kind === "none" ? (
+          // T2 (S3/S4): no workspace open — plain text plus the Add-workspace
+          // hint. No ConversationContainer is rendered, so no child process
+          // can be spawned: the placeholder is a real empty state.
+          <section className="gc-conversation gc-conversation--empty" aria-label="No workspace open">
+            <p className="gc-conversation__empty-title">No workspace is open yet.</p>
+            <p className="gc-conversation__empty-hint">
+              Pick a directory with “Add workspace” in the Workspaces panel — Gentle opens a chat for it.
+            </p>
+          </section>
+        ) : (
+          <ConversationContainer
+            footerTarget={footerTarget}
+            activeChat={activeChat}
+            activeHostId={activeHostId}
+            createdWorkspace={createdWorkspace}
+            onHostResolved={setActiveHostId}
+            onResumeChat={handleSelectChat}
+            onWorktreeBranch={setActiveBranch}
+            onWorkspacePath={setResolvedDirectory}
+            onCloseWorkspace={handleCloseWorkspace}
+          />
+        )}
       </div>
       <div className="gc-app__footer" ref={setFooterTarget} />
       {searchOpen ? (
