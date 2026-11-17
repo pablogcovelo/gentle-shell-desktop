@@ -143,8 +143,8 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
   private worktreeRequestEpoch = 0;
   /** The desktop control channel's adoption state for THIS child's
    * lifetime (T3 correction). S10: `capabilities` is the only support
-   * probe — until it succeeds for the live child, NOTHING is written to
-   * the child's stdin on our initiative, because on a child without the
+   * probe — until it succeeds for the live child, extension reads stay
+   * gated (the native get_state bootstrap is safe), because on a child without the
    * bundled desktop extension a `/gentle:desktop {…}` prompt is an
    * unregistered slash string that would fall through as an ordinary
    * prompt (a model call and transcript pollution). Failed stays failed
@@ -245,15 +245,13 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
       // landing first would write a `/gentle:desktop` line and take
       // `get_messages` out of last position while ChatHost's bounded
       // history wait is still observing it (correction R3-001). A FRESH
-      // chat stays silent on stdin at START (ChatHost.test.ts pins that
-      // contract); its first control write is the capabilities probe the
-      // moment the child proves it is alive — its first decoded stdout
-      // frame, which the launcher produces immediately (status/widget
-      // frames) — and the `rate_limit` event is the live usage path after
-      // adoption without any request. See probeChannel/requestUsage for
-      // the full trigger set (never a timer).
+      // child may emit no unsolicited startup frames. One correlated native
+      // state read bootstraps identity without a model prompt; its reply
+      // triggers the existing once-only capabilities probe.
       if (this.sessionPath) {
         this.requestHistory();
+      } else {
+        this.requestState();
       }
     } catch (error) {
       this.surfaceError(toError(error));
@@ -334,13 +332,9 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
    * Issued from three places, all lifecycle boundaries and none a timer
    * (desktop-workspace-registry-and-diagnostics T3):
    *
-   *   1. a FRESH chat's first decoded stdout frame — the proof the child
-   *      is alive. The launcher writes status/widget frames immediately,
-   *      and with no model no turn ever settles, so waiting for a settled
-   *      turn meant the identity/MCP/session facts never ran and the
-   *      footer stayed empty. Start itself stays stdin-silent (ChatHost.
-   *      test.ts pins that contract): the probe is our response to the
-   *      child's frame, never a start write.
+   *   1. a FRESH chat's first decoded stdout frame, normally the native
+   *      bootstrap get_state reply. No unsolicited startup frame or settled
+   *      model turn is required.
    *   2. a REOPENED chat's history response (correction R3-001): frames
    *      that arrive while the history request is still pending prove
    *      aliveness without proving the history exchange finished, so
@@ -391,14 +385,19 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
    * Reads the session identity from pi's own RPC commands (desktop-rpc T4):
    * `get_session_stats` for cost, tokens and context usage, `get_state` for
    * the effective model and thinking level. Both are ordinary commands
-   * correlated by `id`, never desktop-rpc prompts, and both are gated on the
-   * adopted channel like every other control write.
+   * correlated by `id`, never desktop-rpc prompts. Refreshes are gated on
+   * the adopted channel; the fresh-child bootstrap reuses only the state read.
    */
   private requestIdentity(): void {
     if (this.probeState !== "ok") return;
     const statsId = `stats-${this.identityRequestCounter++}`;
     this.pendingStatsRequestId = statsId;
     this.send({ type: "get_session_stats", id: statsId });
+    this.requestState();
+  }
+
+  /** Native read: no model invocation or extension-channel dependency. */
+  private requestState(): void {
     const stateId = `state-${this.identityRequestCounter++}`;
     this.pendingStateRequestId = stateId;
     this.send({ type: "get_state", id: stateId });
@@ -822,14 +821,12 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
       const decoded = decodeLine(line);
       if ("kind" in decoded) return; // unknown/unmodeled line: nothing to fold or emit
 
-      // The FIRST decoded stdout frame from a fresh child is the proof it
-      // is alive: the launcher writes status/widget frames immediately,
-      // and the probe must ride that proof, not wait for a turn that may
-      // never settle (desktop-workspace T3). While a reopened chat's
+      // The first decoded frame (including the native bootstrap reply)
+      // proves aliveness without waiting for a model turn. While a reopened chat's
       // history request is still pending the probe waits for its response
       // instead (correction R3-001). `probeChannel` no-ops once it has
       // started or failed, so later frames never re-probe.
-      if (this.probeState === "idle" && this.pendingHistoryRequestId === undefined) {
+      if (this.process && this.probeState === "idle" && this.pendingHistoryRequestId === undefined) {
         this.probeChannel();
       }
 

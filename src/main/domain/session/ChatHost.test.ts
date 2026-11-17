@@ -237,19 +237,18 @@ describe("ChatHost", () => {
     const host = new ChatHost({ spawner, locator: fakeLocator, sessionStore: fakeSessionStore([]), env: {} });
 
     await host.newChat();
-    // The START stays stdin-silent (the contract PiSession pins too).
-    expect(handles[0]?.writes).toEqual([]);
+    expect(handles[0]?.writes.map((write) => JSON.parse(write).type)).toEqual(["get_state"]);
     handles[0]?.emitStdout(JSON.stringify({ type: "agent_start" }));
     // T3's new probe trigger: the first stdout frame proved the child
     // alive, so the capabilities probe is now on stdin. The DECLINE itself
     // still writes nothing new — the point this test has always pinned.
-    expect(handles[0]?.writes).toHaveLength(1);
-    expect(handles[0]?.writes[0]).toContain("capabilities");
+    expect(handles[0]?.writes.filter((write) => write.includes("capabilities"))).toHaveLength(1);
+    const writesBefore = [...handles[0]!.writes];
 
     const result = await host.sendMessage("another message");
 
     expect(result).toEqual({ queued: false, reason: "Gentle is still working" });
-    expect(handles[0]?.writes).toHaveLength(1);
+    expect(handles[0]?.writes).toEqual(writesBefore);
   });
 
   it("startSession serializes overlapping open/new calls: the previous session is fully stopped before the next spawns, and the last request wins", async () => {
@@ -326,9 +325,9 @@ describe("ChatHost", () => {
 
     // T3's new probe trigger: the dialog frame was the child's first stdout
     // frame, so the capabilities probe preceded the dialog answer on stdin.
-    expect(handles[0]?.writes).toHaveLength(2);
-    expect(handles[0]?.writes[0]).toContain("capabilities");
-    expect(handles[0]?.writes[1]).toEqual(`${JSON.stringify({ type: "extension_ui_response", id: "dlg-1", value: "A" })}\n`);
+    expect(handles[0]?.writes.filter((write) => write.includes("capabilities"))).toHaveLength(1);
+    expect(handles[0]?.writes.filter((write) => JSON.parse(write).type === "extension_ui_response")).toEqual([`${JSON.stringify({ type: "extension_ui_response", id: "dlg-1", value: "A" })}\n`]);
+    expect(handles[0]?.writes.at(-1)).toEqual(`${JSON.stringify({ type: "extension_ui_response", id: "dlg-1", value: "A" })}\n`);
   });
 
   it("abort() with no chat open rejects instead of throwing synchronously", async () => {
