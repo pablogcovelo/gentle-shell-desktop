@@ -8,6 +8,8 @@ export interface WorkspaceRowProps {
    * action is the honest option. */
   readonly persisted?: boolean;
   readonly selected?: boolean;
+  readonly disabled?: boolean;
+  readonly branch?: string;
   readonly onSelect?: (directory: string) => void;
   readonly onRemove?: (directory: string) => void;
 }
@@ -19,7 +21,7 @@ export interface WorkspaceRowProps {
  * chat. Reuses the chat row's classes so the panel's visual contract is
  * untouched; this is not a redesign.
  */
-export function WorkspaceRow({ directory, persisted = false, selected = false, onSelect, onRemove }: WorkspaceRowProps) {
+export function WorkspaceRow({ directory, persisted = false, selected = false, disabled = false, branch, onSelect, onRemove }: WorkspaceRowProps) {
   const name = directoryOf(directory) ?? directory;
   return (
     <li className="gc-workspace-row">
@@ -27,6 +29,7 @@ export function WorkspaceRow({ directory, persisted = false, selected = false, o
         type="button"
         className={`gc-chat-list-item${selected ? " gc-chat-list-item--selected" : ""}`}
         aria-current={selected || undefined}
+        disabled={disabled}
         aria-label={`${name} — workspace`}
         title={directory}
         onClick={() => onSelect?.(directory)}
@@ -47,6 +50,7 @@ export function WorkspaceRow({ directory, persisted = false, selected = false, o
         </svg>
         <span className="gc-chat-list-item__body">
           <strong className="gc-chat-list-item__title">{name}</strong>
+          {branch ? <span className="gc-chat-list-item__branch">{branch}</span> : null}
         </span>
       </button>
       {persisted && onRemove ? (
@@ -54,7 +58,8 @@ export function WorkspaceRow({ directory, persisted = false, selected = false, o
           type="button"
           className="gc-chat-list-item__remove"
           aria-label={`Remove workspace ${name}`}
-          title="Remove from the workspace list — its sessions and files are kept"
+          disabled={disabled}
+          title="Close this workspace — Pi sessions and files are kept"
           onClick={() => onRemove(directory)}
         >
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true">

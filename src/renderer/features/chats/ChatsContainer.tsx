@@ -2,119 +2,72 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ChatSummary, OpenChatResult, WorkspaceList } from "@shared/bridge-types";
 import { useBridge } from "@renderer/shared/bridge/useBridge";
 import { Button } from "@renderer/shared/ui/atoms/Button";
-import { ChatList, type WorkspaceGroup } from "./components/ChatList";
-import { directoryOf } from "./components/ChatListItem";
+import { WorkspaceRow } from "./components/WorkspaceRow";
+import "./components/ChatList.css";
 import "./ChatsContainer.css";
 
 export interface ChatsContainerProps {
-  /** Notifies the parent (App) that a sidebar chat was picked; App owns the currentChat state. */
   readonly onSelectChat: (chat: ChatSummary) => void;
-  /** Notifies the parent that "New chat" was clicked. */
   readonly onNewChat: () => void;
-  /** T11: reports a workspace the user just created through the native
-   * directory picker — this container runs the picker/create flow over the
-   * bridge (it owns the sidebar's error surface) and hands the resolution
-   * up, so App can open the created workspace's pane. Absent when the
-   * parent does not support workspace creation, and then the action is not
-   * rendered. */
   readonly onWorkspaceCreated?: (result: OpenChatResult) => void;
-  /** T1: the Workspaces panel's directories (persisted UNION pi-session
-  * directories), owned by App — it needs the same list for selection and
-  * the empty state. Undefined keeps today's flat chat list (a caller
-  * without the registry). */
+  /** Opened directory registry only. Undefined means still loading, not history. */
   readonly workspaces?: WorkspaceList;
-  /** T1: reports the fresh WorkspaceList after add/remove, so App's copy
-  * (selection, empty state) and this panel stay correct without a
-  * restart. add/remove answer the fresh list themselves — one explicit
-  * re-read per action, never a push channel. */
   readonly onWorkspacesChanged?: (workspaces: WorkspaceList) => void;
-  /** T1: reports a workspace row picked — App opens that directory's pane
-  * without the picker (selecting a persisted workspace that has no chats
-  * must not show the native picker again). */
   readonly onSelectWorkspace?: (directory: string) => void;
-  /** The currently open chat's id, for highlighting; undefined while a fresh chat is open. */
+  readonly onCloseWorkspace?: (directory: string) => Promise<WorkspaceList>;
+  /** Invalidates pending Add actions when another control closes a directory. */
+  readonly workspaceRevision?: number;
+  readonly selectedDirectory?: string;
   readonly selectedChatId?: string;
-  /** The open workspace's branch, shown under that workspace's name (owner
-   * decision: the branch lives with the workspace, not in the footer). */
   readonly activeBranch?: string;
-  /** Case-insensitive filter from the top bar's search. When undefined or
-   * blank, every chat renders. Matches the chat title or its directory. */
   readonly query?: string;
   readonly navigationTools?: ReactNode;
   readonly navigationOpen?: boolean;
 }
 
-/**
- * Sidebar container: owns the bridge listChats() call and hands plain
- * ChatSummary props to the presentational ChatList (container/presentational
- * split). Does not call chat.open/chat.new itself — ConversationContainer
- * owns "the currently open chat" per GentleBridge's single-current-chat
- * shape, so this only reports selection intent up to App.
- */
-export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, onSelectWorkspace, workspaces, onWorkspacesChanged, selectedChatId, activeBranch, query, navigationTools, navigationOpen }: ChatsContainerProps) {
+/** Directory navigation never reads Pi history. Saved sessions live in /resume. */
+export function ChatsContainer({ onNewChat, onWorkspaceCreated, onSelectWorkspace, workspaces, onWorkspacesChanged, onCloseWorkspace, workspaceRevision = 0, selectedDirectory, activeBranch, query, navigationTools, navigationOpen }: ChatsContainerProps) {
   const bridge = useBridge();
-  const [chats, setChats] = useState<ChatSummary[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  // T11: the Add-workspace flow's own error surface, separate from the
-  // list's — a refused directory is a clear message beside the action that
-  // asked for it, and never a fake chat entry.
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
-  // T11: one Add-workspace flow at a time, and any action that moves the pane
-  // supersedes a flow already running (see handleAddWorkspace).
   const [addingWorkspace, setAddingWorkspace] = useState(false);
-  // The ref is the synchronous guard: state only lands on the next render, so
-  // two clicks in the same tick would both pass a state-based check.
   const addingRef = useRef(false);
   const paneActions = useRef(0);
-
-  // S8/T8: the top bar's search filters this list — a pure client-side pass
-  // over the loaded chats, matching the chat title or exactly the directory
-  // the row renders (same last-path-segment rule as ChatListItem). A blank
-  // query renders every chat; no chat is ever invented to fill a match.
+  const revisionRef = useRef(workspaceRevision);
+  revisionRef.current = workspaceRevision;
+  const closing = useRef(new Set<string>());
+  const [closingRows, setClosingRows] = useState<ReadonlySet<string>>(new Set());
   const normalizedQuery = query?.trim();
-  const visibleChats = normalizedQuery
-    ? chats.filter((chat) => {
-        const needle = normalizedQuery.toLowerCase();
-        return chat.title.toLowerCase().includes(needle) || (directoryOf(chat.cwd) ?? "").toLowerCase().includes(needle);
-      })
-    : chats;
-
-  const handleSelect = (chat: ChatSummary): void => {
-    paneActions.current += 1;
-    onSelectChat(chat);
-  };
+  const needle = normalizedQuery?.toLowerCase();
+  const directories = (workspaces?.directories ?? []).filter((directory) => !needle || directory.toLowerCase().includes(needle));
 
   const handleNewChat = (): void => {
     paneActions.current += 1;
     onNewChat();
   };
-
-  // T1: a workspace row was picked. Same pane-action guard as every other
-  // selection: an in-flight Add-workspace flow loses to it.
   const handleSelectWorkspace = (directory: string): void => {
+    if (closing.current.has(directory)) return;
     paneActions.current += 1;
     onSelectWorkspace?.(directory);
   };
-
-  // T1 (S2): a persisted row's remove action deletes ONLY the persisted
-  // registry entry — never a session file, a directory, a chat or a host
-  // (bridge.removeWorkspace, not closeChat). The fresh list answers the
-  // request itself and is reported up, so the panel is correct without a
-  // restart. A failure surfaces beside the action that asked for it.
   const handleRemoveWorkspace = (directory: string): void => {
-    void (async () => {
-      const remove = bridge.removeWorkspace?.bind(bridge);
-      if (!remove) return;
-      setWorkspaceError(null);
-      const fresh = await remove(directory);
-      onWorkspacesChanged?.(fresh);
-    })().catch((cause: unknown) => {
+    if (closing.current.has(directory)) return;
+    const remove = onCloseWorkspace ?? bridge.removeWorkspace?.bind(bridge);
+    if (!remove) return;
+    paneActions.current += 1;
+    closing.current.add(directory);
+    setClosingRows(new Set(closing.current));
+    setWorkspaceError(null);
+    void remove(directory).then((fresh) => {
+      // App's shared close handler already reconciles the latest selection.
+      if (!onCloseWorkspace) onWorkspacesChanged?.(fresh);
+    }).catch((cause: unknown) => {
       setWorkspaceError(cause instanceof Error ? cause.message : String(cause));
+    }).finally(() => {
+      closing.current.delete(directory);
+      setClosingRows(new Set(closing.current));
     });
   };
 
-  // The removed visible New chat action remains available with Ctrl/⌘+N.
-  // Reuse the same pane-action helper so pending creations still lose to it.
   useEffect(() => {
     const keydown = (event: KeyboardEvent): void => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "n" && !document.querySelector('[role="dialog"]')) {
@@ -126,70 +79,39 @@ export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, on
     return () => window.removeEventListener("keydown", keydown);
   });
 
-  useEffect(() => {
-    let cancelled = false;
-
-    bridge
-      .listChats()
-      .then((loaded) => {
-        if (!cancelled) setChats(loaded);
-      })
-      .catch((cause: unknown) => {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [bridge]);
-
-  /** T11: runs the Add-workspace flow — native picker first; a null answer
-   * is a cancelled pick and changes NOTHING (no request, no chat, no
-   * state); otherwise main validates the directory and creates the
-   * workspace, and the resolution is handed up so App can adopt the pane.
-   * A refused directory surfaces here, beside the action that asked for it. */
   const handleAddWorkspace = (): void => {
-    if (addingRef.current) return; // one flow at a time: no duplicate creations
+    if (addingRef.current) return;
     void (async () => {
       if (!onWorkspaceCreated) return;
       const pick = bridge.chooseDirectory?.bind(bridge);
       const create = bridge.createWorkspace?.bind(bridge);
       if (!pick || !create) return;
-
       setWorkspaceError(null);
       addingRef.current = true;
       setAddingWorkspace(true);
-      // A creation takes as long as the picker and a child start. If the user
-      // opens another chat in the meantime, their later choice wins: the stale
-      // answer would otherwise switch the pane back and strand the chat they
-      // picked, with its host alive and invisible.
       const actionAtStart = paneActions.current;
+      const revisionAtStart = revisionRef.current;
+      const stale = (): boolean => paneActions.current !== actionAtStart || revisionRef.current !== revisionAtStart;
       try {
         const directory = await pick();
-        if (directory === null) return; // cancelled: change nothing
-        // The picker can stay open for a while: if the user moved on meanwhile,
-        // stop here and start no child at all for a workspace nobody waits for.
-        if (paneActions.current !== actionAtStart) return;
-
-        // T1 (S2): the picked directory is PERSISTED before the chat is
-        // created, so the row exists immediately and survives a restart —
-        // even when the child fails to start (the row stays; selecting it
-        // retries). The fresh list answers the request and is reported up.
-        // A bridge without the registry degrades to today's flow (create
-        // only) instead of stopping.
+        if (directory === null || stale() || closing.current.has(directory)) return;
         const add = bridge.addWorkspace?.bind(bridge);
         if (add) {
           const fresh = await add(directory);
-          if (paneActions.current !== actionAtStart) return;
+          if (stale()) return;
           onWorkspacesChanged?.(fresh);
         }
-
+        // A close may have started while add was pending. Never start a new
+        // host after that close's pending-start join has already completed.
+        if (stale()) return;
         const result = await create(directory);
-        if (paneActions.current !== actionAtStart) {
-          // The child already exists, so merely dropping the result would leave
-          // a workspace host nobody can reach — the same orphan this flow is
-          // meant to prevent. Close it instead.
-          void bridge.closeChat?.(result.hostId).catch(() => undefined);
+        if (stale()) {
+          // Exact-host cleanup, deliberately not directory closure: another
+          // workspace action may now own other hosts in this directory.
+          await bridge.closeChat?.(result.hostId).catch((cause: unknown) => {
+            // An already-closed host is harmless; other cleanup errors remain visible.
+            if (!String(cause).includes("unknown or already stopped")) throw cause;
+          });
           return;
         }
         onWorkspaceCreated(result);
@@ -202,33 +124,6 @@ export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, on
     });
   };
 
-  // T1: the grouped render — one row per workspace directory, its chat
-  // rows underneath. With no registry (workspaces undefined) the flat
-  // chat list renders exactly as before.
-  const needle = normalizedQuery?.toLowerCase();
-  const grouped = (() => {
-    if (!workspaces) return undefined;
-    const directories = new Set(workspaces.directories);
-    const chatMatches = (chat: ChatSummary): boolean =>
-      !needle ||
-      chat.title.toLowerCase().includes(needle) ||
-      (directoryOf(chat.cwd) ?? "").toLowerCase().includes(needle);
-    const groups: WorkspaceGroup[] = [];
-    for (const directory of workspaces.directories) {
-      const all = chats.filter((chat) => chat.cwd === directory);
-      const directoryMatches =
-        needle !== undefined &&
-        ((directoryOf(directory) ?? directory).toLowerCase().includes(needle) || directory.toLowerCase().includes(needle));
-      const filtered = needle === undefined || directoryMatches ? all : all.filter(chatMatches);
-      if (needle !== undefined && !directoryMatches && filtered.length === 0) continue;
-      groups.push({ directory, chats: filtered, persisted: workspaces.persisted.includes(directory) });
-    }
-    const remainder = chats.filter((chat) => !chat.cwd || !directories.has(chat.cwd)).filter(chatMatches);
-    return { groups, remainder };
-  })();
-
-  // S8: the sidebar SHOWS chats as workspaces (the bridge serves chats, the
-  // owner's call), so the panel's heading is the artboard's "Workspaces".
   return (
     <aside className="gc-chats" id="gc-chats" aria-label="Workspace directories" onKeyDown={(event) => {
       if (!navigationOpen || event.key !== "Tab") return;
@@ -238,48 +133,23 @@ export function ChatsContainer({ onSelectChat, onNewChat, onWorkspaceCreated, on
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
     }}>
-      {/* T2: the artboard's directory-panel anatomy (design/slack-gentle/
-      01-workspace.html .sidebar-head): eyebrow, heading with its accent dot
-      and a subtitle. The dot is aria-hidden so the heading's accessible name
-      stays exactly "Workspaces". */}
       <div className="gc-chats__header">
         <p className="gc-chats__eyebrow">YOUR WORK, IN GOOD COMPANY</p>
-        <h2 className="gc-chats__heading">
-          Workspaces<span aria-hidden="true" className="gc-chats__dot">.</span>
-        </h2>
+        <h2 className="gc-chats__heading">Workspaces<span aria-hidden="true" className="gc-chats__dot">.</span></h2>
         <p className="gc-chats__subtitle">Your directories. One place to build.</p>
       </div>
       <div className="gc-chats__actions">
-        {onWorkspaceCreated ? (
-          <Button variant="ghost" type="button" onClick={handleAddWorkspace} disabled={addingWorkspace}>
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
-            Add workspace
-          </Button>
-        ) : null}
+        {onWorkspaceCreated ? <Button variant="ghost" type="button" onClick={handleAddWorkspace} disabled={addingWorkspace}>Add workspace</Button> : null}
       </div>
-      {error && (
-        <p style={{ color: "var(--muted)" }}>Chats are not available yet: {error}</p>
-      )}
-      {workspaceError && (
-        <p role="alert" style={{ color: "var(--muted)" }}>
-          Could not add the workspace: {workspaceError}
-        </p>
-      )}
-      <ChatList
-        chats={grouped ? grouped.remainder : visibleChats}
-        groups={grouped?.groups}
-        selectedId={selectedChatId}
-        onSelect={handleSelect}
-        onSelectWorkspace={handleSelectWorkspace}
-        onRemoveWorkspace={handleRemoveWorkspace}
-        activeBranch={activeBranch}
-      />
-      {normalizedQuery && visibleChats.length === 0 && (
-        <p className="gc-chats__empty">No chats match &quot;{normalizedQuery}&quot;.</p>
-      )}
+      {workspaceError ? <p role="alert" style={{ color: "var(--muted)" }}>Workspace action failed: {workspaceError}</p> : null}
+      <div className="gc-chat-list">
+        <ul className="gc-chat-list__items" aria-label="Workspace directories">
+          {directories.map((directory) => <WorkspaceRow key={directory} directory={directory} persisted selected={directory === selectedDirectory} branch={directory === selectedDirectory ? activeBranch : undefined} disabled={closingRows.has(directory)} onSelect={handleSelectWorkspace} onRemove={handleRemoveWorkspace} />)}
+        </ul>
+      </div>
+      {normalizedQuery && directories.length === 0 ? <p className="gc-chats__empty">No workspaces match &quot;{normalizedQuery}&quot;.</p> : null}
       <div className="gc-chats__footer">
-        <p>You lead. Gentle helps.</p>
-        <p>Local directory workspaces.</p>
+        <p>You lead. Gentle helps.</p><p>Local directory workspaces.</p>
         <div className="gc-chats__mobile-tools">{navigationTools}</div>
       </div>
     </aside>

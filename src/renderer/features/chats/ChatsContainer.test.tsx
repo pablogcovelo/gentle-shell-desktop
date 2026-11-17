@@ -41,10 +41,18 @@ it("names the panel heading Workspaces", async () => {
   expect(await screen.findByRole("heading", { name: "Workspaces" })).toBeInTheDocument();
 });
 
-it("shows a message when listChats rejects", async () => {
-  window.gentle = makeBridge({ listChats: vi.fn().mockRejectedValue(new Error("bridge not ready")) });
-  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} />);
-  expect(await screen.findByText("Chats are not available yet: bridge not ready")).toBeInTheDocument();
+it("never discovers history or resurrects closed rows through a flat fallback or remainder", async () => {
+  const bridge = makeBridge({ listChats: vi.fn().mockResolvedValue([makeChat({ title: "Closed history" }), makeChat({ id: "orphan", cwd: "", title: "Orphan history" })]) });
+  window.gentle = bridge;
+  const props = { onSelectChat: vi.fn(), onNewChat: vi.fn() };
+  const view = render(<ChatsContainer {...props} workspaces={{ directories: ["/tmp/open"], persisted: ["/tmp/open"] }} />);
+  await act(async () => {});
+  expect(screen.queryByRole("button", { name: /Closed history|Orphan history/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "open — workspace" })).toBeInTheDocument();
+  view.rerender(<ChatsContainer {...props} />);
+  await act(async () => {});
+  expect(screen.queryByRole("button", { name: /Closed history|Orphan history/ })).not.toBeInTheDocument();
+  expect(bridge.listChats).not.toHaveBeenCalled();
 });
 
 it("calls onNewChat through Ctrl+N without a visible New chat button", async () => {
@@ -58,88 +66,15 @@ it("calls onNewChat through Ctrl+N without a visible New chat button", async () 
   expect(onNewChat).toHaveBeenCalled();
 });
 
-it("calls onSelectChat with the chat when a list item is clicked", async () => {
-  const chat: ChatSummary = {
-    id: "chat-1",
-    title: "Refactor the store",
-    cwd: "/tmp/project",
-    updatedAt: "2026-09-21T09:00:00.000Z",
-    messageCount: 3,
-    state: CHAT_STATE.IDLE,
-  };
-  window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([chat]) });
-  const onSelectChat = vi.fn();
-
-  render(<ChatsContainer onSelectChat={onSelectChat} onNewChat={vi.fn()} />);
-  (await screen.findByRole("button", { name: /Refactor the store/ })).click();
-
-  expect(onSelectChat).toHaveBeenCalledWith(chat);
-});
-
-it("renders a directory row without a state pill", async () => {
-  const chat = makeChat({ id: "chat-1", title: "Alpha", cwd: "/tmp/project" });
-  window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([chat]) });
-
-  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} />);
-  const row = await screen.findByRole("button", { name: /Alpha/ });
-
-  expect(row).toHaveTextContent("project");
-  expect(row).not.toHaveTextContent("idle");
-});
-
-it("renders no directory when the chat's cwd is empty", async () => {
-  const chat = makeChat({ id: "chat-1", title: "Alpha", cwd: "" });
-  window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([chat]) });
-
-  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} />);
-  const row = await screen.findByRole("button", { name: /Alpha/ });
-
-  expect(row).not.toHaveTextContent("tmp");
-  expect(row).toHaveTextContent("Alpha");
-  expect(row).not.toHaveTextContent("idle");
-});
-
-it("filters chats by title, case-insensitively", async () => {
-  const alpha = makeChat({ id: "a", title: "Alpha chat" });
-  const beta = makeChat({ id: "b", title: "Beta chat" });
-  window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([alpha, beta]) });
-
-  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} query="ALPH" />);
-
-  expect(await screen.findByRole("button", { name: /Alpha chat/ })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Beta chat/ })).not.toBeInTheDocument();
-});
-
-it("filters chats by their directory", async () => {
-  const alpha = makeChat({ id: "a", title: "Alpha chat", cwd: "/home/dev/gentle-core" });
-  const beta = makeChat({ id: "b", title: "Beta chat", cwd: "/home/dev/shell" });
-  window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([alpha, beta]) });
-
-  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} query="gentle-core" />);
-
-  expect(await screen.findByRole("button", { name: /Alpha chat/ })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Beta chat/ })).not.toBeInTheDocument();
-});
-
-it("renders every chat for a blank query", async () => {
-  const alpha = makeChat({ id: "a", title: "Alpha chat" });
-  const beta = makeChat({ id: "b", title: "Beta chat" });
-  window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([alpha, beta]) });
-
-  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} query="   " />);
-
-  expect(await screen.findByRole("button", { name: /Alpha chat/ })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: /Beta chat/ })).toBeInTheDocument();
-});
-
-it("reports when no chat matches the query", async () => {
-  const alpha = makeChat({ id: "a", title: "Alpha chat" });
-  window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([alpha]) });
-
-  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} query="zzz" />);
-
-  expect(await screen.findByText('No chats match "zzz".')).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Alpha chat/ })).not.toBeInTheDocument();
+it.each(["ALPH", "/tmp/alpha", "   ", "zzz"])("filters opened directory rows for query %s without consulting chat titles", async (query) => {
+  const bridge = makeBridge({ listChats: vi.fn().mockResolvedValue([makeChat({ title: "Secret title" })]) });
+  window.gentle = bridge;
+  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} workspaces={{ directories: ["/tmp/alpha", "/tmp/beta"], persisted: ["/tmp/alpha", "/tmp/beta"] }} query={query} />);
+  await act(async () => {});
+  expect(screen.queryByRole("button", { name: "alpha — workspace" }) !== null).toBe(query !== "zzz");
+  expect(screen.queryByRole("button", { name: "beta — workspace" }) !== null).toBe(query.trim() === "");
+  if (query === "zzz") expect(screen.getByText('No workspaces match "zzz".')).toBeInTheDocument();
+  expect(bridge.listChats).not.toHaveBeenCalled();
 });
 
 const EMPTY_STATE: ChatState = {
@@ -166,10 +101,10 @@ describe("ChatsContainer workspace registry (T1)", () => {
 
     expect(await screen.findByRole("button", { name: "added — workspace" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "project — workspace" })).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: /A chat/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /A chat/ })).not.toBeInTheDocument();
   });
 
-  it("shows the remove action on persisted rows only — a session-only row has nothing persisted to forget", async () => {
+  it("offers closure on every opened directory row regardless of legacy persisted metadata", async () => {
     window.gentle = makeBridge({ listChats: vi.fn().mockResolvedValue([SESSION_CHAT]) });
 
     render(
@@ -177,7 +112,7 @@ describe("ChatsContainer workspace registry (T1)", () => {
     );
 
     expect(await screen.findByRole("button", { name: "Remove workspace added" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Remove workspace project" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove workspace project" })).toBeInTheDocument();
   });
 
   it("remove deletes only the persisted entry: bridge.removeWorkspace with the directory, the fresh list reported up, no host touched", async () => {
