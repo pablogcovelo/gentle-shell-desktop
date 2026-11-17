@@ -8,6 +8,7 @@ import {
   createNodeProcessSpawner,
   createSetupService,
 } from "./adapters";
+import { createLocalPiDevelopment } from "./adapters/localPiDevelopment";
 import { boundedStop } from "./domain/lifecycle/boundedStop";
 import { WorkspaceHostRegistry } from "./domain/session/WorkspaceHostRegistry";
 import {
@@ -51,9 +52,15 @@ function logPiLine(line: string): void {
 // A managed supervisor fixes the home; legacy/source launchers retain the
 // persisted first-run choice and resolveHomeArgs/homeDirFor defaults.
 const configStore = createAppConfigStore(path.join(app.getPath("userData"), "config.json"));
-const locator = createLauncherLocator();
-const homeSettings = createHomeSettings(configStore, process.env, locator);
-const setupService = createSetupService(configStore, process.env, undefined, homeSettings.managedHome);
+const localDevelopment = process.env.GENTLE_SHELL_DESKTOP_LOCAL_PI === "1"
+  ? createLocalPiDevelopment()
+  : undefined;
+const locator = localDevelopment?.locator ?? createLauncherLocator();
+const homeSettings = localDevelopment?.homeSettings ?? createHomeSettings(configStore, process.env, locator);
+const setupService = localDevelopment?.setupService ?? createSetupService(
+  configStore, process.env, undefined,
+  createHomeSettings(configStore, process.env, locator).managedHome,
+);
 
 // The SessionStore re-resolves the current home on every call (instead of
 // once at startup) so it reflects a home choice made mid-session, exactly

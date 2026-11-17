@@ -11,7 +11,7 @@ function launch(override?: string) {
   delete env.GENTLE_SHELL_BIN;
   if (override) env.GENTLE_SHELL_BIN = override;
   // Exercise the actual package command without starting a GUI.
-  return spawnSync("/bin/bash", ["-c", `electron-vite() { printf '%s\\n' "$GENTLE_SHELL_BIN" "$@"; }; ${scripts["dev:local-pi"]}`], {
+  return spawnSync("/bin/bash", ["-c", `electron-vite() { printf '%s\\n' "$GENTLE_SHELL_BIN" "$@" "$GENTLE_SHELL_DESKTOP_LOCAL_PI"; }; ${scripts["dev:local-pi"]}`], {
     cwd: root, env, encoding: "utf8",
   });
 }
@@ -21,16 +21,17 @@ describe("dev:local-pi", () => {
     const result = launch();
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
-    const [entry, command] = result.stdout.trim().split("\n");
+    const [entry, command, mode] = result.stdout.trim().split("\n");
     expect(path.isAbsolute(entry!)).toBe(true);
     expect(path.normalize(entry!)).toBe(path.resolve(root, "../gentle-pi/bin/gentle-shell.mjs"));
     expect(command).toBe("dev");
+    expect(mode).toBe("1");
   });
 
   it("preserves an explicitly selected launcher", () => {
     const result = launch("/custom checkout/bin/gentle-shell.mjs");
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
-    expect(result.stdout).toBe("/custom checkout/bin/gentle-shell.mjs\ndev\n");
+    expect(result.stdout).toBe("/custom checkout/bin/gentle-shell.mjs\ndev\n1\n");
   });
 });

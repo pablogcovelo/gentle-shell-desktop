@@ -143,9 +143,11 @@ A conflicting `GENTLE_SHELL_HOME` or saved `link` choice is rejected rather than
 
 ### Optional: test against the sibling gentle-pi checkout
 
-Run `pnpm dev:local-pi` with `../gentle-pi` checked out and its dependencies installed. It selects that checkout's `bin/gentle-shell.mjs` using an absolute path, so opening another workspace does not change the launcher location. No global installation is required. To select another checkout, use `GENTLE_SHELL_BIN=/absolute/path/to/gentle-pi/bin/gentle-shell.mjs pnpm dev:local-pi`.
+Run `pnpm dev:local-pi` with `../gentle-pi` checked out and its dependencies installed, **and a managed gentle-shell installation on PATH**. This command alone enables `GENTLE_SHELL_DESKTOP_LOCAL_PI=1`. To select another checkout, use `GENTLE_SHELL_BIN=/absolute/path/to/gentle-pi/bin/gentle-shell.mjs pnpm dev:local-pi`.
 
-The source launcher supports the app's default `--isolated` mode (`~/.gentle-shell/agent`), keeping it separate from plain pi. Sign in through that same source launcher before testing model replies; do not copy credentials between homes. `GENTLE_SHELL_HOME=/absolute/path` selects a different agent home for both the child and Desktop's session listing.
+Desktop runs the absolute source launcher with `--package-root <checkout>` and `--link`, overriding an existing npm package declaration at runtime rather than accidentally loading the installed package. It uses the installed Pi executable (and private Node on PATH when available), disables automatic setup, and fixes both child home and session listing to the installed agent home. Saved Desktop isolated/link choices are ignored without changing them; first-run home selection is skipped. Conflicting explicit home or Pi runtime overrides fail instead of silently selecting another login.
+
+**This shares writable sessions, models, configuration and login refresh state with your installation.** No reinstall or login copy is needed; no package declaration or Desktop home choice is persisted by this adapter. The source runtime itself can still write normal native configuration/session state. This is source development, not supervisor lifecycle or native-policy equivalence. Ordinary `pnpm dev` and explicit source launches without this opt-in retain their previous routing.
 
 `pnpm dev:web` uses an in-memory mock bridge, not a real agent. `dev:local-pi` is optional source development, not the default installed-runtime integration check. Child diagnostics appear in the terminal with the `[pi]` prefix.
 
