@@ -16,15 +16,19 @@ export function createSetupService(
   configStore: AppConfigStore,
   env: NodeJS.ProcessEnv = process.env,
   exists: (candidate: string) => boolean = existsSync,
+  managedHome: () => string | undefined = () => undefined,
 ): SetupService {
   return {
     async status(): Promise<SetupStatus> {
+      const managed = managedHome();
+      if (managed) return { needsChoice: false, detection: { found: true, dir: managed, hasAuth: false, hasModels: false } };
       const detection = detectPi(env, homedir, exists);
       const hasChoice = configStore.read().home !== undefined;
       return { needsChoice: !hasChoice && detection.found, detection };
     },
 
     async chooseHome(mode: HomeMode): Promise<void> {
+      if (managedHome()) throw new Error("The installed supervisor uses its fixed managed home; no home choice is available.");
       try {
         configStore.write({ home: mode });
       } catch (error) {

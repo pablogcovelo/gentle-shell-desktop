@@ -9,7 +9,6 @@ import {
   createSetupService,
 } from "./adapters";
 import { boundedStop } from "./domain/lifecycle/boundedStop";
-import { homeDirFor, resolveHomeMode } from "./domain/home/home";
 import { WorkspaceHostRegistry } from "./domain/session/WorkspaceHostRegistry";
 import {
   WorkspaceHostRouter,
@@ -48,15 +47,13 @@ function logPiLine(line: string): void {
   process.stderr.write(`[pi] ${line}\n`);
 }
 
-// Persisted first-run/home choice (T5), under Electron's own per-user data
-// directory. configStore.read() has no choice yet before first-run
-// resolves it (see setupService's needsChoice) — homeSettings/the dynamic
-// SessionStore below both default an absent choice to isolated through
-// resolveHomeMode (T6 follow-up), the single source of truth
-// resolveHomeArgs/homeDirFor also defer to.
+// One launch/home contract drives child flags, session listing and setup.
+// A managed supervisor fixes the home; legacy/source launchers retain the
+// persisted first-run choice and resolveHomeArgs/homeDirFor defaults.
 const configStore = createAppConfigStore(path.join(app.getPath("userData"), "config.json"));
-const homeSettings = createHomeSettings(configStore);
-const setupService = createSetupService(configStore);
+const locator = createLauncherLocator();
+const homeSettings = createHomeSettings(configStore, process.env, locator);
+const setupService = createSetupService(configStore, process.env, undefined, homeSettings.managedHome);
 
 // The SessionStore re-resolves the current home on every call (instead of
 // once at startup) so it reflects a home choice made mid-session, exactly
@@ -81,8 +78,8 @@ const setupService = createSetupService(configStore);
 const hostRegistry = new WorkspaceHostRegistry({
   createHostDeps: () => ({
     spawner: createNodeProcessSpawner(),
-    locator: createLauncherLocator(),
-    sessionStore: createDynamicPiSessionStore(() => homeDirFor(resolveHomeMode(configStore.read()), process.env)),
+    locator,
+    sessionStore: createDynamicPiSessionStore(homeSettings.homeDir),
     env: process.env,
     homeSettings,
     log: logPiLine,
