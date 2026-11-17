@@ -4,14 +4,17 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { App } from "./App";
 import { resetWelcomeHeroIntrosForTests } from "../features/conversation/components/WelcomeHero";
 import { resetWorkspaceSnapshotsForTests } from "../features/conversation/ConversationContainer";
-import { mockBridge, setMockChats, setMockDirectoryPick } from "../shared/bridge/mockBridge";
+import { mockBridge, resetMockBridge, setMockChats, setMockDirectoryPick } from "../shared/bridge/mockBridge";
 
 // `?firstRun=0` forces mockBridge.setupStatus() to needsChoice: false (see
 // mockBridge's firstRunOverride), so these tests exercise the normal chat
 // layout without going through the first-run screen mockBridge shows by
 // default for the browser preview.
 describe("App", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    resetMockBridge();
+    window.gentle = mockBridge;
+    await mockBridge.addWorkspace!("/Users/dev/gentle-shell-desktop");
     window.history.pushState({}, "", "?firstRun=0");
     resetWelcomeHeroIntrosForTests();
     // ConversationContainer's T5c snapshot cache is module-level; without
@@ -23,6 +26,115 @@ describe("App", () => {
   afterEach(() => {
     window.history.pushState({}, "", "/");
     (Element.prototype as unknown as { getAnimations?: unknown }).getAnimations = undefined;
+  });
+
+  it("opens a selected saved Pi session through the existing App route only after GUI /resume", async () => {
+    await mockBridge.addWorkspace?.("/Users/dev/gentle-shell-desktop");
+    const openChat = vi.spyOn(mockBridge, "openChat");
+    const sendMessage = vi.spyOn(mockBridge, "sendMessage");
+    const listChats = vi.spyOn(mockBridge, "listChats");
+    try {
+      render(<App />);
+      const field = await screen.findByPlaceholderText("Tell Gentle what you need…");
+      await act(async () => {});
+      expect(openChat).not.toHaveBeenCalled();
+      const priorLists = listChats.mock.calls.length;
+      fireEvent.change(field, { target: { value: "/resume" } });
+      await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      const dialog = await screen.findByRole("dialog", { name: "Resume a session" });
+      fireEvent.click(await within(dialog).findByRole("button", { name: /Write the README intro/ }));
+      await waitFor(() => expect(openChat).toHaveBeenCalledExactlyOnceWith("chat-readme"));
+      expect(listChats).toHaveBeenCalledTimes(priorLists + 1);
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(screen.queryByRole("dialog", { name: "Resume a session" })).not.toBeInTheDocument();
+    } finally {
+      openChat.mockRestore();
+      sendMessage.mockRestore();
+      listChats.mockRestore();
+      await mockBridge.removeWorkspace?.("/Users/dev/gentle-shell-desktop");
+    }
+  });
+
+  it("header closes a resumed workspace through removeWorkspace and selects another opened directory", async () => {
+    await mockBridge.removeWorkspace!("/Users/dev/gentle-shell-desktop");
+    await mockBridge.addWorkspace!("/tmp/other-open");
+    await mockBridge.addWorkspace!("/Users/dev/gentle-shell-desktop");
+    const remove = vi.spyOn(mockBridge, "removeWorkspace");
+    const close = vi.spyOn(mockBridge, "closeChat");
+    const fresh = vi.spyOn(mockBridge, "newChat");
+    try {
+      render(<App />);
+      const field = await screen.findByPlaceholderText("Tell Gentle what you need…");
+      await act(async () => {});
+      fireEvent.change(field, { target: { value: "/resume" } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      fireEvent.click(await within(await screen.findByRole("dialog")).findByRole("button", { name: /Write the README intro/ }));
+      await act(async () => {});
+      fireEvent.click(screen.getByRole("button", { name: "Close this workspace" }));
+      await screen.findByRole("heading", { name: "other-open" });
+      expect(remove).toHaveBeenCalledExactlyOnceWith("/Users/dev/gentle-shell-desktop");
+      expect(close).not.toHaveBeenCalled();
+      expect(fresh).not.toHaveBeenCalled();
+      expect(screen.queryByRole("button", { name: "gentle-shell-desktop — workspace" })).not.toBeInTheDocument();
+    } finally {
+      remove.mockRestore(); close.mockRestore(); fresh.mockRestore();
+      await mockBridge.removeWorkspace!("/tmp/other-open");
+      await mockBridge.removeWorkspace!("/Users/dev/gentle-shell-desktop");
+    }
+  });
+
+  it("a delayed background close does not steal focus or revive a closed row", async () => {
+    await mockBridge.addWorkspace!("/tmp/background");
+    const originalRemove = mockBridge.removeWorkspace!.bind(mockBridge);
+    let release!: () => void;
+    const remove = vi.spyOn(mockBridge, "removeWorkspace").mockImplementation(async (directory) => {
+      const result = await originalRemove(directory);
+      await new Promise<void>((done) => { release = done; });
+      return result;
+    });
+    try {
+      render(<App />);
+      await screen.findByRole("heading", { name: "background" });
+      fireEvent.click(screen.getByRole("button", { name: "Remove workspace background" }));
+      await act(async () => {});
+      fireEvent.click(screen.getByRole("button", { name: "gentle-shell-desktop — workspace" }));
+      await screen.findByRole("heading", { name: "gentle-shell-desktop" });
+      await act(async () => { release(); });
+      expect(screen.getByRole("heading", { name: "gentle-shell-desktop" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "background — workspace" })).not.toBeInTheDocument();
+      expect(remove).toHaveBeenCalledTimes(1);
+    } finally { remove.mockRestore(); }
+  });
+
+  it("a header close invalidates an Add picker before it can reopen the closed directory", async () => {
+    let release!: (directory: string) => void;
+    const choose = vi.spyOn(mockBridge, "chooseDirectory").mockImplementation(() => new Promise<string>((done) => { release = done; }));
+    const create = vi.spyOn(mockBridge, "createWorkspace");
+    try {
+      render(<App />);
+      await screen.findByRole("heading", { name: "gentle-shell-desktop" });
+      fireEvent.click(screen.getByRole("button", { name: "Add workspace" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close this workspace" }));
+      await screen.findByRole("region", { name: "No workspace open" });
+      await act(async () => { release("/Users/dev/gentle-shell-desktop"); });
+      expect(create).not.toHaveBeenCalled();
+      expect(await mockBridge.listWorkspaces!()).toEqual({ directories: [], persisted: [] });
+    } finally { choose.mockRestore(); create.mockRestore(); }
+  });
+
+  it("reconciles an unsaved pane using its resolved effective directory when that directory closes", async () => {
+    const newChat = vi.spyOn(mockBridge, "newChat").mockImplementation(() => mockBridge.createWorkspace!("/Users/dev/gentle-shell-desktop"));
+    try {
+      render(<App />);
+      await screen.findByRole("heading", { name: "gentle-shell-desktop" });
+      fireEvent.keyDown(window, { key: "n", ctrlKey: true });
+      await waitFor(() => expect(newChat).toHaveBeenCalledTimes(1));
+      await act(async () => {});
+      fireEvent.click(screen.getByRole("button", { name: "Remove workspace gentle-shell-desktop" }));
+      await screen.findByRole("region", { name: "No workspace open" });
+      expect(newChat).toHaveBeenCalledTimes(1);
+    } finally { newChat.mockRestore(); }
   });
 
   it("renders the sidebar heading and the composer placeholder", async () => {
@@ -57,6 +169,7 @@ describe("App", () => {
   // (plain text plus the Add-workspace hint) and NO child process is
   // spawned — no synthetic chat, no creation.
   it("with no workspace at all the center shows the placeholder and no child is spawned", async () => {
+    await mockBridge.removeWorkspace!("/Users/dev/gentle-shell-desktop");
     setMockChats([]);
     const newChat = vi.spyOn(mockBridge, "newChat");
     const createWorkspace = vi.spyOn(mockBridge, "createWorkspace");
@@ -79,6 +192,7 @@ describe("App", () => {
   // T2 (S3/S11): the placeholder is not a dead end — adding the first
   // workspace opens its pane, and forgetting it returns the placeholder.
   it("adding the first workspace from the placeholder opens its pane, and removing it returns to the placeholder", async () => {
+    await mockBridge.removeWorkspace!("/Users/dev/gentle-shell-desktop");
     setMockChats([]);
     setMockDirectoryPick("/tmp/solo-ws");
     try {
@@ -112,6 +226,7 @@ describe("App", () => {
   // stays in the union after its persisted entry is removed — remove
   // deletes ONLY the persisted entry, never a chat.
   it("removing the active workspace selects the next one, and the new pane routes to its own host", async () => {
+    await mockBridge.removeWorkspace!("/Users/dev/gentle-shell-desktop");
     setMockChats([]);
     await mockBridge.addWorkspace?.("/tmp/alpha-ws");
     await mockBridge.addWorkspace?.("/tmp/beta-ws");
@@ -175,7 +290,7 @@ describe("App", () => {
     render(<App />);
 
     // mockBridge's example chats load asynchronously into the sidebar.
-    const item = await screen.findByRole("button", { name: /Write the README intro/ });
+    const item = await screen.findByRole("button", { name: "gentle-shell-desktop — workspace" });
     item.click();
 
     expect(await screen.findByRole("heading", { name: "gentle-shell-desktop" })).toBeInTheDocument();
@@ -206,7 +321,7 @@ describe("App", () => {
     // unknown id would surface as a status error and no message.
     await screen.findByText("hello first");
 
-    fireEvent.click(await screen.findByRole("button", { name: /Write the README intro/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "gentle-shell-desktop — workspace" }));
     await screen.findByRole("heading", { name: "gentle-shell-desktop" });
 
     await sendWhenReady("hello second");
@@ -280,19 +395,19 @@ describe("App", () => {
   it("keeps search available through Ctrl+K without a top bar search control", async () => {
     render(<App />);
 
-    expect(await screen.findByRole("button", { name: /Write the README intro/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "gentle-shell-desktop — workspace" })).toBeInTheDocument();
     expect(within(screen.getByRole("banner", { name: "Application chrome" })).queryByRole("searchbox")).not.toBeInTheDocument();
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     const search = screen.getByRole("searchbox", { name: "Search chats" });
 
     fireEvent.change(search, { target: { value: "no-such-chat-anywhere" } });
 
-    expect(await screen.findByText(/No chats match/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Write the README intro/ })).not.toBeInTheDocument();
+    expect(await screen.findByText(/No workspaces match/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "gentle-shell-desktop — workspace" })).not.toBeInTheDocument();
 
-    fireEvent.change(search, { target: { value: "README" } });
+    fireEvent.change(search, { target: { value: "gentle-shell" } });
 
-    expect(await screen.findByRole("button", { name: /Write the README intro/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "gentle-shell-desktop — workspace" })).toBeInTheDocument();
   });
 
   it("opens the settings and shortcut dialogs, and draws the window controls when the bridge offers them", async () => {

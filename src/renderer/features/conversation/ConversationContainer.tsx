@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { ChatState, ChatSummary, DialogAnswer, OpenChatResult } from "@shared/bridge-types";
+import type { ChatState, ChatSummary, DialogAnswer, OpenChatResult, WorkspaceList } from "@shared/bridge-types";
 import { useBridge } from "@renderer/shared/bridge/useBridge";
 import { HelpersContainer } from "@renderer/features/helpers/HelpersContainer";
 import { directoryOf } from "@renderer/features/chats/components/ChatListItem";
 import { Composer } from "./components/Composer";
+import { ResumeSessionDialog } from "./components/ResumeSessionDialog";
 import { ActionRows } from "./components/ActionRows";
 import { Footer } from "./components/Footer";
 import { CONVERSATION_PANE, ConversationHeader, type ConversationPane } from "./components/ConversationHeader";
@@ -23,9 +24,8 @@ import "./ConversationContainer.css";
  * T2 (S3/S4/S11): `none` says NO chat/workspace is open — the app starts
  * there instead of a synthetic new chat that would spawn a child on first
  * paint — and `workspace` selects a workspace directory whose pane
- * resolves on its own: the directory's most recent session reopens, or a
- * new chat is created for it through workspace.open (the creation path,
- * without the picker).
+ * resolves through workspace.open (fresh or live-directory reuse, without
+ * the picker). Saved Pi sessions are selected only through GUI /resume.
  */
 export type ActiveChat =
   | { readonly kind: "none" }
@@ -36,6 +36,9 @@ export type ActiveChat =
 export interface ConversationContainerProps {
   readonly activeChat: ActiveChat;
   readonly footerTarget?: HTMLDivElement | null;
+  /** Renderer-owned GUI picker selection; App uses the existing openChat route. */
+  readonly onResumeChat?: (chat: ChatSummary) => void;
+  readonly onCloseWorkspace?: (directory: string) => Promise<WorkspaceList>;
   /** T5b: the active chat's workspace host id, OWNED BY App — set from
    * the open/new resolution (see onHostResolved) and reset on every
    * selection change. Every request the container sends is addressed to
@@ -50,11 +53,12 @@ export interface ConversationContainerProps {
   readonly activeHostId?: string;
   /** Reports the host id the open/new or refresh resolution returned, so
    * App can keep it and pass it back down. */
-  readonly onHostResolved?: (hostId: string) => void;
+  readonly onHostResolved?: (hostId: string | undefined) => void;
   /** The open workspace's branch, for the sidebar card that names the
    * workspace (owner decision: the branch belongs under the workspace name,
    * not in the footer). Undefined when the child reported none. */
   readonly onWorktreeBranch?: (branch: string | undefined) => void;
+  readonly onWorkspacePath?: (directory: string | undefined) => void;
   /** T11: a workspace just created through "Add workspace" — the pane key
    * it belongs to plus the open/new-shaped resolution main already
    * returned (host id + state). When it matches the active pane, the
@@ -63,10 +67,8 @@ export interface ConversationContainerProps {
    * workspace. The directory arrived validated in main; it reaches the
    * footer through ChatState.workspacePath. */
   readonly createdWorkspace?: { readonly chatKey: string; readonly result: OpenChatResult };
-  /** P2: reported after a successful chat.close of this pane's host, so the
-   * shell can land on a fresh chat instead of leaving the pane addressing a
-   * host nothing owns any more. A FAILED close reports nothing here: the
-   * workspace is still live and the failure is surfaced in the status line. */
+  /** Standalone notification after successful directory removal. App uses
+   * onCloseWorkspace to reconcile the registry and current pane atomically. */
   readonly onWorkspaceClosed?: () => void;
 }
 
@@ -175,7 +177,7 @@ function errorText(cause: unknown): string {
  * notifications (desktop-rpc T2b) render in the same status surface for
  * the same reason: they are feedback chrome, never transcript entries.
  */
-export function ConversationContainer({ activeChat, activeHostId, onHostResolved, onWorktreeBranch, createdWorkspace, onWorkspaceClosed, footerTarget }: ConversationContainerProps) {
+export function ConversationContainer({ activeChat, activeHostId, onHostResolved, onWorktreeBranch, createdWorkspace, onWorkspaceClosed, footerTarget, onResumeChat, onCloseWorkspace, onWorkspacePath }: ConversationContainerProps) {
   const bridge = useBridge();
   const [chatState, setChatState] = useState<ChatState>(emptyChatState());
   // The host id this container resolved for the current activeChat, kept
@@ -191,7 +193,8 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   // run only after the render in which the stale id would be used.)
   const [resolved, setResolved] = useState<{ readonly key: string; readonly hostId: string } | undefined>(undefined);
   const currentKey = chatKeyOf(activeChat);
-  const hostId = activeHostId ?? (resolved?.key === currentKey ? resolved.hostId : "");
+  const candidateHostId = activeHostId ?? (resolved?.key === currentKey ? resolved.hostId : "");
+  const hostId = closedHosts.has(candidateHostId) ? "" : candidateHostId;
   // R3-002: the latest rendered addressing, readable from a promise that
   // settles later. A close answered after the user moved on must not act on
   // the chat they are now reading, so the handler compares against this.
@@ -204,6 +207,7 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   const closingRef = useRef(false);
   const [bridgeError, setBridgeError] = useState<string | undefined>(undefined);
   const [draft, setDraft] = useState("");
+  const [resumeSelection, setResumeSelection] = useState<{ key: string; directory: string }>();
   const [pane, setPane] = useState<ConversationPane>(CONVERSATION_PANE.CHAT);
   // The packaged app's version for the footer's last group (S9). Asked once:
   // the value never changes while the window lives, and a bridge without
@@ -247,6 +251,7 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
       // or not; only the focused host's also renders. An unaddressed push
       // has no host to accumulate under — the T5b gate below still decides
       // whether it may render.
+      if (state.hostId !== undefined && closedHosts.has(state.hostId)) return;
       if (state.hostId !== undefined) rememberSnapshot(state.hostId, state);
       if (isForeignPush(state.hostId)) return;
       setChatState(state);
@@ -267,7 +272,12 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
     // now on is refused by the bridge's unknown-host error.
     const unsubscribeClosed = bridge.onClosed?.((closedHostId) => {
       forgetClosedHost(closedHostId);
-      if (closedHostId === hostId) setBridgeError("This workspace's host was closed");
+      if (closedHostId === hostId) {
+        setResumeSelection(undefined);
+        setResolved(undefined);
+        onHostResolved?.(undefined);
+        setBridgeError("This workspace's host was closed");
+      }
     });
     return () => {
       unsubscribeState();
@@ -289,6 +299,7 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   // so it stops being an address the moment the selection changes.
   useEffect(() => {
     setPane(CONVERSATION_PANE.CHAT);
+    setResumeSelection(undefined);
     setHelpersOpenedAt(new Date().toISOString());
     // R3-002: a close belongs to the chat that asked for it, so a selection
     // change ends that attempt — including the one that a successful close
@@ -299,6 +310,7 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
 
   useEffect(() => {
     setBridgeError(undefined);
+    setChatState(emptyChatState());
     let cancelled = false;
     // T2/S4: with no chat and no workspace open nothing may be resolved —
     // no child, no host, no request.
@@ -309,6 +321,7 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
     // snapshot, reports the host id up (App keeps it; also kept paired
     // locally for bare usage), and renders the state.
     const adopt = (resolvedHostId: string, state: ChatState): void => {
+      if (closedHosts.has(resolvedHostId)) return;
       hostByChatKey.set(currentKey, resolvedHostId);
       rememberSnapshot(resolvedHostId, state);
       setResolved({ key: currentKey, hostId: resolvedHostId });
@@ -328,37 +341,19 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
         adopt(creation.result.hostId, creation.result.state);
         return;
       }
-      // T2 (S11): a workspace pane always lands on a chat for its
-      // directory. The directory's most recent session reopens when pi has
-      // one; otherwise a new chat is created through workspace.open — the
-      // same creation path as the Add-workspace flow (validated, reuse,
-      // cwd-bound spawn), minus the picker. Never a second lifecycle
-      // implementation, and never "no chat for a selected workspace".
+      // Directory selection is fresh/reuses a live directory host. Pi history
+      // is discovered only by the explicit local GUI /resume picker.
       if (activeChat.kind === "workspace") {
-        const directory = activeChat.directory;
-        bridge
-          .listChats()
-          .then((chats) => {
-            if (cancelled) return;
-            const mostRecent = chats
-              .filter((chat) => chat.cwd === directory)
-              .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
-            const opening = mostRecent ? bridge.openChat(mostRecent.id) : bridge.openWorkspace?.(directory);
-            if (!opening) {
-              setBridgeError("This bridge cannot open a workspace directory");
-              return;
-            }
-            opening
-              .then((result) => {
-                if (!cancelled) adopt(result.hostId, result.state);
-              })
-              .catch((cause: unknown) => {
-                if (!cancelled) setBridgeError(errorText(cause));
-              });
-          })
-          .catch((cause: unknown) => {
-            if (!cancelled) setBridgeError(errorText(cause));
-          });
+        const opening = bridge.openWorkspace?.(activeChat.directory);
+        if (!opening) {
+          setBridgeError("This bridge cannot open a workspace directory");
+          return;
+        }
+        opening.then((result) => {
+          if (!cancelled) adopt(result.hostId, result.state);
+        }).catch((cause: unknown) => {
+          if (!cancelled) setBridgeError(errorText(cause));
+        });
         return;
       }
       const opening = activeChat.kind === "existing" ? bridge.openChat(activeChat.chat.id) : bridge.newChat();
@@ -434,6 +429,18 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
     const text = draft.trim();
     if (text.length === 0 || chatState.working) return;
 
+    if (/^\/resume(?:\s|$)/.test(text)) {
+      setDraft("");
+      if (text !== "/resume") {
+        setBridgeError("Use /resume without arguments to choose a session in this directory.");
+      } else if (!workspacePath) {
+        setBridgeError("Open a workspace directory before using /resume.");
+      } else {
+        setBridgeError(undefined);
+        setResumeSelection({ key: currentKey, directory: workspacePath });
+      }
+      return;
+    }
     setDraft("");
     bridge
       .sendMessage(hostId, text)
@@ -451,33 +458,28 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
     bridge.answerDialog(hostId, id, answer).catch((cause: unknown) => setBridgeError(errorText(cause)));
   };
 
-  // P2: the production caller for chat.close. It stops exactly the host this
-  // pane addresses and nothing else; main answers through the chat.closed
-  // push, which this container already turns into snapshot and mapping
-  // eviction (see forgetClosedHost).
-  //
-  // Three guards, each one a review finding (R3-002, R3-003): without an
-  // address there is nothing to close, without the optional bridge method
-  // this build cannot close at all, and one close at a time keeps a second
-  // click from issuing another chat.close or a second landing.
+  // Directory removal joins pending starts and stops every same-directory
+  // host in main while preserving Pi history. Exact-host chat.close remains
+  // reserved for orphan cleanup elsewhere. A synchronous guard prevents
+  // duplicate header requests, and late answers cannot replace another pane.
   const handleCloseWorkspace = (): void => {
-    const close = bridge.closeChat;
-    if (hostId === "" || !close || closingRef.current) return;
-    const closingHostId = hostId;
+    const directory = workspacePath;
+    const close = onCloseWorkspace ?? bridge.removeWorkspace?.bind(bridge);
+    if (!directory || !close || closingRef.current) return;
+    const closingKey = currentKey;
     closingRef.current = true;
     setClosing(true);
-    close
-      .call(bridge, closingHostId)
+    close(directory)
       .then(() => {
         // Only the pane that asked may act on the answer: a success that
         // arrives after the user selected another chat must not replace it.
-        if (selectionRef.current.hostId !== closingHostId) return;
+        if (selectionRef.current.key !== closingKey) return;
         onWorkspaceClosed?.();
       })
       .catch((cause: unknown) => {
         closingRef.current = false;
         setClosing(false);
-        if (selectionRef.current.hostId !== closingHostId) return;
+        if (selectionRef.current.key !== closingKey) return;
         // Main also pushes its own report naming the reason (P3). This keeps
         // the rejection itself visible even for a bridge that does not.
         setBridgeError(errorText(cause));
@@ -493,7 +495,7 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   // is known, and the footer shows `~/` rather than an invented path. NOT
   // the worktree group: no worktree counts here (that is T8b).
   const workspacePath =
-    chatState.workspacePath ??
+    ((resolved?.key === currentKey || activeHostId !== undefined) ? chatState.workspacePath : undefined) ??
     (activeChat.kind === "existing"
       ? activeChat.chat.cwd
       : activeChat.kind === "workspace"
@@ -509,6 +511,7 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   // The branch describes the open workspace, so it is reported upward whenever
   // it changes and cleared on a chat switch: only the row that names the
   // workspace may carry it.
+  useEffect(() => { onWorkspacePath?.(workspacePath); }, [onWorkspacePath, workspacePath]);
   const worktreeBranch = chatState.workspace?.worktree?.branch;
   useEffect(() => {
     onWorktreeBranch?.(worktreeBranch);
@@ -530,10 +533,8 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
         pane={pane}
         runningHelpersCount={chatState.helpers.summary.running}
         onSelectPane={setPane}
-        // P2: a close needs a host to address and a bridge that can close;
-        // before the open/new resolution answers there is none, and while a
-        // close is in flight there is nothing left to ask (R3-002/R3-003).
-        canCloseWorkspace={hostId !== "" && bridge.closeChat !== undefined && !closing}
+        // A known directory can close even while its initial host is pending.
+        canCloseWorkspace={Boolean(workspacePath) && (onCloseWorkspace !== undefined || bridge.removeWorkspace !== undefined) && !closing}
         onCloseWorkspace={handleCloseWorkspace}
       />
       {pane === CONVERSATION_PANE.HELPERS && <StatusLine error={error} statuses={chatState.statuses} notifications={chatState.notifications} />}
@@ -575,6 +576,7 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
               // whatever the child answered for `get_commands` — absent means
               // the child did not answer, and the feature is simply off.
               commands={chatState.commands}
+              resumeAvailable={Boolean(workspacePath)}
             />
           </div>
           {/* The artboard's fixed three-section inspector (T3): the chat's own
@@ -594,6 +596,16 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
       )}
       {/* The shell owns the global slot; standalone callers retain the inline footer. */}
       {footerTarget ? createPortal(footer, footerTarget) : footer}
+      {resumeSelection?.key === currentKey && resumeSelection.directory === workspacePath ? (
+        <ResumeSessionDialog
+          directory={resumeSelection.directory}
+          onCancel={() => setResumeSelection(undefined)}
+          onSelect={(chat) => {
+            setResumeSelection(undefined);
+            onResumeChat?.(chat);
+          }}
+        />
+      ) : null}
     </section>
   );
 }

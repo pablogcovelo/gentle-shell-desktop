@@ -57,6 +57,11 @@ export function App() {
   // answer for the new one, and passed back down as every request's
   // routing key.
   const [activeHostId, setActiveHostId] = useState<string | undefined>(undefined);
+  const registryRevision = useRef(0);
+  const [workspaceRevision, setWorkspaceRevision] = useState(0);
+  const pendingCloses = useRef(new Map<string, Promise<WorkspaceList>>());
+  const closeQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const closedHostIds = useRef(new Set<string>());
   // Every "New chat" click is a distinct pane identity (its own welcome
   // intro, T9b): the counter starts after the initial chat's epoch 0 and is
   // bumped once per click, so no two unsaved chats ever share a key.
@@ -67,6 +72,13 @@ export function App() {
   // again, which would spawn a second child for the same workspace. Cleared
   // on every selection change so a stale creation can never adopt.
   const [createdWorkspace, setCreatedWorkspace] = useState<{ readonly chatKey: string; readonly result: OpenChatResult } | undefined>(undefined);
+  const [resolvedDirectory, setResolvedDirectory] = useState<string | undefined>();
+  const activeDirectory = activeChat.kind === "workspace" ? activeChat.directory
+    : activeChat.kind === "existing" ? activeChat.chat.cwd
+    : activeChat.kind === "new" ? createdWorkspace?.result.state.workspacePath ?? resolvedDirectory : undefined;
+  const activeDirectoryRef = useRef(activeDirectory);
+  activeDirectoryRef.current = activeDirectory;
+  useEffect(() => bridge.onClosed?.((id) => { closedHostIds.current.add(id); }), [bridge]);
   // Panel visibility (artboard "Workspace"): the chrome's two toggles collapse
   // the directory column and the plan/usage/agents panel. Held as two booleans
   // on the shell so the modifier classes below stay the only source of layout.
@@ -139,10 +151,11 @@ export function App() {
   // like the setup-status read above.
   useEffect(() => {
     let cancelled = false;
+    const revision = registryRevision.current;
     bridge
       .listWorkspaces?.()
       .then((list) => {
-        if (!cancelled) setWorkspaces(list);
+        if (!cancelled && registryRevision.current === revision) setWorkspaces(list);
       })
       .catch(() => {
         if (!cancelled) setWorkspaces({ directories: [], persisted: [] });
@@ -208,6 +221,8 @@ export function App() {
   // it.
   const openPane = (chat: ActiveChat): void => {
     setActiveHostId(undefined);
+    setActiveBranch(undefined);
+    setResolvedDirectory(undefined);
     setCreatedWorkspace(undefined);
     setActiveChat(chat);
   };
@@ -224,6 +239,7 @@ export function App() {
   // the picker (ConversationContainer resolves the pane through
   // workspace.open; the Add-workspace flow is never re-run).
   const handleSelectWorkspace = (directory: string): void => {
+    if (pendingCloses.current.has(directory)) return;
     setNavigationOpen(false);
     setSearchOpen(false);
     setQuery("");
@@ -238,17 +254,31 @@ export function App() {
   // pane's directory is either the selected workspace or (for a pane just
   // created through the Add flow) the directory its adopted host runs in.
   const handleWorkspacesChanged = (fresh: WorkspaceList): void => {
+    registryRevision.current += 1;
     setWorkspaces(fresh);
-    const activeDirectory =
-      activeChat.kind === "workspace"
-        ? activeChat.directory
-        : activeChat.kind === "new" && createdWorkspace
-          ? createdWorkspace.result.state.workspacePath
-          : undefined;
-    if (activeDirectory && !fresh.directories.includes(activeDirectory)) {
+    const directory = activeDirectoryRef.current;
+    if (directory && !fresh.directories.includes(directory)) {
       const next = fresh.directories[0];
       openPane(next ? { kind: "workspace", directory: next } : { kind: "none" });
     }
+  };
+
+  // Both close controls share one operation. Serialize distinct directory
+  // removals so an older registry answer cannot resurrect another closed row.
+  const handleCloseWorkspace = (directory: string): Promise<WorkspaceList> => {
+    const pending = pendingCloses.current.get(directory);
+    if (pending) return pending;
+    registryRevision.current += 1;
+    setWorkspaceRevision((revision) => revision + 1);
+    const operation = closeQueue.current.catch(() => undefined).then(async () => {
+      if (!bridge.removeWorkspace) throw new Error("This bridge cannot close a workspace directory");
+      const fresh = await bridge.removeWorkspace(directory);
+      handleWorkspacesChanged(fresh);
+      return fresh;
+    }).finally(() => { pendingCloses.current.delete(directory); });
+    pendingCloses.current.set(directory, operation);
+    closeQueue.current = operation;
+    return operation;
   };
 
   const handleNewChat = (): void => {
@@ -261,6 +291,7 @@ export function App() {
    * workspace". Its own unsaved-pane epoch — the same identity rule as
    * "New chat" — with the resolution handed straight down for adoption. */
   const handleWorkspaceCreated = (result: OpenChatResult): void => {
+    if (closedHostIds.current.has(result.hostId) || pendingCloses.current.has(result.state.workspacePath ?? "")) return;
     const epoch = nextNewChatEpoch.current++;
     setActiveHostId(undefined);
     setActiveChat({ kind: "new", epoch });
@@ -315,6 +346,9 @@ export function App() {
           onSelectWorkspace={handleSelectWorkspace}
           workspaces={workspaces}
           onWorkspacesChanged={handleWorkspacesChanged}
+          onCloseWorkspace={handleCloseWorkspace}
+          workspaceRevision={workspaceRevision}
+          selectedDirectory={activeDirectory}
           selectedChatId={activeChat.kind === "existing" ? activeChat.chat.id : undefined}
           activeBranch={activeBranch}
           query={query}
@@ -338,11 +372,10 @@ export function App() {
             activeHostId={activeHostId}
             createdWorkspace={createdWorkspace}
             onHostResolved={setActiveHostId}
+            onResumeChat={handleSelectChat}
             onWorktreeBranch={setActiveBranch}
-            // P2: closing the open workspace lands on a fresh chat. The closed
-            // chat stays in the sidebar (its session is still on disk) and
-            // selecting it again mints a new host, so nothing is lost.
-            onWorkspaceClosed={handleNewChat}
+            onWorkspacePath={setResolvedDirectory}
+            onCloseWorkspace={handleCloseWorkspace}
           />
         )}
       </div>

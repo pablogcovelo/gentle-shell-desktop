@@ -68,6 +68,7 @@ function makeBridge(overrides: Partial<GentleBridge> = {}): GentleBridge {
     answerDialog: vi.fn().mockResolvedValue(undefined),
     // P2: the close path the header's control reaches.
     closeChat: vi.fn().mockResolvedValue(undefined),
+    removeWorkspace: vi.fn().mockResolvedValue({ directories: [], persisted: [] }),
     onState: vi.fn().mockReturnValue(() => {}),
     onError: vi.fn().mockReturnValue(() => {}),
     // T5c: the fake answers the chat.refresh path; tests that need to hold
@@ -92,6 +93,103 @@ afterEach(() => {
 });
 
 describe("ConversationContainer", () => {
+  it("refuses initial adoption after a closed push and discards a resume list after close", async () => {
+    let resolveOpen!: (value: { hostId: string; state: ChatState }) => void;
+    let closed!: (id: string) => void;
+    const onHostResolved = vi.fn();
+    const bridge = makeBridge({
+      openChat: vi.fn(() => new Promise<{ hostId: string; state: ChatState }>((done) => { resolveOpen = done; })),
+      onClosed: vi.fn((sink) => { closed = sink; return () => {}; }),
+    });
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} onHostResolved={onHostResolved} />);
+    await act(async () => {
+      closed("host-late-closed");
+      resolveOpen({ hostId: "host-late-closed", state: { ...emptyState(), messages: [{ id: "late", role: MESSAGE_ROLE.ASSISTANT, text: "Closed initial response", streaming: false }] } });
+    });
+    expect(onHostResolved).not.toHaveBeenCalled();
+    expect(screen.queryByText("Closed initial response")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+  it("intercepts trimmed GUI /resume locally, scopes history, and reports the chosen summary", async () => {
+    const bridge = makeBridge({ listChats: vi.fn().mockResolvedValue([EXISTING_CHAT, OTHER_CHAT]) });
+    window.gentle = bridge;
+    const onResumeChat = vi.fn();
+    render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} {...{ onResumeChat }} />);
+    await act(async () => {});
+    fireEvent.change(screen.getByPlaceholderText("Tell Gentle what you need…"), { target: { value: "  /resume  " } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    const dialog = await screen.findByRole("dialog", { name: "Resume a session" });
+    expect(dialog).toHaveTextContent("/tmp/project");
+    expect(dialog).not.toHaveTextContent("Another task");
+    fireEvent.click(await screen.findByRole("button", { name: /Refactor the store/ }));
+    expect(onResumeChat).toHaveBeenCalledExactlyOnceWith(EXISTING_CHAT);
+    expect(bridge.sendMessage).not.toHaveBeenCalled();
+    expect(bridge.listChats).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("/resume", { selector: ".gc-message__text" })).not.toBeInTheDocument();
+  });
+
+  it("discards an open resume picker when the workspace changes, including late history", async () => {
+    let resolveList!: (chats: ChatSummary[]) => void;
+    const bridge = makeBridge({ listChats: vi.fn(() => new Promise<ChatSummary[]>((done) => { resolveList = done; })) });
+    window.gentle = bridge;
+    const onResumeChat = vi.fn();
+    const view = render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} {...{ onResumeChat }} />);
+    await act(async () => {});
+    fireEvent.change(screen.getByPlaceholderText("Tell Gentle what you need…"), { target: { value: "/resume" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    view.rerender(<ConversationContainer activeChat={{ kind: "existing", chat: OTHER_CHAT }} {...{ onResumeChat }} />);
+    await act(async () => { resolveList([EXISTING_CHAT]); });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(onResumeChat).not.toHaveBeenCalled();
+    expect(bridge.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("discards a pending resume list when the current host closes before history answers", async () => {
+    let closed!: (id: string) => void;
+    let release!: (chats: ChatSummary[]) => void;
+    const bridge = makeBridge({
+      onClosed: vi.fn((sink) => { closed = sink; return () => {}; }),
+      listChats: vi.fn(() => new Promise<ChatSummary[]>((done) => { release = done; })),
+    });
+    window.gentle = bridge;
+    const onResumeChat = vi.fn();
+    render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} onResumeChat={onResumeChat} />);
+    await act(async () => {});
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "/resume" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await act(async () => { closed("host-1"); release([EXISTING_CHAT]); });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    expect(onResumeChat).not.toHaveBeenCalled();
+    expect(bridge.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("rejects /resume arguments locally without reading history or sending a prompt", async () => {
+    const bridge = makeBridge();
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} />);
+    await act(async () => {});
+    fireEvent.change(screen.getByPlaceholderText("Tell Gentle what you need…"), { target: { value: "/resume /private/session" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Use /resume without arguments to choose a session in this directory.");
+    expect(bridge.sendMessage).not.toHaveBeenCalled();
+    expect(bridge.listChats).not.toHaveBeenCalled();
+  });
+
+  it("refuses global /resume when no real directory is known", async () => {
+    const bridge = makeBridge();
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    fireEvent.change(screen.getByPlaceholderText("Tell Gentle what you need…"), { target: { value: "/resume" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Open a workspace directory before using /resume.");
+    expect(bridge.sendMessage).not.toHaveBeenCalled();
+    expect(bridge.listChats).not.toHaveBeenCalled();
+  });
   it("portals the real footer into the shell slot and falls back inline", async () => {
     window.gentle = makeBridge();
     const footerTarget = document.createElement("div");
@@ -125,10 +223,10 @@ describe("ConversationContainer", () => {
     expect(screen.getByRole("heading", { name: "project" })).toBeInTheDocument();
   });
 
-  it("closes the addressed workspace through chat.close and reports it up (P2)", async () => {
-    const closeChat = vi.fn().mockResolvedValue(undefined);
+  it("closes the directory through removeWorkspace and reports it up", async () => {
+    const removeWorkspace = vi.fn().mockResolvedValue({ directories: [], persisted: [] });
     const onWorkspaceClosed = vi.fn();
-    const bridge = makeBridge({ closeChat });
+    const bridge = makeBridge({ removeWorkspace });
     window.gentle = bridge;
 
     render(
@@ -143,14 +241,15 @@ describe("ConversationContainer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close this workspace" }));
 
     // Addressed to THIS pane's host, never to "whichever chat is open".
-    await vi.waitFor(() => expect(closeChat).toHaveBeenCalledWith("host-7"));
+    await vi.waitFor(() => expect(bridge.removeWorkspace).toHaveBeenCalledWith("/tmp/project"));
+    expect(bridge.closeChat).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(onWorkspaceClosed).toHaveBeenCalledTimes(1));
   });
 
   it("surfaces a failed close instead of pretending the workspace closed (P3)", async () => {
-    const closeChat = vi.fn().mockRejectedValue(new Error("stop failed"));
+    const removeWorkspace = vi.fn().mockRejectedValue(new Error("stop failed"));
     const onWorkspaceClosed = vi.fn();
-    window.gentle = makeBridge({ closeChat });
+    window.gentle = makeBridge({ removeWorkspace });
 
     render(
       <ConversationContainer
@@ -168,18 +267,18 @@ describe("ConversationContainer", () => {
     expect(onWorkspaceClosed).not.toHaveBeenCalled();
   });
 
-  it("draws no close control while the pane has no host to address", async () => {
+  it("allows directory closure while its initial host is still pending", async () => {
     window.gentle = makeBridge({ openChat: vi.fn(() => new Promise<never>(() => {})) });
 
     render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} />);
 
-    expect(screen.queryByRole("button", { name: "Close this workspace" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close this workspace" })).toBeInTheDocument();
   });
 
   it("draws no close control when the bridge cannot close a workspace (R3-003)", async () => {
     const bridge = makeBridge();
     // A bridge without the optional method cannot close anything.
-    delete (bridge as { closeChat?: unknown }).closeChat;
+    delete (bridge as { removeWorkspace?: unknown }).removeWorkspace;
     window.gentle = bridge;
 
     render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} activeHostId="host-7" />);
@@ -190,8 +289,8 @@ describe("ConversationContainer", () => {
 
   it("offers no second close while the first one is pending (R3-002)", async () => {
     let resolveClose!: () => void;
-    const closeChat = vi.fn(() => new Promise<void>((resolve) => { resolveClose = resolve; }));
-    window.gentle = makeBridge({ closeChat });
+    const removeWorkspace = vi.fn(() => new Promise<{ directories: string[]; persisted: string[] }>((resolve) => { resolveClose = () => resolve({ directories: [], persisted: [] }); }));
+    window.gentle = makeBridge({ removeWorkspace });
 
     render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} activeHostId="host-7" />);
     await vi.waitFor(() => expect(window.gentle?.openChat).toHaveBeenCalledWith("chat-1"));
@@ -201,7 +300,7 @@ describe("ConversationContainer", () => {
     // While the close is in flight there is no second request to make: the
     // control is withdrawn instead of issuing another chat.close.
     await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Close this workspace" })).not.toBeInTheDocument());
-    expect(closeChat).toHaveBeenCalledTimes(1);
+    expect(removeWorkspace).toHaveBeenCalledTimes(1);
 
     await act(async () => {
       resolveClose();
@@ -210,9 +309,9 @@ describe("ConversationContainer", () => {
 
   it("does not land on a fresh chat when the user moved on while the close was pending (R3-002)", async () => {
     let resolveClose!: () => void;
-    const closeChat = vi.fn(() => new Promise<void>((resolve) => { resolveClose = resolve; }));
+    const removeWorkspace = vi.fn(() => new Promise<{ directories: string[]; persisted: string[] }>((resolve) => { resolveClose = () => resolve({ directories: [], persisted: [] }); }));
     const onWorkspaceClosed = vi.fn();
-    window.gentle = makeBridge({ closeChat });
+    window.gentle = makeBridge({ removeWorkspace });
 
     const { rerender } = render(
       <ConversationContainer
@@ -223,7 +322,7 @@ describe("ConversationContainer", () => {
     );
     await vi.waitFor(() => expect(window.gentle?.openChat).toHaveBeenCalledWith("chat-1"));
     fireEvent.click(screen.getByRole("button", { name: "Close this workspace" }));
-    await vi.waitFor(() => expect(closeChat).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(removeWorkspace).toHaveBeenCalledTimes(1));
 
     // The user selected another chat before the close settled. Its success
     // must not replace the chat they are now reading.
@@ -1561,15 +1660,16 @@ describe("ConversationContainer workspace pane (T2)", () => {
   const NEWEST = { ...EXISTING_CHAT, id: "chat-newest", title: "Newest", cwd: "/tmp/project", updatedAt: "2026-09-21T11:00:00.000Z" };
   const ELSEWHERE = { ...EXISTING_CHAT, id: "chat-elsewhere", title: "Elsewhere", cwd: "/tmp/other", updatedAt: "2026-09-21T12:00:00.000Z" };
 
-  it("reopens the most recent session for the workspace directory (openChat, never newChat)", async () => {
+  it("opens a fresh workspace directly without discovering or automatically resuming history", async () => {
     const bridge = makeBridge({ listChats: vi.fn().mockResolvedValue([OLDER, ELSEWHERE, NEWEST]) });
     window.gentle = bridge;
 
     render(<ConversationContainer activeChat={{ kind: "workspace", directory: "/tmp/project" }} />);
 
-    await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledWith("chat-newest"));
+    await vi.waitFor(() => expect(bridge.openWorkspace).toHaveBeenCalledWith("/tmp/project"));
     expect(bridge.newChat).not.toHaveBeenCalled();
-    expect(bridge.openWorkspace).not.toHaveBeenCalled();
+    expect(bridge.openChat).not.toHaveBeenCalled();
+    expect(bridge.listChats).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { name: "project" })).toBeInTheDocument();
   });
 
