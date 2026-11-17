@@ -2067,12 +2067,18 @@ describe("session identity (desktop-rpc T4)", () => {
   // timing, the footer's model AND MCP facts arrive for a fresh chat
   // without any turn ever settling — verified end to end through the
   // state the footer renders, not by assumption.
-  it("a fresh chat's model and MCP footer facts arrive without any settled turn — the first stdout frame unlocks the reads", async () => {
+  it.each([
+    { label: "configured servers", configured: { status: "present", names: ["github"] }, namespaces: [] },
+    { label: "tool namespaces only", configured: { status: "absent", names: [] }, namespaces: ["codegraph", "context7", "engram"] },
+  ])("a fresh chat's model and MCP footer facts arrive without any settled turn ($label)", async ({ configured, namespaces }) => {
     const { spawner, handles } = createFakeSpawner();
     const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
     session.start();
     const handle = handles[0];
     if (!handle) throw new Error("no spawned handle");
+
+    const emittedStates: ChatState[] = [];
+    session.on("state", (state: ChatState) => emittedStates.push(state));
 
     // No unsolicited startup frame or model turn is needed.
     handle.emitStdout(stateReply(commandId(handle.writes[0]!)));
@@ -2101,17 +2107,27 @@ describe("session identity (desktop-rpc T4)", () => {
     handle.emitStdout(
       desktopWidgetFrame(controlRequestId(mcpWrite), {
         health: "unknown",
-        configured: { status: "present", names: ["github"] },
+        configured,
         registered: [],
-        namespaces: [],
+        namespaces,
       }),
     );
     await flushReplies();
 
     expect(session.getState().session?.modelId).toBe("claude-sonnet-4-20250514");
-    expect(session.getState().workspace?.mcp?.configuredNames).toEqual(["github"]);
+    const expectedMcp = {
+      health: "unknown",
+      configuredStatus: configured.status,
+      configuredNames: configured.names,
+      registered: [],
+      namespaces,
+    };
+    expect(session.getState().workspace?.mcp).toEqual(expectedMcp);
+    expect(emittedStates.at(-1)?.workspace?.mcp).toEqual(expectedMcp);
+    expect(emittedStates.at(-1)?.session?.modelId).toBe("claude-sonnet-4-20250514");
     expect(session.getState().working).toBe(false);
     expect(session.getState().messages).toEqual([]);
+    expect(emittedStates.every((state) => !state.working && state.messages.length === 0)).toBe(true);
 
     handle.resolveExited({ code: 0, signal: null });
   });

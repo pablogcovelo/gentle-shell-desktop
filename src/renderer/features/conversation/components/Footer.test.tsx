@@ -6,10 +6,10 @@ import { Footer } from "./Footer";
 
 const MCP = {
   health: "unknown" as const,
-  configuredStatus: "present",
+  configuredStatus: "ok",
   configuredNames: ["github", "linear"],
   registered: [],
-  namespaces: ["mcp__github__search"],
+  namespaces: ["github"],
 };
 
 afterEach(() => cleanup());
@@ -165,6 +165,43 @@ describe("Footer (desktop-workspace-shell T7 — the design's footer, S9/S10/S11
   });
 
   describe("capabilities group", () => {
+    it.each([
+      { label: "empty", commands: [] },
+      { label: "non-skill", commands: [{ name: "extension", source: "extension" as const }, { name: "prompt", source: "prompt" as const }] },
+    ])("reports a known zero for a $label catalog", ({ commands }) => {
+      render(<Footer commands={commands} />);
+      const skills = screen.getByRole("img", { name: "Skills: 0" });
+      expect(skills).toHaveTextContent("0");
+      expect(skills).toHaveAttribute("title", "Skills: 0 — loaded skills reported by get_commands");
+    });
+
+    it("counts only skills from the live catalog while preserving capability nodes and other inventories", () => {
+      const { rerender } = render(<Footer workspace={{ mcp: MCP }} />);
+      const skills = screen.getByRole("img", { name: "Skills: 0" });
+      const extensions = screen.getByRole("img", { name: "Extensions: 0" });
+
+      rerender(<Footer workspace={{ mcp: MCP }} commands={[
+        ...Array.from({ length: 15 }, (_, i) => ({ name: `skill:${i}`, source: "skill" as const })),
+        { name: "extension-command", source: "extension" },
+        { name: "prompt-command", source: "prompt" },
+      ]} />);
+      expect(screen.getByRole("img", { name: "Skills: 15" })).toBe(skills);
+      expect(skills).toHaveTextContent("15");
+      expect(skills).toHaveAttribute("title", "Skills: 15 — loaded skills reported by get_commands");
+      expect(screen.getByRole("img", { name: "Extensions: 0" })).toBe(extensions);
+      expect(extensions).toHaveTextContent("0");
+      expect(extensions).toHaveAttribute("title", "Extensions: 0 — count not reported by the bridge");
+      expect(screen.getByRole("img", { name: "MCP: 2 configured servers" })).toHaveTextContent("2");
+
+      rerender(<Footer commands={[]} />);
+      expect(screen.getByRole("img", { name: "Skills: 0" })).toBe(skills);
+      expect(skills).toHaveTextContent("0");
+      expect(skills).toHaveAttribute("title", "Skills: 0 — loaded skills reported by get_commands");
+      rerender(<Footer />);
+      expect(screen.getByRole("img", { name: "Skills: 0" })).toBe(skills);
+      expect(skills).toHaveAttribute("title", "Skills: 0 — command catalog has not been reported");
+    });
+
     it("describes MCP as inventory and never claims a connection", () => {
       render(<Footer workspace={{ mcp: MCP }} />);
 
@@ -177,7 +214,31 @@ describe("Footer (desktop-workspace-shell T7 — the design's footer, S9/S10/S11
       expect(footer.textContent?.toLowerCase()).not.toContain("unknown");
     });
 
-    it("says none configured for an absent MCP inventory instead of a zero", () => {
+    it("consumes namespace-only MCP inventory without claiming configured or connected servers", () => {
+      render(<Footer workspace={{ mcp: { ...MCP, configuredStatus: "absent", configuredNames: [], namespaces: ["codegraph", "context7", "engram"] } }} />);
+
+      const indicator = screen.getByRole("img", { name: "MCP: 3 tool namespaces" });
+      expect(indicator).toHaveTextContent("3");
+      expect(indicator).toHaveAttribute("title", "Configured servers (absent): none; Registered servers: none; Tool namespaces: codegraph, context7, engram; Connection health is not reported");
+    });
+
+    it("keeps configured counts without adding normalized tool namespaces as extra servers", () => {
+      render(<Footer workspace={{ mcp: { ...MCP, configuredNames: ["dev-docs"], namespaces: ["dev_docs"] } }} />);
+
+      const indicator = screen.getByRole("img", { name: "MCP: 1 configured servers" });
+      expect(indicator).toHaveTextContent("1");
+      expect(indicator).toHaveAttribute("title", "Configured servers (ok): dev-docs; Registered servers: none; Tool namespaces: dev_docs; Connection health is not reported");
+    });
+
+    it("labels registered-only MCP inventory as registered rather than configured", () => {
+      render(<Footer workspace={{ mcp: { ...MCP, configuredStatus: "absent", configuredNames: [], registered: ["github"], namespaces: [] } }} />);
+
+      const indicator = screen.getByRole("img", { name: "MCP: 1 registered servers" });
+      expect(indicator).toHaveTextContent("1");
+      expect(indicator).toHaveAttribute("title", "Configured servers (absent): none; Registered servers: github; Tool namespaces: none; Connection health is not reported");
+    });
+
+    it("renders zero for an empty MCP inventory", () => {
       render(
         <Footer
           workspace={{ mcp: { ...MCP, configuredStatus: "absent", configuredNames: [], namespaces: [] } }}
@@ -194,7 +255,7 @@ describe("Footer (desktop-workspace-shell T7 — the design's footer, S9/S10/S11
       const extensions = within(capabilities).getByRole("img", { name: "Extensions: 0" });
       expect(skills).toHaveTextContent("0");
       expect(extensions).toHaveTextContent("0");
-      expect(skills).toHaveAttribute("title", expect.stringContaining("not reported"));
+      expect(skills).toHaveAttribute("title", "Skills: 0 — command catalog has not been reported");
       expect(extensions).toHaveAttribute("title", expect.stringContaining("not reported"));
       expect(within(capabilities).getByLabelText("MCP: 0 configured servers")).toHaveTextContent("0");
 

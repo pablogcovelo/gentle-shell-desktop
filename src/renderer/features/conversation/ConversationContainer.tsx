@@ -518,7 +518,7 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   }, [onWorktreeBranch, worktreeBranch, activeChat]);
   const title = directoryOf(workspacePath ?? "") ?? (activeChat.kind === "existing" ? activeChat.chat.title : "New chat");
   const welcomeKey = chatKeyOf(activeChat);
-  const footer = <Footer workspace={chatState.workspace} workspacePath={workspacePath} session={chatState.session} appVersion={appVersion} />;
+  const footer = <Footer commands={chatState.commands} workspace={chatState.workspace} workspacePath={workspacePath} session={chatState.session} appVersion={appVersion} />;
   const error = bridgeError ?? chatState.lastError;
 
   return (

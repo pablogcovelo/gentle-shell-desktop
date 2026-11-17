@@ -93,6 +93,23 @@ afterEach(() => {
 });
 
 describe("ConversationContainer", () => {
+  it("routes the native command catalog from chat state into the footer", async () => {
+    window.gentle = makeBridge({
+      newChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: {
+        ...emptyState(),
+        commands: [
+          { name: "skill:review", source: "skill" },
+          { name: "skill:test", source: "skill" },
+          { name: "extension-command", source: "extension" },
+          { name: "prompt-command", source: "prompt" },
+        ],
+      } }),
+    });
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    expect(await screen.findByRole("img", { name: "Skills: 2" })).toHaveTextContent("2");
+    expect(screen.getByRole("img", { name: "Extensions: 0" })).toHaveTextContent("0");
+  });
+
   it("refuses initial adoption after a closed push and discards a resume list after close", async () => {
     let resolveOpen!: (value: { hostId: string; state: ChatState }) => void;
     let closed!: (id: string) => void;
