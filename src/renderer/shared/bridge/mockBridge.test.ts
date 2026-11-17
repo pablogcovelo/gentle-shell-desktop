@@ -63,12 +63,12 @@ describe("mockBridge", () => {
   // registry (module state, reset with resetMockBridge) UNION the
   // example chats' directories, with add/remove/open mirroring the real
   // main process.
-  it("listWorkspaces answers the persisted registry UNION the example chats' directories, persisted first", async () => {
+  it("listWorkspaces answers opened registry directories only, never Pi history", async () => {
     const list = mockBridge.listWorkspaces?.bind(mockBridge);
     if (!list) throw new Error("mockBridge did not implement listWorkspaces");
 
     await expect(list()).resolves.toEqual({
-      directories: ["/Users/dev/gentle-shell-desktop", "/Users/dev/pi"],
+      directories: [],
       persisted: [],
     });
   });
@@ -97,11 +97,46 @@ describe("mockBridge", () => {
     const afterRemove = await remove("/tmp/mock-ws");
     expect(afterRemove.persisted).toEqual([]);
     // The example sessions' directories survive: remove never forgets a chat.
-    expect(afterRemove.directories).toContain("/Users/dev/pi");
+    expect(afterRemove.directories).not.toContain("/Users/dev/pi");
 
     const noOp = await remove("/Users/dev/pi");
     expect(noOp.persisted).toEqual([]);
-    expect(noOp.directories).toContain("/Users/dev/pi");
+    expect(noOp.directories).not.toContain("/Users/dev/pi");
+  });
+
+  it("whole-directory removal closes fresh and resumed A hosts, preserves B and Pi history, and reopen is fresh", async () => {
+    await mockBridge.addWorkspace?.("/Users/dev/gentle-shell-desktop");
+    await mockBridge.addWorkspace?.("/tmp/b");
+    const history = await mockBridge.listChats();
+    const fresh = await mockBridge.openWorkspace!("/Users/dev/gentle-shell-desktop");
+    const saved = await mockBridge.openChat("chat-readme");
+    const other = await mockBridge.openWorkspace!("/tmp/b");
+    const closed: string[] = [];
+    mockBridge.onClosed!((id) => closed.push(id));
+    const list = await mockBridge.removeWorkspace!("/Users/dev/gentle-shell-desktop");
+    expect(list).toEqual({ directories: ["/tmp/b"], persisted: ["/tmp/b"] });
+    expect(closed.sort()).toEqual([fresh.hostId, saved.hostId].sort());
+    await expect(mockBridge.refreshChat!(fresh.hostId)).rejects.toThrow(/No live workspace host/);
+    await expect(mockBridge.refreshChat!(saved.hostId)).rejects.toThrow(/No live workspace host/);
+    await expect(mockBridge.refreshChat!(other.hostId)).resolves.toMatchObject({ workspacePath: "/tmp/b" });
+    expect(await mockBridge.listChats()).toEqual(history);
+    await mockBridge.addWorkspace!("/Users/dev/gentle-shell-desktop");
+    const reopened = await mockBridge.openWorkspace!("/Users/dev/gentle-shell-desktop");
+    expect(reopened.hostId).not.toBe(fresh.hostId);
+    expect(reopened.state.messages).toEqual([]);
+  });
+
+  it("closing A stops its pending fake stream without repainting B", async () => {
+    vi.useFakeTimers();
+    try {
+      const a = await mockBridge.openWorkspace!("/tmp/stream-a");
+      await mockBridge.sendMessage(a.hostId, "ordinary stream");
+      const b = await mockBridge.openWorkspace!("/tmp/stream-b");
+      await mockBridge.removeWorkspace!("/tmp/stream-a");
+      await vi.advanceTimersByTimeAsync(5000);
+      expect((await mockBridge.refreshChat!(b.hostId)).messages).toEqual([]);
+      await expect(mockBridge.refreshChat!(a.hostId)).rejects.toThrow(/No live workspace host/);
+    } finally { vi.useRealTimers(); }
   });
 
   it("openWorkspace binds a host to the directory without the picker and reuses an already-open directory's host", async () => {
