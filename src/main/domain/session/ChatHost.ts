@@ -93,6 +93,12 @@ type ErrorListener = (message: string, hostId: string) => void;
 export class ChatHost {
   private readonly deps: ChatHostDeps;
   private current: PiSession | undefined;
+  private spawnedCwd: string | undefined;
+
+  /** Actual child ownership, separate from the creation-bound reuse key. */
+  get effectiveCwd(): string | undefined {
+    return this.spawnedCwd ?? this.deps.cwd;
+  }
   private readonly stateListeners = new Set<StateListener>();
   private readonly errorListeners = new Set<ErrorListener>();
   /** Serializes startSession calls: a second open/new call queues behind
@@ -150,12 +156,17 @@ export class ChatHost {
    * it to PiSession as `sessionPath` (`--session <path>`). Also passes the
    * session's own recorded `cwd` down (P1): a host minted by chat.open has
    * no workspace directory, and the child must still run in the chat's
-   * folder instead of Electron's launch directory. */
-  async openChat(id: string): Promise<ChatState> {
-    const sessions = await this.deps.sessionStore.listAll();
-    const match = sessions.find((session) => session.id === id);
-    if (!match) throw new Error(`ChatHost: no session found for id "${id}"`);
-    return this.startSession(match.path, match.cwd);
+   * folder instead of Electron's launch directory. The internal ownership
+   * observer reports the authoritative spawn directory before startup waits,
+   * so directory closure need not join another directory's history load. */
+  async openChat(id: string, onDirectory?: (directory: string | undefined) => void): Promise<ChatState> {
+    return this.queueStart(async () => {
+      const sessions = await this.deps.sessionStore.listAll();
+      const match = sessions.find((session) => session.id === id);
+      if (!match) throw new Error(`ChatHost: no session found for id "${id}"`);
+      onDirectory?.(this.deps.cwd ?? match.cwd);
+      return this.performStart(match.path, match.cwd);
+    });
   }
 
   /** Starts a fresh chat: no sessionPath, so PiSession omits `--session`. */
@@ -201,7 +212,11 @@ export class ChatHost {
   /** Queues this start behind the previous one via `startChain` (see its
    * doc comment) instead of running `performStart` directly. */
   private async startSession(sessionPath: string | undefined, sessionCwd?: string): Promise<ChatState> {
-    const run = this.startChain.then(() => this.performStart(sessionPath, sessionCwd));
+    return this.queueStart(() => this.performStart(sessionPath, sessionCwd));
+  }
+
+  private queueStart(start: () => Promise<ChatState>): Promise<ChatState> {
+    const run = this.startChain.then(start);
     // Keep the chain alive regardless of this step's outcome, so one
     // failed start (e.g. a locator error) never permanently wedges every
     // later open/new call behind a rejected promise.
@@ -215,6 +230,7 @@ export class ChatHost {
   private async performStart(sessionPath: string | undefined, sessionCwd?: string): Promise<ChatState> {
     await this.current?.stop();
 
+    this.spawnedCwd = this.deps.cwd ?? sessionCwd;
     const session = new PiSession({
       spawner: this.deps.spawner,
       locator: this.deps.locator,

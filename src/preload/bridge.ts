@@ -62,11 +62,9 @@ export function createBridge(ipc: RendererIpc): GentleBridge {
     // its host, and the created host's child runs with that directory as
     // cwd. The answer routes the pane like chat.open/chat.new do.
     createWorkspace: (directory: string) => ipc.invoke(IPC_CHANNELS.WORKSPACE_CREATE, directory) as Promise<OpenChatResult>,
-    // T1 (S1/S2): the workspace registry — the panel's list (persisted
-    // UNION pi-session directories), the persisted pick, the forget-the-
-    // persisted-entry-only remove, and the creation path without the
-    // picker. list/add/remove answer the fresh WorkspaceList: one
-    // explicit re-read per action, no push channel.
+    // Opened-directory registry only; Pi history is read separately for
+    // GUI /resume. remove closes the directory's hosts and unregisters it,
+    // retaining Pi session files. Each action answers the fresh list.
     listWorkspaces: () => ipc.invoke(IPC_CHANNELS.WORKSPACE_LIST) as Promise<WorkspaceList>,
     addWorkspace: (directory: string) => ipc.invoke(IPC_CHANNELS.WORKSPACE_ADD, directory) as Promise<WorkspaceList>,
     removeWorkspace: (directory: string) => ipc.invoke(IPC_CHANNELS.WORKSPACE_REMOVE, directory) as Promise<WorkspaceList>,

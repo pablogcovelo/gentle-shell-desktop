@@ -118,6 +118,25 @@ async function respondToHistoryRequest(
 }
 
 describe("ChatHost", () => {
+  it("stop joins metadata discovery before the session start is queued", async () => {
+    const { spawner, handles, events } = createFakeSpawner();
+    let release!: (sessions: SessionInfoLike[]) => void;
+    const store: SessionStore = { listAll: () => new Promise((resolve) => { release = resolve; }) };
+    const host = new ChatHost({ spawner, locator: fakeLocator, sessionStore: store, env: {} });
+    const opening = host.openChat("sess-1");
+    await Promise.resolve();
+    const stopping = host.stop();
+    release([session()]);
+    await respondToHistoryRequest(handles, 0);
+    await vi.waitFor(() => expect(events).toContain("endStdin:0"));
+    handles[0]!.resolveExited({ code: 0, signal: null });
+    await Promise.all([opening, stopping]);
+    expect(host.isAlive).toBe(false);
+    expect(host.effectiveCwd).toBe("/tmp/proj");
+    expect(host.cwd).toBeUndefined(); // creation-bound directory reuse stays unchanged
+    expect(events).toEqual(["spawn:0", "endStdin:0"]);
+    expect(handles[0]!.args).toContain("--session");
+  });
   it("reports isAlive only while its child is running", async () => {
     const { spawner, handles } = createFakeSpawner();
     const store = fakeSessionStore([session({ id: "sess-1", path: "/home/sessions/proj/sess-1.jsonl" })]);

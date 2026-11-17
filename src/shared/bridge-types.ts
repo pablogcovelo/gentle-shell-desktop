@@ -745,16 +745,11 @@ export interface PiDetection {
 }
 
 /**
- * The Workspaces panel's list (T1, S1/S2): one row per workspace
- * directory — the persisted workspace registry UNION the directories pi
- * already has sessions for, persisted entries first, deduplicated on the
- * exact string (the picker returns one canonical absolute path per
- * directory; the same policy WorkspaceHostRegistry.findByDirectory uses).
- * `persisted` is the subset with a persisted registry entry: a row backed
- * only by pi sessions shows no remove action, because removing it could
- * only ever be a no-op (there is nothing persisted to forget) — hiding
- * the action is the honest option over a "forget" button that changes
- * nothing.
+ * Opened workspace directories, backed only by Desktop's persisted registry.
+ * Pi-owned session history is deliberately separate and is read through
+ * listChats for the GUI /resume selector, never to repopulate this list.
+ * Exact directory strings are retained; `persisted` names the registered
+ * entries and is kept for bridge compatibility.
  */
 export interface WorkspaceList {
   readonly directories: readonly string[];
@@ -883,12 +878,8 @@ export interface GentleBridge {
    * implement it (src/preload/bridge.ts, the mock bridge); older test
    * fakes may not. */
   createWorkspace?(directory: string): Promise<OpenChatResult>;
-  /** T1 (S1/S2): the Workspaces panel's directories — the persisted
-   * workspace registry UNION the directories pi already has sessions
-   * for (see WorkspaceList). The panel re-reads this after add and after
-   * remove (the add/remove answers carry the fresh list; there is
-   * deliberately no push channel). Optional: both real bridges implement
-   * it; a bridge without it keeps the flat chat list. */
+  /** Opened workspace directories only (see WorkspaceList), not Pi session
+   * history. Add/remove answer the fresh list; no separate push channel. */
   listWorkspaces?(): Promise<WorkspaceList>;
   /** T1 (S2): persists the picked directory in the app config, AFTER the
    * same validation workspace.create runs (an invalid directory is
@@ -896,10 +887,10 @@ export interface GentleBridge {
    * the row appears immediately and survives a restart. Optional: both
    * real bridges implement it. */
   addWorkspace?(directory: string): Promise<WorkspaceList>;
-  /** T1: removes ONLY the persisted registry entry for `directory` —
-   * never a session file, a directory or a chat — and answers the fresh
-   * WorkspaceList. A directory without a persisted entry is a no-op.
-   * Optional: both real bridges implement it. */
+  /** Closes all hosts owned by this directory, including pending starts,
+   * removes its opened-workspace entry and returns the fresh WorkspaceList.
+   * Pi sessions and project files are retained. Failures reject without
+   * claiming that uncertain processes have stopped. */
   removeWorkspace?(directory: string): Promise<WorkspaceList>;
   /** T1: opens a chat for a workspace directory WITHOUT the native
    * picker — the same creation path as workspace.create (validated first,
