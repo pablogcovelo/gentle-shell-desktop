@@ -171,13 +171,18 @@ export function reduceChat(state: ChatState, event: RpcEvent, now?: string): Cha
  * ..."}` — the home's real reason the turn never produced anything. It was
  * decoded and then dropped, which is the whole "no recibo respuesta
  * ninguna" defect: fold its error into `lastError`, the field the status
- * line renders. A successful prompt response changes nothing, and every
- * OTHER command's failure stays a no-op here: the id-correlated folds in
- * PiSession (history, identity, commands) own those answers and keep
- * priority over anything this arm could say.
+ * line renders. A successful prompt response changes nothing about the
+ * transcript, and every OTHER command's failure stays a no-op here: the
+ * id-correlated folds in PiSession (history, identity, commands) own those
+ * answers and keep priority over anything this arm could say.
+ *
+ * A successful prompt CLEARS a previous error: the refusal belonged to the
+ * prompt that failed, so a user who signs in in a terminal and retries must
+ * not keep the red line for the pane's whole life (verifier advisory).
  */
 function applyCommandResponse(state: ChatState, event: RpcResponse): ChatState {
-  if (event.success || event.command !== "prompt") return state;
+  if (event.command !== "prompt") return state;
+  if (event.success) return state.lastError === undefined ? state : { ...state, lastError: undefined };
   return { ...state, lastError: event.error };
 }
 

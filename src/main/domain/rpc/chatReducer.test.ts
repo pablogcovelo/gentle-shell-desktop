@@ -468,6 +468,15 @@ describe("reduceChat: errors and unhandled events", () => {
       ).toBe(INITIAL_CHAT_STATE);
     });
 
+    it("clear a previous error once a prompt succeeds — the retry worked", () => {
+      const refused = reduceChat(INITIAL_CHAT_STATE, FAILED_PROMPT);
+      const cleared = reduceChat(refused, { type: "response", command: "prompt", success: true });
+
+      expect(cleared.lastError).toBeUndefined();
+      const { lastError: _error, ...rest } = cleared;
+      expect(rest).toEqual(INITIAL_CHAT_STATE);
+    });
+
     it("stay no-ops for any other command's failure — the id-correlated folds own those answers", () => {
       expect(
         reduceChat(INITIAL_CHAT_STATE, { type: "response", command: "abort", success: false, error: "boom" }),

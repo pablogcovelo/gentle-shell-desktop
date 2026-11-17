@@ -127,3 +127,27 @@ spawns a child on mount.
 L5 (decision): skills/extensions indicators stay visible with their zero fallback per the earlier
 owner decision; wiring real counts is a separate cross-repository task against gentle-pi's
 desktop-rpc contract, not part of this feature.
+
+L6 (delivery): branch `fix/desktop-workspaces-and-child-diagnostics` off `develop`. Commits:
+`058abaa` docs, `3db2ddb` T1/T2 (workspace registry, removal, empty state), `5c2fc91` T3/T4 (failed
+prompt surfacing, probe at readiness, model normalization, footer hint) plus README. Checks on the
+combined tree: `pnpm test` 828/828 in 53 files, `pnpm typecheck` clean, `pnpm smoke:electron` OK.
+Slice boundary for review: T1/T2 and T3/T4 are the two reviewable units; the branch is not a PR by
+itself (it sits on `develop`, far ahead of `origin/main`), so the delivery strategy stays the
+owner's decision.
+
+L7 (worker-reported limits, not fixed here): exact-string path dedup means a trailing-slash variant
+of the same directory would render two rows; the Add flow persists before spawning, so a failed child
+start leaves a chatless persisted row that retries when selected; a failed desktop-rpc control prompt
+(e.g. a child without the extension) now also folds into `lastError` by design.
+
+L8 (independent verification): `gentle-ai-verify` returned PASS on the diff, against the real child
+as well as the suites: start stays silent and the probe rides the first frame, a user prompt sent at
+the same moment is still answered in order, a reopened chat keeps `[get_messages, capabilities]`
+ordering, and the isolated home produces the "No model" hint while `--link` produces a real model
+label. Its advisories were triaged: the sticky `lastError` was corrected (a successful prompt now
+clears the refusal), the two missing registry safety pins were added (a session file and its
+directory survive remove byte-identical; a refused add and an unknown remove leave the filesystem
+untouched), and the remaining ones are recorded in L7 or are latent only (a future caller that
+re-`start()`s one `PiSession` would never re-probe). Checks after the correction: `pnpm test`
+831/831 in 53 files, `pnpm typecheck` clean.

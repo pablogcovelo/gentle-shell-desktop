@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -124,6 +124,39 @@ describe("createAppConfigStore", () => {
 
     expect(after.home).toBe("link");
     expect(after.workspaces).toEqual([]);
+  });
+
+  it("removeWorkspace() keeps a real session file and the directory byte-identical", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "gentle-shell-config-"));
+    const store = createAppConfigStore(path.join(dir, "config.json"));
+    const workspace = path.join(dir, "workspace");
+    const sessions = path.join(workspace, "sessions");
+    mkdirSync(sessions, { recursive: true });
+    const sessionFile = path.join(sessions, "chat.jsonl");
+    writeFileSync(sessionFile, '{"role":"user","text":"keep me"}\n');
+    store.addWorkspace(workspace);
+    const sessionsBefore = readFileSync(sessionFile);
+
+    store.removeWorkspace(workspace);
+
+    expect(readFileSync(sessionFile)).toEqual(sessionsBefore);
+    expect(statSync(workspace).isDirectory()).toBe(true);
+    expect(store.read().workspaces).toEqual([]);
+  });
+
+  it("a refused add and an unknown remove leave the filesystem untouched", () => {
+    dir = mkdtempSync(path.join(tmpdir(), "gentle-shell-config-"));
+    const configPath = path.join(dir, "config.json");
+    const store = createAppConfigStore(configPath);
+    store.addWorkspace(path.join(dir, "workspace"));
+    const treeBefore = readdirSync(dir, { recursive: true }).sort();
+    const configBefore = readFileSync(configPath);
+
+    expect(() => store.addWorkspace("relative/path")).toThrow();
+    store.removeWorkspace(path.join(dir, "never-added"));
+
+    expect(readFileSync(configPath)).toEqual(configBefore);
+    expect(readdirSync(dir, { recursive: true }).sort()).toEqual(treeBefore);
   });
 
   it("read() tolerates a malformed or non-absolute workspaces value", () => {
