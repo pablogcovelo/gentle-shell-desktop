@@ -926,6 +926,52 @@ describe("tool execution detail (desktop-rpc T7)", () => {
   });
 });
 
+describe("tool call message binding (S2)", () => {
+  function start(toolCallId: string, toolName: string, args?: unknown): RpcEvent {
+    return { type: "tool_execution_start", toolCallId, toolName, args };
+  }
+  function end(toolCallId: string, toolName: string, result: unknown, isError = false): RpcEvent {
+    return { type: "tool_execution_end", toolCallId, toolName, result, isError };
+  }
+
+  it("a live tool_execution_start binds the call to the streaming assistant message that is producing it", () => {
+    let state = reduceChat(INITIAL_CHAT_STATE, {
+      type: "message_start",
+      message: { role: "assistant", content: [] },
+    });
+    expect(state.messages[0]).toMatchObject({ id: "msg-0", role: "assistant", streaming: true });
+
+    state = reduceChat(state, start("c1", "read", { path: "a" }));
+
+    expect(state.toolCalls?.[0]).toMatchObject({
+      id: "c1",
+      toolName: "read",
+      status: "running",
+      messageId: "msg-0",
+    });
+  });
+
+  it("tool_execution_end completes that same entry without changing its message binding", () => {
+    let state = reduceChat(INITIAL_CHAT_STATE, {
+      type: "message_start",
+      message: { role: "assistant", content: [] },
+    });
+    state = reduceChat(state, start("c1", "read", { path: "a" }));
+
+    state = reduceChat(state, end("c1", "read", { lines: 42 }));
+
+    expect(state.toolCalls).toEqual([
+      { id: "c1", toolName: "read", args: { path: "a" }, result: { lines: 42 }, isError: false, status: "done", messageId: "msg-0" },
+    ]);
+  });
+
+  it("a call with no producing assistant message stays unbound (the renderer's orphan fallback owns it)", () => {
+    const started = reduceChat(INITIAL_CHAT_STATE, start("c1", "read"));
+
+    expect(started.toolCalls?.[0]?.messageId).toBeUndefined();
+  });
+});
+
 describe("bounded tool payloads (T7 advisory R4-PAYLOAD)", () => {
   const big = "x".repeat(MAX_TOOL_PAYLOAD_CHARS + 100);
 

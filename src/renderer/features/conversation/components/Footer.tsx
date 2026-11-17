@@ -56,6 +56,9 @@ export function Footer({ workspace, workspacePath, session, appVersion, commands
 
   const profileLabel = workspace?.profile?.label;
   const contextPercent = session?.contextPercent;
+  // S5: the wire sends many decimals; the TUI shows whole numbers, so the
+  // footer uses the same rounding (half up) and the meter agrees with it.
+  const roundedContextPercent = contextPercent != null ? Math.round(contextPercent) : null;
 
   return (
     <section className="gc-footer" aria-label="Session footer" tabIndex={0} title="Scroll horizontally to see all session details in narrow windows.">
@@ -66,13 +69,13 @@ export function Footer({ workspace, workspacePath, session, appVersion, commands
       {worktree ? <ChangesGroup worktree={worktree} /> : null}
       <CapabilitiesGroup mcp={mcp} commands={commands} />
       {session ? <IdentityGroup session={session} profileLabel={profileLabel} /> : null}
-      {contextPercent != null ? (
+      {roundedContextPercent != null ? (
         <span className="gc-footer__group gc-footer__context" aria-label="Context used">
           <span className="gc-footer__label">context</span>
           <span className="gc-footer__meter" aria-hidden="true">
-            <span style={{ width: `${contextPercent}%` }} />
+            <span style={{ width: `${roundedContextPercent}%` }} />
           </span>
-          <span className="gc-footer__context-used">{contextPercent}%</span>
+          <span className="gc-footer__context-used">{roundedContextPercent}%</span>
         </span>
       ) : null}
       {appVersion ? <span className="gc-footer__version">{appVersion.startsWith("v") ? appVersion : `v${appVersion}`}</span> : null}

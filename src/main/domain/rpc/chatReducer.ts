@@ -125,11 +125,19 @@ export function reduceChat(state: ChatState, event: RpcEvent, now?: string): Cha
       if (event.type === "tool_execution_start") {
         // A duplicate start must not open a second row for the same call.
         if (existing) return next;
+        // S2: bind the row to the assistant message that is producing it —
+        // the last message in state at this point. pi's live flow opens that
+        // message with message_start before its tool calls execute (see
+        // __fixtures__/prompt-turn.jsonl), so it is the streaming assistant
+        // message. Unbound when there is none: the renderer's orphan
+        // fallback owns such rows, so nothing is ever dropped.
+        const last = state.messages[state.messages.length - 1];
         const started: ToolCallView = {
           id: event.toolCallId,
           toolName: event.toolName,
           args: boundedPayload(event.args),
           status: "running",
+          ...(last && last.role === MESSAGE_ROLE.ASSISTANT ? { messageId: last.id } : {}),
         };
         return { ...next, toolCalls: [...calls, started].slice(-MAX_TOOL_CALLS) };
       }
@@ -140,6 +148,9 @@ export function reduceChat(state: ChatState, event: RpcEvent, now?: string): Cha
         result: boundedPayload(event.result),
         isError: event.isError,
         status: "done",
+        // The end frame rewrites payload fields only: the start's message
+        // binding is carried through untouched.
+        ...(existing?.messageId === undefined ? {} : { messageId: existing.messageId }),
       };
       return {
         ...next,

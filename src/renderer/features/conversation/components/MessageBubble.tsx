@@ -1,9 +1,16 @@
-import { MESSAGE_ROLE, type ChatMessage } from "@shared/bridge-types";
+import { MESSAGE_ROLE, type ChatMessage, type ToolCallView, type ToolVocabulary } from "@shared/bridge-types";
 import { Markdown } from "@renderer/shared/markdown/Markdown";
+import { ActionRows } from "./ActionRows";
 import "./MessageBubble.css";
 
 export interface MessageBubbleProps {
   readonly message: ChatMessage;
+  /** The tool calls THIS message produced (S2): rendered inside the bubble,
+   * below the text, as the same vocabulary rows the TUI shows. Absent or
+   * empty renders nothing. */
+  readonly actions?: readonly ToolCallView[];
+  /** The child's published vocabulary, for those rows' glyphs. */
+  readonly vocabulary?: ToolVocabulary;
 }
 
 // Presentational only. The "no tool output, no thinking shown" filtering
@@ -12,7 +19,7 @@ export interface MessageBubbleProps {
 // renderMarkdown.ts) since a model naturally replies in Markdown
 // (`**bold**`, `` `code` ``, `- lists`); user messages stay literal plain
 // text so nothing the human typed is ever reinterpreted as markup.
-export function MessageBubble({ message }: MessageBubbleProps) {
+export function MessageBubble({ message, actions, vocabulary }: MessageBubbleProps) {
   const isUser = message.role === MESSAGE_ROLE.USER;
 
   return (
@@ -23,6 +30,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       <div className="gc-message__body">
         <header className="gc-message__speaker"><strong>{isUser ? "You" : "el Gentleman"}</strong>{!isUser && <span className="gc-message__badge">GENTLE</span>}</header>
         {isUser ? <p className="gc-message__text">{message.text}</p> : <Markdown text={message.text} />}
+        {actions && actions.length > 0 ? <ActionRows toolCalls={actions} vocabulary={vocabulary} /> : null}
       </div>
     </article>
   );

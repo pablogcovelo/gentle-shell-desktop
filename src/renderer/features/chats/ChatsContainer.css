@@ -44,17 +44,40 @@
 
 /* T1: the Workspaces panel rows — the workspace row reuses the chat row's
 visual contract; only the remove action is new. It is a quiet secondary
-control inside the row, never a redesign. */
-.gc-workspace-row { display: flex; align-items: stretch; }
-.gc-workspace-row .gc-chat-list-item { flex: 1; min-width: 0; }
+control inside the row, never a redesign.
+S4: the highlight box is the row itself, so the left and right insets are the
+same 12px as before while the close control lives in the box's top-right
+corner. Previously the box was the select button and the control sat in a
+sibling column, which widened the right side and pushed the box out of shape. */
+.gc-workspace-row {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  margin-bottom: 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+.gc-workspace-row--selected { background: var(--raised); border-color: var(--line-strong); }
+.gc-workspace-row .gc-chat-list-item {
+  flex: 1;
+  min-width: 0;
+  /* The row owns the box: no second frame inside it. */
+  margin-bottom: 0;
+  background: transparent;
+  border-color: transparent;
+}
+/* Only a row with a close control reserves room for it; every other row keeps
+identical left and right insets. */
+.gc-workspace-row:has(.gc-chat-list-item__remove) .gc-chat-list-item { padding-right: 36px; }
 .gc-chat-list-item__remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  align-self: center;
-  width: 26px;
-  height: 26px;
-  margin-left: 2px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: 1px solid transparent;
   border-radius: 6px;

@@ -112,6 +112,22 @@ describe("ChatList workspace groups (T1)", () => {
     expect(screen.queryByRole("button", { name: "Remove workspace project" })).not.toBeInTheDocument();
   });
 
+  // S4: the highlight box is the row, so the selected workspace's close
+  // control sits inside the box's top-right corner instead of in a separate
+  // column that made the right inset differ from the left one.
+  it("draws the selected workspace highlight on the row itself, around its close control", () => {
+    const persistedGroups: WorkspaceGroup[] = [
+      { directory: "/tmp/added", chats: [], persisted: true },
+      { directory: "/tmp/project", chats: [makeChat({ id: "a", title: "Alpha", cwd: "/tmp/project" })], persisted: true },
+    ];
+
+    render(<ChatList chats={[makeChat({ id: "a", cwd: "/tmp/project" })]} groups={persistedGroups} selectedId="a" onSelect={vi.fn()} onRemoveWorkspace={vi.fn()} />);
+
+    const row = screen.getByRole("button", { name: "project — workspace" }).closest("li");
+    expect(row).toHaveClass("gc-workspace-row", "gc-workspace-row--selected");
+    expect(row).toContainElement(screen.getByRole("button", { name: "Remove workspace project" }));
+  });
+
   it("reports the picked workspace directory without touching chat selection", () => {
     const onSelectWorkspace = vi.fn();
     render(<ChatList chats={[]} groups={groups} onSelect={vi.fn()} onSelectWorkspace={onSelectWorkspace} />);

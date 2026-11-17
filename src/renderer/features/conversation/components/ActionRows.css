@@ -1,17 +1,11 @@
-/* Tool activity rows (desktop-rpc T7b): quiet, one line per call, expanding in
- * place to the exact payload. Same tokens and scroll treatment as the rest of
- * the conversation surface. */
+/* Tool action rows (S2): quiet, one line per call, expanding in place to
+ * the exact payload. They render INSIDE the message that produced the calls,
+ * so the group carries no caption and no standalone-list indent. Same tokens
+ * and scroll treatment as the rest of the conversation surface. */
 
 .gc-action-rows {
   max-width: 65ch;
-  margin: 16px 0 24px 48px;
-}
-
-.gc-action-rows__caption {
-  margin: 0 0 6px;
-  color: var(--gc-muted, #a78e9b);
-  font-size: 10px;
-
+  margin: 16px 0 24px;
 }
 
 .gc-action-rows__list {
@@ -44,7 +38,6 @@
 .gc-action-row__summary::after { content: "+"; color: var(--muted); text-align: center; }
 .gc-action-row__summary[aria-expanded="true"]::after { content: "−"; }
 @media (max-width: 800px) {
-  .gc-action-rows { margin-left: 38px; }
   .gc-action-row__summary { gap: 6px; }
   .gc-action-row__label { font-size: 10px; }
   .gc-action-row__state { font-size: 9px; }

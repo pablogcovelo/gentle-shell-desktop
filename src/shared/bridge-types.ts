@@ -281,6 +281,14 @@ export interface ToolCallView {
   readonly result?: unknown;
   readonly isError?: boolean;
   readonly status: "running" | "done";
+  /** The id of the assistant message that produced this call (S2), under
+   * the same `msg-<index>` scheme both producers use. The reducer binds it
+   * to the open streaming assistant message; history recovery binds it to
+   * the enclosing history message. Optional by contract: a call whose
+   * producing message cannot be resolved stays unbound, and the renderer's
+   * orphan fallback owns such rows — every producer and fixture keeps
+   * compiling without it. */
+  readonly messageId?: string;
 }
 
 /** One published action category: a glyph, and the tools (exact names) or

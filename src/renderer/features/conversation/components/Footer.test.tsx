@@ -366,6 +366,23 @@ describe("Footer (desktop-workspace-shell T7 — the design's footer, S9/S10/S11
       expect(meter?.querySelector("span")?.style.width).toBe("18%");
     });
 
+    // S5: the child reports the percentage with many decimals; the footer
+    // shows whole numbers with the TUI's rounding, and the meter agrees with
+    // the number beside it.
+    it("rounds the context percent to whole numbers with the TUI's rounding", () => {
+      const { rerender } = render(<Footer session={{ contextPercent: 30.4 }} />);
+
+      let context = screen.getByLabelText("Context used");
+      expect(context).toHaveTextContent("30%");
+      expect(context.querySelector<HTMLElement>(".gc-footer__meter span")?.style.width).toBe("30%");
+
+      rerender(<Footer session={{ contextPercent: 30.5 }} />);
+
+      context = screen.getByLabelText("Context used");
+      expect(context).toHaveTextContent("31%");
+      expect(context.querySelector<HTMLElement>(".gc-footer__meter span")?.style.width).toBe("31%");
+    });
+
     it("renders nothing for a context supplied as unknown (null right after compaction)", () => {
       render(<Footer session={{ contextTokens: null, contextWindow: 200000, contextPercent: null }} />);
 

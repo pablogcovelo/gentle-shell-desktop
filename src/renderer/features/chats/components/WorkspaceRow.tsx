@@ -24,7 +24,7 @@ export interface WorkspaceRowProps {
 export function WorkspaceRow({ directory, persisted = false, selected = false, disabled = false, branch, onSelect, onRemove }: WorkspaceRowProps) {
   const name = directoryOf(directory) ?? directory;
   return (
-    <li className="gc-workspace-row">
+    <li className={`gc-workspace-row${selected ? " gc-workspace-row--selected" : ""}`}>
       <button
         type="button"
         className={`gc-chat-list-item${selected ? " gc-chat-list-item--selected" : ""}`}

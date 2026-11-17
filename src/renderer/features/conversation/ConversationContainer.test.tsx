@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { CHAT_STATE, MESSAGE_ROLE, type ChatState, type ChatSummary, type Dialog, type GentleBridge, type SubscriptionUsage } from "@shared/bridge-types";
 import { ConversationContainer, resetWorkspaceSnapshotsForTests, type ActiveChat } from "./ConversationContainer";
 import { resetWelcomeHeroIntrosForTests } from "./components/WelcomeHero";
@@ -487,7 +487,7 @@ describe("ConversationContainer", () => {
     await vi.waitFor(() => expect(screen.queryByLabelText("Session identity")).not.toBeInTheDocument());
   });
 
-  it("renders tool activity with the glyph the child's vocabulary assigns, and the raw name otherwise", async () => {
+  it("renders each tool call inside the assistant message that produced it, and no standalone list (S2)", async () => {
     let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({
       onState: vi.fn((callback: (state: ChatState) => void) => {
@@ -501,26 +501,30 @@ describe("ConversationContainer", () => {
     await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
 
     pushState({
-      messages: [],
+      messages: [{ id: "msg-0", role: MESSAGE_ROLE.ASSISTANT, text: "Listing the folder.", streaming: false }],
       working: false,
       pendingDialogs: [],
       activity: 2,
       helpers: EMPTY_HELPERS,
       toolCalls: [
-        { id: "c1", toolName: "read", args: { path: "a" }, result: "ok", isError: false, status: "done" },
+        { id: "c1", toolName: "read", args: { path: "a" }, result: "ok", isError: false, status: "done", messageId: "msg-0" },
         { id: "c2", toolName: "some_future_tool", status: "running" },
       ],
       toolVocabulary: { categories: ["read"], entries: [{ category: "read", glyph: "≡", tools: ["read"] }] },
     });
 
-    const rows = await screen.findByLabelText("Tool activity");
-    expect(screen.getByTestId("gc-message-thread")).toContainElement(rows);
-    expect(rows).toHaveTextContent("≡");
-    // The uncovered tool keeps its raw name: no invented category.
-    expect(rows).toHaveTextContent("some_future_tool");
-    // Activity is chrome: the caption appears once, in its own section, and
-    // never gets duplicated into the transcript.
-    expect(screen.getAllByText("Tool activity")).toHaveLength(1);
+    // Both rows live inside the assistant message's bubble: the call bound
+    // to it, AND the unbound orphan (the fallback attaches it to the last
+    // assistant message — no silent loss).
+    const bubble = (await screen.findByText("Listing the folder.")).closest("article");
+    const rows = within(bubble!).getByLabelText("Tool actions");
+    // The child's vocabulary glyph, and the raw name for an uncovered tool.
+    expect(within(rows).getByText("≡")).toBeInTheDocument();
+    expect(within(rows).getByText("some_future_tool")).toBeInTheDocument();
+
+    // The standalone tool activity list at the transcript end is gone (S2).
+    expect(screen.queryByLabelText("Tool activity")).not.toBeInTheDocument();
+    expect(screen.queryByText("Tool activity")).not.toBeInTheDocument();
   });
 
   it("renders the subscription-usage meters when the pushed ChatState carries usage data", async () => {
@@ -1037,7 +1041,10 @@ describe("ConversationContainer", () => {
     expect(screen.queryByRole("button", { name: "Back to chat" })).not.toBeInTheDocument();
   });
 
-  it("renders pushed keyed statuses in the status surface, never as messages", async () => {
+  // S3: the chat pane shows no extension status entries and no child
+  // notifications — the transient card that kept re-appearing there. Real
+  // errors still render, and the Helpers pane keeps its own status line.
+  it("renders no keyed statuses in the chat pane, and never as messages", async () => {
     let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({
       onState: vi.fn((callback: (state: ChatState) => void) => {
@@ -1051,7 +1058,7 @@ describe("ConversationContainer", () => {
     await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
 
     pushState({
-      messages: [],
+      messages: [{ id: "m1", role: MESSAGE_ROLE.USER, text: "Status probe" }],
       working: false,
       pendingDialogs: [],
       activity: 0,
@@ -1059,14 +1066,15 @@ describe("ConversationContainer", () => {
       statuses: { "gentle-todo": "2 tasks open" },
     });
 
-    const statusList = await screen.findByLabelText("Session status");
-    expect(statusList).toHaveTextContent("gentle-todo");
-    expect(statusList).toHaveTextContent("2 tasks open");
-    // A keyed status is status chrome, not a transcript bubble.
+    // Wait for the pushed state to land before asserting what it must NOT
+    // render — otherwise the absence assertion passes on an untouched pane.
+    await screen.findByText("Status probe");
+    expect(screen.queryByLabelText("Session status")).not.toBeInTheDocument();
+    expect(screen.queryByText("2 tasks open")).not.toBeInTheDocument();
     expect(screen.queryByText("2 tasks open", { selector: ".gc-message__text" })).not.toBeInTheDocument();
   });
 
-  it("renders pushed notifications with their severity, never as conversation messages", async () => {
+  it("renders no child notifications in the chat pane, and never as conversation messages", async () => {
     let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({
       onState: vi.fn((callback: (state: ChatState) => void) => {
@@ -1080,7 +1088,7 @@ describe("ConversationContainer", () => {
     await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
 
     pushState({
-      messages: [],
+      messages: [{ id: "m1", role: MESSAGE_ROLE.USER, text: "Notice probe" }],
       working: false,
       pendingDialogs: [],
       activity: 0,
@@ -1091,12 +1099,43 @@ describe("ConversationContainer", () => {
       ],
     });
 
-    const stack = await screen.findByLabelText("Notifications");
-    expect(stack.querySelector(".gc-status-line__notification--warning")).toHaveTextContent("Command blocked by user");
-    expect(stack.querySelector(".gc-status-line__notification--error")).toHaveTextContent("Disk full");
+    await screen.findByText("Notice probe");
+    expect(screen.queryByLabelText("Notifications")).not.toBeInTheDocument();
+    expect(screen.queryByText("Command blocked by user")).not.toBeInTheDocument();
+    expect(screen.queryByText("Disk full")).not.toBeInTheDocument();
     // No bubble, no transcript entry, no placeholder in the message list.
     expect(screen.queryByText("Command blocked by user", { selector: ".gc-message__text" })).not.toBeInTheDocument();
     expect(screen.queryByText("Disk full", { selector: ".gc-message__text" })).not.toBeInTheDocument();
+  });
+
+  // S3 removed the card from the CHAT pane only. The Helpers pane keeps its
+  // status surface, so this pins the half a later cleanup could silently drop.
+  it("keeps the keyed status surface in the Helpers pane", async () => {
+    let pushState: (state: ChatState) => void = () => {};
+    const bridge = makeBridge({
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+    pushState({
+      messages: [],
+      working: false,
+      pendingDialogs: [],
+      activity: 0,
+      helpers: HELPERS_WITH_TASKS,
+      statuses: { "gentle-todo": "2 tasks open" },
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open helpers" }));
+
+    const statusList = await screen.findByLabelText("Session status");
+    expect(statusList).toHaveTextContent("gentle-todo");
+    expect(statusList).toHaveTextContent("2 tasks open");
   });
 
   it("puts the task panel in the inspector beside the conversation, keeping the composer last", async () => {

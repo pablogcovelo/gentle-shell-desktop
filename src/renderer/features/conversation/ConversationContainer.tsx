@@ -6,7 +6,6 @@ import { HelpersContainer } from "@renderer/features/helpers/HelpersContainer";
 import { directoryOf } from "@renderer/features/chats/components/ChatListItem";
 import { Composer } from "./components/Composer";
 import { ResumeSessionDialog } from "./components/ResumeSessionDialog";
-import { ActionRows } from "./components/ActionRows";
 import { Footer } from "./components/Footer";
 import { CONVERSATION_PANE, ConversationHeader, type ConversationPane } from "./components/ConversationHeader";
 import { InspectorPanel } from "./components/InspectorPanel";
@@ -557,7 +556,16 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
               dialogs={chatState.pendingDialogs}
               onAnswerDialog={handleAnswerDialog}
               welcomeKey={welcomeKey}
-              activity={<><ActionRows toolCalls={chatState.toolCalls} vocabulary={chatState.toolVocabulary} /><StatusLine error={error} statuses={chatState.statuses} notifications={chatState.notifications} /></>}
+              // S2: the actions ride with their own messages (real bindings
+              // from chatReducer/historyToToolCalls); only the error/status
+              // stack still renders after the thread.
+              toolCalls={chatState.toolCalls}
+              vocabulary={chatState.toolVocabulary}
+              // S3: the chat pane renders the error line only — no extension
+              // status entries and no child notifications, so the transient
+              // card that kept re-appearing here is gone. The Helpers pane
+              // above keeps its own status line.
+              activity={<StatusLine error={error} />}
             />
             <Composer
               value={draft}
