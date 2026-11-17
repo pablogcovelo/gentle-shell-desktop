@@ -1,0 +1,6 @@
+.gc-resume { max-height: min(80vh, 42rem); overflow-y: auto; }
+.gc-resume__directory { display: block; overflow-wrap: anywhere; color: var(--text); }
+.gc-resume__sessions { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.gc-resume__session { width: 100%; min-height: 44px; text-align: left; display: grid; gap: 4px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: inherit; cursor: pointer; overflow-wrap: anywhere; }
+.gc-resume__session:hover, .gc-resume__session:focus-visible { border-color: var(--accent); }
+.gc-resume__session time { color: var(--muted); font-size: 0.8rem; }

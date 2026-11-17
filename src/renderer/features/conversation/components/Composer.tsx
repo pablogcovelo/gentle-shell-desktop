@@ -23,6 +23,8 @@ export interface ComposerProps {
    * simply not available — no empty popup, no placeholder entry, and never
    * a hardcoded `/gentle:*` replica (S6/S11). */
   readonly commands?: readonly ChatCommand[];
+  /** Local GUI action, not a claimed child RPC capability. */
+  readonly resumeAvailable?: boolean;
 }
 
 /** The fixed palette: literal characters, no emoji data source. */
@@ -94,7 +96,7 @@ function EmojiPanel({ id, onPick, onClose }: EmojiPanelProps) {
  * `disabled`) while working: a disabled textarea would stop receiving the
  * Escape keydown the abort shortcut depends on.
  */
-export function Composer({ value, working, onChange, onSend, onAbort, ready = true, onPickFile, commands }: ComposerProps) {
+export function Composer({ value, working, onChange, onSend, onAbort, ready = true, onPickFile, commands, resumeAvailable = false }: ComposerProps) {
   // A pane that does not know its host has nowhere to send: offering an enabled
   // Send there only produces a request main must refuse, so it waits instead.
   const canSend = ready && !working && value.trim().length > 0;
@@ -108,10 +110,13 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
   // visible entries are the child's own commands filtered by it,
   // case-insensitively, in the order received.
   const slashToken = /^\/\S*$/.test(value) ? value.slice(1) : undefined;
-  const matches =
-    commands && slashToken !== undefined
-      ? commands.filter((command) => command.name.toLowerCase().startsWith(slashToken.toLowerCase()))
-      : [];
+  const commandChoices = [
+    ...(resumeAvailable ? [{ name: "resume", description: "Choose a saved Pi session in this directory" }] : []),
+    ...(commands ?? []),
+  ].filter((command, index, all) => all.findIndex((other) => other.name.toLowerCase() === command.name.toLowerCase()) === index);
+  const matches = slashToken !== undefined
+    ? commandChoices.filter((command) => command.name.toLowerCase().startsWith(slashToken.toLowerCase()))
+    : [];
   const commandsListId = useId();
   // Escape dismisses the list for the CURRENT token only: the next typed
   // character changes the token, so the list re-opens and re-filters, while
@@ -298,7 +303,7 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
           </div>
         </div>
       </div>
-      <p className="gc-composer__hints">Enter to send · Shift+Enter for a new line · Esc to stop</p>
+      <p className="gc-composer__hints">Enter to send · Shift+Enter for a new line · Esc to stop{resumeAvailable ? " · /resume to choose a saved session (no arguments)" : ""}</p>
     </form>
   );
 }

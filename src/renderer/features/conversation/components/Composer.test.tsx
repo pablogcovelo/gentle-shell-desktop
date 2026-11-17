@@ -44,6 +44,20 @@ function renderSlashComposer(options: { readonly commands?: readonly ChatCommand
 }
 
 describe("Composer", () => {
+  it("merges local resume once with child commands without changing child completion", () => {
+    const onChange = vi.fn();
+    const props = { value: "/", working: false, onChange, onSend: vi.fn(), onAbort: vi.fn() };
+    const { rerender } = render(<Composer {...props} resumeAvailable commands={[...DEMO_COMMANDS, { name: "resume", source: "extension" }]} />);
+    const choices = screen.getAllByRole("option");
+    expect(choices.filter((choice) => choice.textContent?.startsWith("/resume"))).toHaveLength(1);
+    expect(choices.map((choice) => choice.textContent)).toContain("/reviewRun the rdd review flow");
+    fireEvent.click(screen.getByRole("option", { name: /\/review/ }));
+    expect(onChange).toHaveBeenLastCalledWith("/review ");
+    fireEvent.click(screen.getByRole("option", { name: /\/resume/ }));
+    expect(onChange).toHaveBeenLastCalledWith("/resume ");
+    rerender(<Composer {...props} commands={DEMO_COMMANDS} />);
+    expect(screen.queryByRole("option", { name: /\/resume/ })).not.toBeInTheDocument();
+  });
   it("keeps Send icon-only and grows then shrinks the textarea with the draft", () => {
     const props = { working: false, onChange: vi.fn(), onSend: vi.fn(), onAbort: vi.fn() };
     const { rerender } = render(<Composer {...props} value="hi" />);
