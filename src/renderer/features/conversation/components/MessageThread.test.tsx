@@ -68,6 +68,32 @@ describe("MessageThread", () => {
     expect(scrollIntoView).toHaveBeenCalled();
   });
 
+  // S1 / R3-002: the pin belongs to the chat, not to the component. A reader
+  // who scrolled up in one chat must not disable following in the next one.
+  it("follows the next chat again after switching away from a scrolled-up one", () => {
+    const first: ChatMessage[] = [
+      { id: "a1", role: MESSAGE_ROLE.USER, text: "First chat" },
+      { id: "a2", role: MESSAGE_ROLE.ASSISTANT, text: "Answer" },
+    ];
+    const second: ChatMessage[] = [
+      { id: "b1", role: MESSAGE_ROLE.USER, text: "Second chat" },
+      { id: "b2", role: MESSAGE_ROLE.ASSISTANT, text: "Other answer" },
+    ];
+    const { rerender } = render(<MessageThread messages={first} dialogs={[]} onAnswerDialog={vi.fn()} welcomeKey="chat-a" />);
+    const thread = screen.getByTestId("gc-message-thread");
+    const scrollIntoView = Element.prototype.scrollIntoView as unknown as ReturnType<typeof vi.fn>;
+    Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 600 });
+    Object.defineProperty(thread, "clientHeight", { configurable: true, value: 200 });
+
+    thread.scrollTop = 300;
+    fireEvent.scroll(thread);
+
+    scrollIntoView.mockClear();
+    rerender(<MessageThread messages={second} dialogs={[]} onAnswerDialog={vi.fn()} welcomeKey="chat-b" />);
+
+    expect(scrollIntoView).toHaveBeenCalled();
+  });
+
   it("does not render an assistant bubble with empty text once it stopped streaming", () => {
     const messages: ChatMessage[] = [
       { id: "m1", role: MESSAGE_ROLE.USER, text: "run the tool" },

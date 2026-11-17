@@ -1138,6 +1138,36 @@ describe("ConversationContainer", () => {
     expect(statusList).toHaveTextContent("2 tasks open");
   });
 
+  // R1-1: the notification stack stays reachable in the Helpers pane, so the
+  // chat-pane removal cannot leave warnings like a blocked command with no
+  // surface at all.
+  it("keeps the notification stack in the Helpers pane", async () => {
+    let pushState: (state: ChatState) => void = () => {};
+    const bridge = makeBridge({
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+    pushState({
+      messages: [],
+      working: false,
+      pendingDialogs: [],
+      activity: 0,
+      helpers: HELPERS_WITH_TASKS,
+      notifications: [{ message: "Command blocked by user", severity: "warning" }],
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open helpers" }));
+
+    const stack = await screen.findByLabelText("Notifications");
+    expect(stack).toHaveTextContent("Command blocked by user");
+  });
+
   it("puts the task panel in the inspector beside the conversation, keeping the composer last", async () => {
     let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({

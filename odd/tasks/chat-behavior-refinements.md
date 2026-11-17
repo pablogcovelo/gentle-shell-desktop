@@ -103,3 +103,27 @@ Verified checks (2026-05-19):
   legend are gone, the workspace row owns the highlight box with its close control in the corner,
   and the context sample documents whole-percent rounding.
 
+**L6.** Native review of this slice (`review-9288d07d7f45cbf6`, lenses `review-risk` and
+`review-reliability`): the branch-wide candidate first stopped on `lens_context_budget_exceeded`, so
+the reviewed candidate is the three-commit slice. The reliability result was refused once at
+admission (`binding_mismatch`, slot not consumed) and re-run on the reported slot. The review closed
+`escalated` with one finding downgraded as `unverified_location` and two warnings. Every finding was
+reproduced locally before being reported:
+
+- `R3-001` (reported CRITICAL, downgraded by admission) — real. `ActionRows` renders
+  `<ul class="gc-action-rows">` while the list reset lived on a dead `.gc-action-rows__list` class, so
+  every action group drew browser bullets and padding. Fixed in `ActionRows.css` by putting the reset
+  on the element that renders.
+- `R3-002` — real. `pinnedToBottom` survived a chat switch (the thread is not remounted), so a reader
+  who scrolled up in chat A left chat B unpinned. Fixed by resetting the pin on `welcomeKey`, pinned
+  by "follows the next chat again after switching away from a scrolled-up one" (RED before the fix).
+- `R3-003` — real. The artboard's close control hid the row but kept it in the navigable list, so
+  re-adding the same path matched a hidden button and left the preview with no active workspace.
+  Fixed by pruning the row and its saved chats and never closing the last workspace.
+- `R1-1` — the chat-pane removal is the requested behavior, and the Helpers pane does still render
+  the notification stack; the gap was coverage, now pinned by "keeps the notification stack in the
+  Helpers pane".
+- `R1-2` — follow-up, not fixed here: `historyToToolCalls` re-derives which messages project to a
+  `ChatMessage` instead of sharing that projection with `historyToMessages`, so the two counters can
+  drift. No live mismatch was demonstrated.
+

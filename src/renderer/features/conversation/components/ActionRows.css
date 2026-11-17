@@ -6,10 +6,9 @@
 .gc-action-rows {
   max-width: 65ch;
   margin: 16px 0 24px;
-}
-
-.gc-action-rows__list {
-  margin: 0;
+  /* R3-001: the reset lives on the element that actually renders. It used to
+   * sit on a dead `.gc-action-rows__list` class, so the browser drew default
+   * bullets and padding on every group. */
   padding: 0;
   list-style: none;
 }

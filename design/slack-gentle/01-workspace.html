@@ -482,8 +482,15 @@ function chooseWorkspace(b){
 }
 function closeWorkspacePreview(wrapper){
  const row=wrapper.querySelector('.workspace-item');
- if(wrapper.classList.contains('selected')){const next=items.find(x=>x!==row&&!x.parentElement.hidden);if(next)chooseWorkspace(next);}
+ // R3-003: the preview must not keep pointing at a row it just hid. Drop the
+ // row from the navigable list and its saved chat state, and never leave the
+ // preview with zero workspaces.
+ const remaining=items.filter(x=>x!==row);
+ if(remaining.length===0){status.textContent='This preview keeps one workspace open. Add another before closing this one.';return;}
+ if(wrapper.classList.contains('selected'))chooseWorkspace(remaining.find(x=>!x.parentElement.hidden)||remaining[0]);
  wrapper.hidden=true;
+ const index=items.indexOf(row);if(index>=0)items.splice(index,1);
+ workspaces.delete(row.dataset.path);
  status.textContent='Workspace closed in this preview only. Pi sessions and files are kept.';
 }
 document.querySelector('.workspace-list').addEventListener('click',e=>{

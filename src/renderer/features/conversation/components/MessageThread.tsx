@@ -107,6 +107,15 @@ export function MessageThread({ messages, dialogs, onAnswerDialog, welcomeKey, t
     return () => thread.removeEventListener("scroll", handleScroll);
   }, []);
 
+  // S1: a different chat is a fresh reading position. This ref outlives the
+  // switch, so it is reset explicitly instead of inheriting the previous
+  // chat's scrolled-up state (R3-002).
+
+
+  useEffect(() => {
+    pinnedToBottom.current = true;
+  }, [welcomeKey]);
+
   // Scrolling to the bottom is about following a conversation. An empty chat
   // has nothing to follow, and scrolling there would push the welcome hero
   // (T9b) — the first thing the reader should meet — out of view. Neither
