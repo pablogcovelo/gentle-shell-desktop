@@ -1106,6 +1106,35 @@ describe("PiSession: desktop-rpc control plane (U1, desktop-rpc T2)", () => {
       },
     ],
   };
+  /** Capabilities of a child whose extension also advertises the forced
+   * usage refresh (docs/desktop-rpc.md "refresh_subscription_usage"). */
+  const REFRESH_CAPABILITIES = {
+    schema: "gentle-shell.desktop-rpc/v1",
+    command: "gentle:desktop",
+    widget: "gentle-desktop-rpc",
+    methods: ["capabilities", "get_subscription_usage", "refresh_subscription_usage"],
+    events: ["rate_limit"],
+  };
+
+  /** Answers the one capabilities probe a session is allowed to send with
+   * a custom payload (the refresh tests need an advertised method the
+   * default payload does not carry). */
+  async function adoptChannelWith(handle: FakeProcessHandle, data: unknown): Promise<void> {
+    const probeWrite = handle.writes.find((write) => write.includes("capabilities"));
+    if (!probeWrite) throw new Error("expected a capabilities probe write");
+    handle.emitStdout(desktopWidgetFrame(controlRequestId(probeWrite), data));
+    await flushReplies();
+  }
+
+  /** The desktop-rpc method name of a /gentle:desktop control write. */
+  function controlMethod(write: string): string {
+    const prompt = JSON.parse(write) as { type: string; message: string };
+    if (prompt.type !== "prompt" || !prompt.message.startsWith("/gentle:desktop ")) {
+      throw new Error(`expected a /gentle:desktop prompt command, got: ${write}`);
+    }
+    return (JSON.parse(prompt.message.slice("/gentle:desktop ".length)) as { method: string }).method;
+  }
+
   const RATE_LIMIT_EVENT_DATA = {
     source: "response",
     snapshots: [
@@ -1507,6 +1536,98 @@ describe("PiSession: desktop-rpc control plane (U1, desktop-rpc T2)", () => {
     handle.emitStdout(desktopWidgetFrame(requestId, USAGE_INITIAL));
     await flushReplies();
     expect(session.getState().usage).toBeUndefined();
+  });
+
+  // The refresh path (docs/desktop-rpc.md "refresh_subscription_usage"):
+  // the child's own start-up usage fetch is TUI-gated, so a desktop child
+  // without a UI probe of its own can leave a logged-in provider pending
+  // forever — the forced refresh re-runs the fetch, while the plain read
+  // only reports the child's recorded snapshot. The probe-success request
+  // upgrades to the refresh when (and only when) the child advertises it.
+  it("when the child advertises refresh_subscription_usage, the probe-success usage request is a refresh — sent with {} and folded into state.usage", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannelWith(handle, REFRESH_CAPABILITIES);
+
+    // Same wire shape as the read: a /gentle:desktop prompt carrying the
+    // refresh method with params {} (the whole current scope) — and the
+    // child's LAST control write (the T3 ordering pin).
+    const refreshWrite = handle.writes[handle.writes.length - 1] ?? "";
+    expect(controlMethod(refreshWrite)).toBe("refresh_subscription_usage");
+    expect(
+      JSON.parse((JSON.parse(refreshWrite) as { message: string }).message.slice("/gentle:desktop ".length)),
+    ).toMatchObject({ method: "refresh_subscription_usage", params: {} });
+
+    // The refresh reply is the read's shape (plus optional refresh
+    // markers, which the fold drops): state.usage is replaced wholesale.
+    handle.emitStdout(
+      desktopWidgetFrame(controlRequestId(refreshWrite), {
+        providers: USAGE_NEWEST.providers,
+        refresh: { unsupported: ["mcp_status"] },
+      }),
+    );
+    await flushReplies();
+    expect(session.getState().usage).toEqual(USAGE_NEWEST);
+    // Usage chrome never becomes transcript traffic.
+    expect(session.getState().messages).toEqual([]);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("when the child does not advertise refresh_subscription_usage, opening a chat sends the plain read and never the refresh", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle); // CAPABILITIES_DATA: no refresh method
+
+    expect(handle.writes.filter((write) => write.includes("refresh_subscription_usage"))).toEqual([]);
+    const readWrite = handle.writes[handle.writes.length - 1] ?? "";
+    expect(controlMethod(readWrite)).toBe("get_subscription_usage");
+
+    handle.emitStdout(desktopWidgetFrame(controlRequestId(readWrite), USAGE_INITIAL));
+    await flushReplies();
+    expect(session.getState().usage).toEqual(USAGE_INITIAL);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("a late answer for an older refresh request never overwrites the newest usage answer's data", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    // Request 1 (probe success, refresh, left unanswered).
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannelWith(handle, REFRESH_CAPABILITIES);
+    const refreshWrite = handle.writes[handle.writes.length - 1] ?? "";
+    expect(controlMethod(refreshWrite)).toBe("refresh_subscription_usage");
+
+    // A settled turn triggers the plain read (epoch 2): request 2.
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    const readWrite = handle.writes[handle.writes.length - 1] ?? "";
+    expect(controlMethod(readWrite)).toBe("get_subscription_usage");
+
+    // The newer read answers, then the STALE refresh answer arrives: the
+    // epoch guard must drop it — the refresh reply is bound to an epoch
+    // the settled read already superseded.
+    handle.emitStdout(desktopWidgetFrame(controlRequestId(readWrite), USAGE_NEWEST));
+    handle.emitStdout(desktopWidgetFrame(controlRequestId(refreshWrite), USAGE_STALE));
+    await flushReplies();
+
+    expect(session.getState().usage).toEqual(USAGE_NEWEST);
+
+    handle.resolveExited({ code: 0, signal: null });
   });
 });
 

@@ -370,7 +370,13 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
         this.requestVocabulary();
         this.requestWorkspace();
         this.requestWorktree();
-        this.requestUsage();
+        // The usage request stays the child's LAST control write (the T3
+        // ordering pin): it upgrades to the forced refresh when the child
+        // advertises the method, because the read alone can leave a
+        // logged-in provider pending on a desktop child (see
+        // requestUsageRefresh).
+        if (this.advertisedMethods?.has("refresh_subscription_usage")) this.requestUsageRefresh();
+        else this.requestUsage();
         this.requestAgentSnapshot();
       } else {
         this.probeState = "failed";
@@ -627,6 +633,43 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
       const usage = parseSubscriptionUsage(reply.data);
       if (!usage) return;
       // The read IS the whole current scope: replace state wholesale.
+      this.state = { ...this.state, usage };
+      this.emit("state", this.state);
+    });
+  }
+
+  /**
+   * Forces the child to re-fetch its subscription usage and folds the
+   * validated answer into `state.usage` (`refresh_subscription_usage`,
+   * docs/desktop-rpc.md "refresh_subscription_usage").
+   *
+   * Why it exists: the child's own start-up usage fetch is TUI-gated (it
+   * only runs when the child has a UI), so a desktop child — probed here
+   * through the control channel, no TUI of its own — never fetches on its
+   * own. The plain read (`get_subscription_usage`) is a PURE READ of the
+   * snapshots the child already recorded in memory and can therefore leave
+   * a provider with a valid oauth login pending until its first settled
+   * turn; the refresh delegates to the child's same auth/fetch path as the
+   * panel (no second fetcher, no auth access from here).
+   *
+   * It mirrors `requestUsage` exactly — the same capabilities gate, the
+   * same `usageRequestEpoch` binding (a refresh answer folds only while it
+   * is BOTH the newest usage request's answer AND still this session's
+   * client, so a late refresh can never overwrite a newer read) — with the
+   * one difference that the reply is the WHOLE current scope again (the
+   * post-refresh `providers`, in the read shape): it replaces state
+   * wholesale, exactly like the read.
+   */
+  private requestUsageRefresh(): void {
+    const rpc = this.rpcClient;
+    if (!rpc || this.probeState !== "ok") return;
+    const epoch = ++this.usageRequestEpoch;
+    void rpc.request("refresh_subscription_usage", {}).then((reply) => {
+      if (this.rpcClient !== rpc || epoch !== this.usageRequestEpoch) return;
+      if (!reply.ok) return;
+      const usage = parseSubscriptionUsage(reply.data);
+      if (!usage) return;
+      // The refresh reply IS the whole current scope: replace state wholesale.
       this.state = { ...this.state, usage };
       this.emit("state", this.state);
     });
