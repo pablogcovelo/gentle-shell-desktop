@@ -32,9 +32,6 @@ export interface InspectorPanelProps {
 export function InspectorPanel({ todo, usage, usageChannelUnavailable, helpers, onOpenHelpers, session }: InspectorPanelProps): ReactElement {
   const tasks = todo?.tasks ?? [];
   const progress = todo ? todoProgress(todo) : null;
-  // The meters own the channel-unavailable state: a failed probe renders
-  // their red channel note, not the plainer "no usage reported" one.
-  const hasUsage = usageChannelUnavailable === true || (usage?.providers?.length ?? 0) > 0;
   const hasAgents = helpers.tasks.length > 0;
 
   return (
@@ -69,11 +66,13 @@ export function InspectorPanel({ todo, usage, usageChannelUnavailable, helpers, 
           <span className="gc-inspector__meta">this session</span>
         </div>
         <div className="gc-inspector__scroll" tabIndex={0} role="group" aria-label="Usage in this conversation">
-          {hasUsage ? (
-            <UsageMeters usage={usage} channelUnavailable={usageChannelUnavailable} variant="panel" />
-          ) : (
-            <p className="gc-inspector__note">No usage reported yet.</p>
-          )}
+          {/* Rendered unconditionally: the meters already render nothing when
+          nothing survives their source filter, so a provider in scope with
+          no usage source leaves only this section's reserved empty space —
+          never a "no usage" paragraph next to a dead block. The meters own
+          the channel-unavailable state: a failed probe renders their red
+          channel note, which is a failure, not emptiness. */}
+          <UsageMeters usage={usage} channelUnavailable={usageChannelUnavailable} variant="panel" />
           {session?.sessionCost != null && <div className="gc-inspector__cost"><span>Session cost</span><strong>${session.sessionCost.toFixed(2)}</strong></div>}
         </div>
       </section>

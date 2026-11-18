@@ -86,7 +86,7 @@ describe("UsageMeters", () => {
     expect(screen.queryByText("0 %")).not.toBeInTheDocument();
   });
 
-  it("failed and unavailable providers keep their honest note instead of meters", () => {
+  it("a failed provider keeps its honest note instead of meters; an unavailable provider with no windows never renders", () => {
     const broken: SubscriptionUsage = {
       providers: [
         { provider: "openai-codex", status: "failed" },
@@ -97,7 +97,43 @@ describe("UsageMeters", () => {
 
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     expect(screen.getByText(/failed/i)).toBeInTheDocument();
-    expect(screen.getByText(/no usage source/i)).toBeInTheDocument();
+    // The unavailable provider is dropped entirely: with no windows it could
+    // only ever say "no usage source", so it renders nothing at all.
+    expect(document.querySelector('[data-provider="nan"]')).toBeNull();
+    expect(screen.queryByText(/no usage source/i)).not.toBeInTheDocument();
+  });
+
+  it("renders only the provider with a usage source: an unavailable provider with no windows is dropped", () => {
+    const mixed: SubscriptionUsage = {
+      providers: [ANTHROPIC_PENDING, { provider: "opencode-go", status: "unavailable" }],
+    };
+    render(<UsageMeters usage={mixed} />);
+
+    expect(document.querySelector('[data-provider="anthropic"]')).not.toBeNull();
+    expect(document.querySelector('[data-provider="opencode-go"]')).toBeNull();
+    expect(screen.queryByText(/no usage source/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps an unavailable provider that nevertheless carries a window — the snapshot outranks the status label", () => {
+    const snapshot: SubscriptionUsage = {
+      providers: [
+        {
+          provider: "opencode-go",
+          status: "unavailable",
+          limits: [
+            {
+              name: "go",
+              limitReached: false,
+              windows: [{ label: "day", usedPercent: 12, windowSeconds: 86400, resetAt: null }],
+            },
+          ],
+        },
+      ],
+    };
+    render(<UsageMeters usage={snapshot} />);
+
+    expect(document.querySelector('[data-provider="opencode-go"]')).not.toBeNull();
+    expect(screen.getByText("12%")).toBeInTheDocument();
   });
 
   it("a failed channel probe renders the channel-unavailable note — distinct from pending, with no meters", () => {

@@ -42,6 +42,28 @@ const STATUS_NOTES: Readonly<Record<string, string>> = {
 };
 
 /**
+ * Providers worth metering: the wire sends one entry per provider in the
+ * usage scope, and `status === "unavailable"` means that provider has NO
+ * usage source at all — no built-in fetcher and no registered source —
+ * so its block could only ever say "no usage source" and never render a
+ * meter. A provider that is merely in the session/profile routing would
+ * otherwise show up as a dead section next to the real ones, so such an
+ * entry is dropped when it carries no windows at all (limits absent or
+ * empty, or every limit's windows empty). Every other status (`pending`,
+ * `failed`, `stale`, `ok`) is an honest state about a provider that does
+ * have a source and is kept. Defensive boundary: an `unavailable` entry
+ * that nevertheless carries windows is kept — the snapshot outranks the
+ * status label.
+ */
+export function usageProvidersWithSource(usage?: SubscriptionUsage): readonly UsageProvider[] {
+  return (usage?.providers ?? []).filter((provider) => {
+    if (provider.status !== "unavailable") return true;
+    const windows = (provider.limits ?? []).reduce((total, limit) => total + limit.windows.length, 0);
+    return windows > 0;
+  });
+}
+
+/**
  * Subscription-usage meters (desktop-rpc T3): one block per provider —
  * name above, one labeled bar per window with the real percentage, and
  * the reset instant as a secondary line. Renders NOTHING when there is no
@@ -70,7 +92,10 @@ export function UsageMeters({ usage, channelUnavailable, variant = "card" }: Usa
     );
   }
 
-  const providers = usage?.providers ?? [];
+  // Only providers with a usage source are metered; the filter above keeps
+  // the honest pending/failed/stale/ok states and drops the dead
+  // unavailable-without-windows blocks.
+  const providers = usageProvidersWithSource(usage);
   if (providers.length === 0) return null;
 
   return (

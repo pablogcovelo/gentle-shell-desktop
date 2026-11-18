@@ -142,18 +142,37 @@ describe("InspectorPanel", () => {
     expect(noTasks.container.querySelector(".gc-inspector__meta")?.textContent).not.toMatch(/\d\/\d/);
   });
 
-  it("shows the usage empty note when no usage has been reported (never a fabricated 0%, S5)", () => {
+  it("renders the Usage section with reserved empty space when nothing has been reported (never a fabricated 0%, S5)", () => {
     renderPanel();
 
-    expect(screen.getByText("No usage reported yet.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Usage" })).toBeInTheDocument();
+    expect(screen.queryByText("No usage reported yet.")).not.toBeInTheDocument();
+    expect(document.querySelector("[data-provider]")).toBeNull();
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     expect(screen.queryByText("0%")).not.toBeInTheDocument();
   });
 
-  it("shows the usage empty note when the usage object has no providers", () => {
+  it("keeps the Usage section rendered with an empty body when the usage object has no providers", () => {
     renderPanel({ usage: { providers: [] } });
 
-    expect(screen.getByText("No usage reported yet.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Usage" })).toBeInTheDocument();
+    expect(screen.queryByText("No usage reported yet.")).not.toBeInTheDocument();
+    expect(document.querySelector("[data-provider]")).toBeNull();
+  });
+
+  it("keeps the Usage section rendered when every provider is unavailable — dropped, not dead blocks", () => {
+    renderPanel({ usage: { providers: [{ provider: "opencode-go", status: "unavailable" }] } });
+
+    expect(screen.getByRole("heading", { name: "Usage" })).toBeInTheDocument();
+    expect(document.querySelector("[data-provider]")).toBeNull();
+    expect(screen.queryByText("No usage reported yet.")).not.toBeInTheDocument();
+  });
+
+  it("still routes the channel-unavailable failure through to the meters' red channel note", () => {
+    renderPanel({ usageChannelUnavailable: true });
+
+    const note = screen.getByText(/channel unavailable/i);
+    expect(note).toHaveClass("gc-usage__note--channel-unavailable");
   });
 
   it("renders the usage meters when the wire supplied provider data", () => {
