@@ -40,13 +40,15 @@ function toChatMessage(message: RpcMessage, index: number): ChatMessage | undefi
   }
   if (message.role === MESSAGE_ROLE.ASSISTANT) {
     const text = extractText(message);
-    // An assistant message whose content was only thinking/toolCall parts
-    // (or whitespace-only text) has nothing left to show once those parts
-    // are filtered out above: skip it like a toolResult, instead of
-    // rendering an empty bubble. `result.length` in historyToMessages still
-    // assigns the next id, so this never leaves a gap.
-    if (text.trim().length === 0) return undefined;
     const parts = extractAssistantParts(message);
+    // A tool-bearing turn keeps its message even with no text: the live path
+    // keeps it so its rows render in place, and a replay must agree (S5).
+    // A turn with nothing to show — only thinking, or whitespace-only text —
+    // is skipped like a toolResult instead of rendering an empty bubble;
+    // `result.length` in historyToMessages still assigns the next id, so this
+    // never leaves a gap.
+    const hasToolPart = parts?.some((part) => part.kind === "tool") === true;
+    if (text.trim().length === 0 && !hasToolPart) return undefined;
     return {
       id: `msg-${index}`,
       role: MESSAGE_ROLE.ASSISTANT,

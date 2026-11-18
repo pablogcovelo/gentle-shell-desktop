@@ -30,6 +30,20 @@ describe("historyToMessages", () => {
     expect(historyToMessages(messages)).toEqual([{ id: "msg-0", role: "user", text: "look at this" }]);
   });
 
+  it("keeps a tool-only assistant turn so its rows replay in place (S5)", () => {
+    const messages: RpcMessage[] = [
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call_1", name: "bash", arguments: { command: "ls" } }],
+        timestamp: 0,
+      },
+    ];
+
+    expect(historyToMessages(messages)).toEqual([
+      { id: "msg-0", role: "assistant", text: "", streaming: false, parts: [{ kind: "tool", toolCallId: "call_1" }] },
+    ]);
+  });
+
   it("joins an assistant message's text parts and skips thinking and toolCall parts", () => {
     const messages: RpcMessage[] = [
       {
@@ -94,15 +108,12 @@ describe("historyToMessages", () => {
     expect(historyToMessages([])).toEqual([]);
   });
 
-  it("skips an assistant message whose joined text is empty after trimming (tool-only or thinking-only content)", () => {
+  it("skips an assistant message whose joined text is empty after trimming (thinking-only content)", () => {
     const messages: RpcMessage[] = [
       { role: "user", content: "run it", timestamp: 0 },
       {
         role: "assistant",
-        content: [
-          { type: "thinking", thinking: "let me check" },
-          { type: "toolCall", id: "call_1", name: "bash", arguments: { command: "ls" } },
-        ],
+        content: [{ type: "thinking", thinking: "let me check" }],
         timestamp: 0,
       },
       { role: "assistant", content: [{ type: "text", text: "  " }], timestamp: 0 },

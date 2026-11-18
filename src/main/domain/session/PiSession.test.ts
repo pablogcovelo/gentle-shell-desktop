@@ -835,9 +835,11 @@ describe("PiSession: Electron host follow-ups", () => {
     expect(session.getState().toolCalls).toEqual([
       { id: "call_1", toolName: "bash", args: { command: "ls" }, result: "file.txt", isError: false, status: "done" },
     ]);
-    // The text thread is unaffected by the row recovery.
+    // The recovered tool-only turn keeps its message so its row renders in
+    // place, exactly like the live stream (S5).
     expect(session.getState().messages).toEqual([
       { id: "msg-0", role: "user", text: "run it" },
+      { id: "msg-1", role: "assistant", text: "", streaming: false, parts: [{ kind: "tool", toolCallId: "call_1" }] },
     ]);
   });
 
