@@ -61,6 +61,7 @@ untouched.
 | T4 | S3 | Category colours: `data-category` → glyph colour rules in `ActionRows.css` through the theme tokens, no undefined `--gc-*` fallbacks (`--blue`, `--green` and `--champagne` already existed in `tokens.css`) | done — `04ce47e` |
 | T5 | S4 | `mem_*` → `memory` category (renderer-side fallback, glyph `🧠`, heading `Engram`, accent colour) | done — `04ce47e` |
 | T6 | S1, S2, S5 | Review corrections: keep the message of a tool-only turn, and let the wire's final text win inside a tool-bearing turn | done — `3c2da02` |
+| T7 | S5 | Review correction 2: history recovery keeps a tool-bearing text-less turn, so its rows replay in place (thinking-only turns still skipped) | done — `daa790d` |
 
 Commits: two work units, `d99b999` (T1+T2, the model) and `04ce47e` (T3+T4+T5, rendering and
 colour), each with its tests. Both sit on `develop`; the branch is far past the ~400-line slice
@@ -123,3 +124,23 @@ correction committed and with the frozen target restored. STATUS keeps re-offeri
 so the correction loop cannot advance from this session. Options: resolve it natively with
 `gentle-ai`, or disable receipt-driven development for this clone
 (`gentle-ai review mode disable --scope clone`).
+
+**L9** (review 2, lineage `review-8868ca70509f26b0`): a fresh review of the corrected candidate
+(three lenses plus one refuter, same forecasts relayed) returned `correction_required` again with
+two CRITICAL deterministic findings, both correct and both the same defect seen from two lenses:
+`R2-001` and `R3-TOOLONLY-REPLAY` — `history.ts` returned on the empty-text guard *before*
+extracting parts, so a reopened chat dropped the tool-only turn the live path now keeps, and its
+rows became orphans at the end (S5/S2). Fixed in `daa790d` (T7): recovery extracts parts first and
+skips a text-less turn only when it has no tool part. Red first: 1 failure; green 120/120 focused,
+946/946 suite, typecheck 0.
+
+**L10** (blocked, confirmed): the correction-plan capture is not accepted by the Pi facade on
+this lineage either, and this time the binding was submitted **before any edit**, on a fresh
+lineage with a freshly issued `request_hash` (`sha256:0d758314…`, revision
+`sha256:64cd4574…`): `capture-binding-rejected: collectBinding is missing or stale for current
+STATUS`. Five attempts across two lineages, both orderings (edit-then-plan and plan-then-edit),
+object and serialized binding forms, all rejected; STATUS keeps re-offering the same slot. The
+defect is in the facade's correction-slot validation, not in the caller input or the ordering.
+Both lineages stay in `correction_required`; the code corrections are committed and green but
+unrecorded. Needs a human: resolve natively with `gentle-ai`, or disable receipt-driven
+development for this clone (`gentle-ai review mode disable --scope clone`).
