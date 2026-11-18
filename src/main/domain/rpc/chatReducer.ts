@@ -307,7 +307,12 @@ function closeAssistantMessage(state: ChatState, message: RpcMessage): ChatState
   // the id scheme (`msg-${state.messages.length}` in openAssistantMessage)
   // reassigns the freed id to the next assistant message with no gap or
   // extra bookkeeping needed.
-  if (authoritativeText.trim().length === 0) {
+  // A turn that ran tools keeps its message even with no text: the message is
+  // where its rows live, and dropping it stranded every row of that turn in
+  // the no-turn region at the end of the thread — the trailing list this
+  // feature removed (S2). Only a turn with nothing to show is dropped.
+  const hasToolPart = (last.parts ?? []).some((part) => part.kind === "tool");
+  if (authoritativeText.trim().length === 0 && !hasToolPart) {
     return { ...state, messages: removeLast(state.messages) };
   }
 
@@ -327,24 +332,29 @@ function closeAssistantMessage(state: ChatState, message: RpcMessage): ChatState
  *   wire's final message is authoritative (rpc.md), so the streamed parts
  *   are REPLACED with a single text part of the authoritative text —
  *   appending would duplicate the final text next to the streamed one.
- * - The turn HAS tool parts: keep the streamed parts as they accumulated
- *   around the rows and do NOT append the authoritative text again — the
- *   streamed text parts already hold every streamed character exactly
- *   once, and re-appending the final text would repeat them. The streamed
- *   segmentation wins over the wire's final text here because it
- *   preserves each row's position; the authoritative text still lands in
- *   `ChatMessage.text` for every existing consumer.
- * - The one exception: a turn with tool parts but NO streamed text part
- *   (its text arrived only in the final wire message) would otherwise
- *   carry no text at all in its parts, so the authoritative text is added
- *   there exactly once — either way every character appears once. */
+ * - A tool-bearing turn whose streamed text already equals the wire's text:
+ *   keep the segmentation, because only the stream sees where each row sits.
+ * - A tool-bearing turn where they disagree (a corrected or truncated final
+ *   message): the wire's text is authoritative but the stream still owns the
+ *   row positions, so the text collapses into ONE part carrying the final
+ *   text, on the side of the rows where the streamed text started. The
+ *   transcript then shows the same words live and after a history replay
+ *   (S5), and every character appears exactly once.
+ * - A turn with no streamed text at all ends with the final text after its
+ *   rows, once. */
 function finalizeParts(parts: readonly AssistantPart[] | undefined, authoritativeText: string): readonly AssistantPart[] {
   const current = parts ?? [];
-  if (!current.some((part) => part.kind === "tool")) {
-    return [{ kind: "text", text: authoritativeText }];
-  }
-  if (current.some((part) => part.kind === "text")) return current;
-  return [...current, { kind: "text", text: authoritativeText }];
+  const rows = current.filter((part) => part.kind === "tool");
+  if (rows.length === 0) return [{ kind: "text", text: authoritativeText }];
+
+  const streamed = current.reduce((text, part) => (part.kind === "text" ? text + part.text : text), "");
+  if (streamed === authoritativeText) return current;
+
+  if (authoritativeText.length === 0) return rows;
+  const firstTextIndex = current.findIndex((part) => part.kind === "text");
+  return firstTextIndex === 0
+    ? [{ kind: "text", text: authoritativeText }, ...rows]
+    : [...rows, { kind: "text", text: authoritativeText }];
 }
 
 /**

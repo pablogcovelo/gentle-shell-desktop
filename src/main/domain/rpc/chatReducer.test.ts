@@ -139,7 +139,7 @@ describe("reduceChat: assistant message streaming", () => {
     expect(state.messages).toEqual([{ id: "msg-0", role: "assistant", text: "", streaming: true, parts: [] }]);
   });
 
-  it("message_end drops an assistant message that finalizes with empty trimmed text (tool-only or thinking-only content)", () => {
+  it("message_end drops an assistant message that finalizes with empty trimmed text and no tool part (thinking-only content)", () => {
     let state = reduceChat(INITIAL_CHAT_STATE, {
       type: "message_start",
       message: { role: "assistant", content: [] },
@@ -532,10 +532,53 @@ describe("reduceChat: fixture replays", () => {
     expect(state.activity).toBe(9);
   });
 
-  it("a turn whose assistant message only calls a tool leaves no empty message behind after message_end", () => {
+  it("a turn whose assistant message only calls a tool keeps that message so its row stays in place (S2)", () => {
     const state = replay(readFixtureEvents("tool-only-message.jsonl"));
-    expect(state.messages).toEqual([]);
+    expect(state.messages).toEqual([
+      { id: "msg-0", role: "assistant", text: "", streaming: false, parts: [{ kind: "tool", toolCallId: "call_1" }] },
+    ]);
     expect(state.working).toBe(false);
+  });
+
+  it("finalizes a tool-bearing turn with the wire's final text when the deltas disagree, keeping every row (S5)", () => {
+    let state = reduceChat(INITIAL_CHAT_STATE, { type: "message_start", message: { role: "assistant", content: [] } });
+    state = reduceChat(state, {
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Hel" },
+    });
+    state = reduceChat(state, { type: "tool_execution_start", toolCallId: "call_1", toolName: "bash" });
+    state = reduceChat(state, {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Hello world" }, { type: "toolCall", id: "call_1", name: "bash", arguments: {} }],
+      },
+    });
+    expect(state.messages[0]!.text).toBe("Hello world");
+    expect(state.messages[0]!.parts).toEqual([
+      { kind: "text", text: "Hello world" },
+      { kind: "tool", toolCallId: "call_1" },
+    ]);
+  });
+
+  it("keeps the streamed segmentation of a tool-bearing turn when the wire's final text matches it", () => {
+    let state = reduceChat(INITIAL_CHAT_STATE, { type: "message_start", message: { role: "assistant", content: [] } });
+    state = reduceChat(state, {
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Hi" },
+    });
+    state = reduceChat(state, { type: "tool_execution_start", toolCallId: "call_1", toolName: "bash" });
+    state = reduceChat(state, {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Hi" }, { type: "toolCall", id: "call_1", name: "bash", arguments: {} }],
+      },
+    });
+    expect(state.messages[0]!.parts).toEqual([
+      { kind: "text", text: "Hi" },
+      { kind: "tool", toolCallId: "call_1" },
+    ]);
   });
 
   it("a select dialog mid-turn surfaces in pendingDialogs and leaves the agent working", () => {
