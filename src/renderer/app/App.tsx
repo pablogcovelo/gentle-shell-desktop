@@ -362,7 +362,7 @@ export function App() {
           <section className="gc-conversation gc-conversation--empty" aria-label="No workspace open">
             <p className="gc-conversation__empty-title">No workspace is open yet.</p>
             <p className="gc-conversation__empty-hint">
-              Pick a directory with the “+” in the Workspaces panel — Gentle opens a chat for it.
+              Add a directory from the Workspaces panel — Gentle opens a chat for it.
             </p>
           </section>
         ) : (

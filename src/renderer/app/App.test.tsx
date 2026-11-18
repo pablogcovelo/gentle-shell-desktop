@@ -178,7 +178,7 @@ describe("App", () => {
 
       const placeholder = await screen.findByRole("region", { name: "No workspace open" });
       expect(placeholder).toHaveTextContent("No workspace is open yet.");
-      expect(placeholder).toHaveTextContent("“+” in the Workspaces panel");
+      expect(placeholder).toHaveTextContent("Add a directory from the Workspaces panel");
       expect(screen.queryByPlaceholderText("Tell Gentle what you need…")).not.toBeInTheDocument();
       expect(newChat).not.toHaveBeenCalled();
       expect(createWorkspace).not.toHaveBeenCalled();
