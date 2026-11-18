@@ -62,6 +62,7 @@ untouched.
 | T5 | S4 | `mem_*` → `memory` category (renderer-side fallback, glyph `🧠`, heading `Engram`, accent colour) | done — `04ce47e` |
 | T6 | S1, S2, S5 | Review corrections: keep the message of a tool-only turn, and let the wire's final text win inside a tool-bearing turn | done — `3c2da02` |
 | T7 | S5 | Review correction 2: history recovery keeps a tool-bearing text-less turn, so its rows replay in place (thinking-only turns still skipped) | done — `daa790d` |
+| T8 | S2, S3, S5 | Review correction 3: interleaved rows keep their place when the wire's text disagrees with the stream, and the relative countdown stays out of the chat-stack card | done — `59fd330` |
 
 Commits: two work units, `d99b999` (T1+T2, the model) and `04ce47e` (T3+T4+T5, rendering and
 colour), each with its tests. Both sit on `develop`; the branch is far past the ~400-line slice
@@ -144,3 +145,27 @@ defect is in the facade's correction-slot validation, not in the caller input or
 Both lineages stay in `correction_required`; the code corrections are committed and green but
 unrecorded. Needs a human: resolve natively with `gentle-ai`, or disable receipt-driven
 development for this clone (`gentle-ai review mode disable --scope clone`).
+
+**L11** (review 3, lineage `review-ce36b0a316af656d`): same three lenses plus the refuter. The first
+reviewer batch was refused at admission because the risk reviewer's payload was not a complete
+JSON object (`2 objects opened, 1 closed`); the provider preserved it under
+`.git/gentle-ai/rejected-results/` and asked for a fresh STATUS plus a new run, which then
+admitted all three. The refuter returned `correction_required` with two CRITICAL findings, both
+correct:
+- `R3-001` — a tool-bearing turn whose streamed text disagreed with the wire's text collapsed its
+  parts to one side of every row, so `row, text, row` came back as `row, row, text` while history
+  kept the interleaving (S5).
+- `R3-002` — the relative reset countdown leaked into the chat-stack card, a surface the design
+  comment did not name.
+Fixed in `59fd330` (T8): the final text lands where the streamed text started and every row keeps
+its place; the card keeps its absolute instant and only the inspector counts down. Red first:
+1 failure; green 110/110 focused, 948/948 suite, typecheck 0.
+
+**L12** (blocked, third lineage): the correction-plan capture was rejected again —
+`capture-binding-rejected: collectBinding is missing or stale for current STATUS` — on this
+lineage's own freshly issued `request_hash` (`sha256:35f622a9…`). That makes six rejections
+across three lineages and both orderings. **No correction can be recorded through this facade.**
+Recommended exits, in order: `gentle-ai review mode disable --scope clone` (the code is corrected
+and green; the review gate is what cannot advance), or resolve the authority natively with
+`gentle-ai`. Three lineages sit in `correction_required`
+(`review-cee8e3f4903bfae2`, `review-8868ca70509f26b0`, `review-ce36b0a316af656d`).
