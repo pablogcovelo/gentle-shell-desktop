@@ -156,7 +156,10 @@ describe("reduceChat: assistant message streaming", () => {
       type: "message_end",
       message: {
         role: "assistant",
-        content: [{ type: "toolCall", id: "call_1", name: "bash", arguments: {} }],
+        // Genuinely nothing to show (its name's own case): thinking only.
+        // A toolCall block here would be the REAL child's tool-bearing
+        // turn, which is kept — see the real-order tests below.
+        content: [{ type: "thinking", thinking: "let me check first" }],
       },
     });
     expect(state.messages).toEqual([]);
@@ -538,6 +541,92 @@ describe("reduceChat: fixture replays", () => {
       { id: "msg-0", role: "assistant", text: "", streaming: false, parts: [{ kind: "tool", toolCallId: "call_1" }] },
     ]);
     expect(state.working).toBe(false);
+  });
+
+  // The REAL child (gentle-pi, probed live) closes the assistant message
+  // — message_end already carrying its toolCall blocks — BEFORE it starts
+  // executing the call (tool_execution_start). The fixtures above assume
+  // the reverse order, so the streamed parts hold no tool part yet when
+  // message_end decides what to keep. chat-action-rows T10: a text-less
+  // turn whose wire message carries the toolCall block must be KEPT, or
+  // every one of its rows strands in the no-turn region at the foot of
+  // the thread (owner report: «se siguen encapsulando en una lista
+  // siempre en el pie del chat»). Recorded from a real probe:
+  // /tmp event order — message_start, toolcall deltas, message_end
+  // (content [{toolCall}]), THEN tool_execution_start.
+  describe("the real child's event order: message_end (with toolCall blocks) before tool_execution_start", () => {
+    const realOrderToolOnlyTurn = (): ChatState => {
+      let state = reduceChat(INITIAL_CHAT_STATE, { type: "message_start", message: { role: "assistant", content: [] } });
+      return reduceChat(state, {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "call_1", name: "bash", arguments: { command: "ls" } }],
+          stopReason: "toolUse",
+        },
+      });
+    };
+
+    it("keeps a text-less turn whose wire message carries the toolCall block (S2)", () => {
+      const state = realOrderToolOnlyTurn();
+      expect(state.messages).toEqual([
+        // No text part is synthesized for the empty text — that would
+        // render an empty markdown block under the rows.
+        { id: "msg-0", role: "assistant", text: "", streaming: false, parts: [] },
+      ]);
+    });
+
+    it("the later tool_execution_start still binds its row and part to that kept turn (S2)", () => {
+      let state = realOrderToolOnlyTurn();
+      state = reduceChat(state, { type: "tool_execution_start", toolCallId: "call_1", toolName: "bash" });
+      expect(state.messages[0]!.parts).toEqual([{ kind: "tool", toolCallId: "call_1" }]);
+      expect(state.toolCalls).toEqual([
+        { id: "call_1", toolName: "bash", args: undefined, status: "running", messageId: "msg-0" },
+      ]);
+    });
+
+    it("a text-less turn whose wire message has no toolCall block is still dropped (no empty bubble)", () => {
+      let state = reduceChat(INITIAL_CHAT_STATE, { type: "message_start", message: { role: "assistant", content: [] } });
+      state = reduceChat(state, {
+        type: "message_end",
+        message: { role: "assistant", content: [{ type: "thinking", thinking: "hmm" }] },
+      });
+      expect(state.messages).toEqual([]);
+    });
+
+    it("a toolCall block without a string id is not a tool-bearing turn: still dropped", () => {
+      let state = reduceChat(INITIAL_CHAT_STATE, { type: "message_start", message: { role: "assistant", content: [] } });
+      state = reduceChat(state, {
+        type: "message_end",
+        message: { role: "assistant", content: [{ type: "toolCall", name: "bash", arguments: {} }] },
+      });
+      expect(state.messages).toEqual([]);
+    });
+
+    it("a text+tool turn stays text → row under the real order too (S1)", () => {
+      let state = reduceChat(INITIAL_CHAT_STATE, { type: "message_start", message: { role: "assistant", content: [] } });
+      state = reduceChat(state, {
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Voy a mirar. " },
+      });
+      state = reduceChat(state, {
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "text", text: "Voy a mirar. " },
+            { type: "toolCall", id: "call_1", name: "bash", arguments: { command: "ls" } },
+          ],
+        },
+      });
+      state = reduceChat(state, { type: "tool_execution_start", toolCallId: "call_1", toolName: "bash" });
+      expect(state.messages[0]!.text).toBe("Voy a mirar. ");
+      expect(state.messages[0]!.parts).toEqual([
+        { kind: "text", text: "Voy a mirar. " },
+        { kind: "tool", toolCallId: "call_1" },
+      ]);
+      expect(state.toolCalls![0]!.messageId).toBe("msg-0");
+    });
   });
 
   it("finalizes a tool-bearing turn with the wire's final text when the deltas disagree, keeping every row (S5)", () => {

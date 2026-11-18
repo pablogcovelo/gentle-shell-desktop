@@ -63,7 +63,8 @@ untouched.
 | T6 | S1, S2, S5 | Review corrections: keep the message of a tool-only turn, and let the wire's final text win inside a tool-bearing turn | done — `3c2da02` |
 | T7 | S5 | Review correction 2: history recovery keeps a tool-bearing text-less turn, so its rows replay in place (thinking-only turns still skipped) | done — `daa790d` |
 | T8 | S2, S3, S5 | Review correction 3: interleaved rows keep their place when the wire's text disagrees with the stream, and the relative countdown stays out of the chat-stack card | done — `59fd330` |
-| T9 | S2 | Reported from real use: `MessageThread` dropped text-less assistant turns before computing the claim set, so a tool-only turn's rows fell into the no-turn region again | done (this commit) |
+| T9 | S2 | Reported from real use: `MessageThread` dropped text-less assistant turns before computing the claim set, so a tool-only turn's rows fell into the no-turn region again | done — `0729c3c` |
+| T10 | S2 | Reported from real use again, measured live with Playwright against the built app: the REAL child emits `message_end` (already carrying the toolCall blocks) BEFORE `tool_execution_start`, so `closeAssistantMessage` saw no streamed tool part and dropped the text-less turn; the later `tool_execution_start` then bound to no message and the row landed in the foot orphan list. `chatReducer` now treats the wire's toolCall blocks as the authority on tool-bearing (live parity with the replay path) | done (this commit) |
 
 Commits: two work units, `d99b999` (T1+T2, the model) and `04ce47e` (T3+T4+T5, rendering and
 colour), each with its tests. Both sit on `develop`; the branch is far past the ~400-line slice
@@ -181,3 +182,28 @@ construction and landed in `gc-thread__orphan-actions`. Fixed by keeping a messa
 tool part. Red first: 1 failure; green 172/172 focused, 949/949 suite, typecheck 0. Boundary left as
 is: if the child emits `tool_execution_*` after `message_end` for a text-less turn, the reducer has
 no live part for it and the row is only re-bound when the chat is reopened from history.
+
+**L14** (owner report, real session, T10): «Las acciones read, bash, etc... se siguen
+encapsulando en una lista siempre en el pie del chat en lugar de ser comentarios individuales que
+fluyen como si fuese una conversación de chat». Unit tests were green, so the evidence came from the
+running app: Playwright driving `out/main/index.js` with an isolated profile and a real `gentle-pi`
+child. First, a raw probe of the child's own wire (`--mode rpc`, prompt captured live) proved the
+real event order the fixtures never encoded: `message_start` → `toolcall_start/delta/end` →
+`message_end` (content `[{toolCall}]`, no text) → **then** `tool_execution_start` — the reverse of
+`tool-only-message.jsonl`. Under that order `closeAssistantMessage`'s tool-bearing check read the
+streamed parts (still empty) and dropped the text-less turn; the later `tool_execution_start` found
+the user message last, appended no part, and the row landed in `gc-thread__orphan-actions`. Measured
+before the fix in the real app: a live tool-first turn put its `$ bash done` row in the orphan
+region (orphanRows=1, screenshot `/tmp/gc-verify/live-before3.png`); text-bearing turns were
+unaffected, which is why the list grows only when the agent acts before it speaks. Fixed in
+`chatReducer.ts`: the wire's toolCall blocks now count as tool-bearing (matching what `history.ts`
+replay already did — the two paths disagreed, S5), and a kept text-less toolCall turn gets no
+synthesized empty text part. One existing test contradicted its own name ("thinking-only content"
+feeding a `toolCall` into `message_end`) and encoded the wrong assumption; corrected to actually
+thinking-only content. Red first: 2 failures; green 97/97 focused, 954/954 suite, typecheck 0.
+Re-measured in the same real app after the fix: tool-first live turn renders `$ bash done` inside
+its own turn article and the interleaved prompt renders text → row → text, `gc-orphan-actions`
+absent both times (screenshots `/tmp/gc-verify/live-after.png`, `/tmp/gc-verify/live-after2.png`).
+Boundary now: a text-less turn kept by its wire toolCall block is invisible in the thread until its
+`tool_execution_start` lands (milliseconds in the observed flow) — no empty bubble, no orphan row;
+if the call never executes, nothing shows and nothing strands.

@@ -311,18 +311,53 @@ function closeAssistantMessage(state: ChatState, message: RpcMessage): ChatState
   // where its rows live, and dropping it stranded every row of that turn in
   // the no-turn region at the end of the thread — the trailing list this
   // feature removed (S2). Only a turn with nothing to show is dropped.
-  const hasToolPart = (last.parts ?? []).some((part) => part.kind === "tool");
+  //
+  // chat-action-rows T10 (owner report, real session): the REAL child closes
+  // the assistant message — message_end already carrying its toolCall blocks
+  // — BEFORE it starts executing those calls, so at this point the streamed
+  // parts hold NO tool part yet (tool parts are appended by the later
+  // tool_execution_start). The wire's own toolCall blocks are therefore the
+  // authority on whether this turn is tool-bearing: a text-less turn whose
+  // message carries one must be kept, or the later tool_execution_start
+  // binds its row to no message and the row lands in the orphan region at
+  // the foot of the thread. A toolCall block without a string id never opens
+  // a row anywhere (the same fail-closed rule history.ts applies), so it
+  // does not keep the turn either.
+  const hasToolPart =
+    (last.parts ?? []).some((part) => part.kind === "tool") || extractToolCallIds(message).length > 0;
   if (authoritativeText.trim().length === 0 && !hasToolPart) {
     return { ...state, messages: removeLast(state.messages) };
   }
 
+  // A kept text-less toolCall turn has no streamed text part to finalize:
+  // leave its (still empty) parts untouched so the rows the upcoming
+  // tool_execution_start events bind here render in place — synthesizing a
+  // text part from the empty text would render an empty markdown block.
+  const textLessToolOnlyTurn = authoritativeText.trim().length === 0 && (last.parts ?? []).length === 0;
   const updated: ChatMessage = {
     ...last,
     text: authoritativeText,
     streaming: false,
-    parts: finalizeParts(last.parts, authoritativeText),
+    parts: textLessToolOnlyTurn ? (last.parts ?? []) : finalizeParts(last.parts, authoritativeText),
   };
   return { ...state, messages: replaceAt(state.messages, lastIndex, updated) };
+}
+
+/** The toolCall block ids a wire assistant message carries (chat-action-rows
+ * T10): the same blocks history.ts replays rows from. Fail closed like
+ * everywhere else here: a non-object block or a missing/non-string `id`
+ * contributes nothing. */
+function extractToolCallIds(message: RpcMessage): string[] {
+  const content = message.content;
+  if (!Array.isArray(content)) return [];
+  const ids: string[] = [];
+  for (const block of content) {
+    if (typeof block !== "object" || block === null || Array.isArray(block)) continue;
+    if ((block as Record<string, unknown>).type !== "toolCall") continue;
+    const id = (block as Record<string, unknown>).id;
+    if (typeof id === "string") ids.push(id);
+  }
+  return ids;
 }
 
 /** Finalizes a turn's ordered parts on message_end (chat-action-rows T1,
