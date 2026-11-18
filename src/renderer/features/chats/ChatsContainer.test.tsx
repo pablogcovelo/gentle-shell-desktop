@@ -41,6 +41,26 @@ it("names the panel heading Workspaces", async () => {
   expect(await screen.findByRole("heading", { name: "Workspaces" })).toBeInTheDocument();
 });
 
+// S12: adding a workspace is a "+" at the far right of the "Workspaces"
+// heading row, not a separate full-width button, and a rule separates that row
+// from the workspace list.
+it("puts an icon-only add control at the end of the Workspaces heading row, above a rule and the list", async () => {
+  window.gentle = makeBridge();
+  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} onWorkspaceCreated={vi.fn()} workspaces={{ directories: ["/tmp/open"], persisted: ["/tmp/open"] }} />);
+
+  const heading = await screen.findByRole("heading", { name: "Workspaces" });
+  const add = screen.getByRole("button", { name: "Add workspace" });
+  // Icon-only: the visible content is the glyph, the name comes from the label.
+  expect(add.textContent?.trim()).toBe("");
+  expect(heading.parentElement).toContainElement(add);
+
+  const rule = document.querySelector(".gc-chats__divider");
+  expect(rule).not.toBeNull();
+  const list = screen.getByRole("list", { name: "Workspace directories" });
+  expect(heading.compareDocumentPosition(rule!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(rule!.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
 it("never discovers history or resurrects closed rows through a flat fallback or remainder", async () => {
   const bridge = makeBridge({ listChats: vi.fn().mockResolvedValue([makeChat({ title: "Closed history" }), makeChat({ id: "orphan", cwd: "", title: "Orphan history" })]) });
   window.gentle = bridge;

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ChatSummary, OpenChatResult, WorkspaceList } from "@shared/bridge-types";
 import { useBridge } from "@renderer/shared/bridge/useBridge";
-import { Button } from "@renderer/shared/ui/atoms/Button";
 import { WorkspaceRow } from "./components/WorkspaceRow";
 import "./components/ChatList.css";
 import "./ChatsContainer.css";
@@ -135,12 +134,17 @@ export function ChatsContainer({ onNewChat, onWorkspaceCreated, onSelectWorkspac
     }}>
       <div className="gc-chats__header">
         <p className="gc-chats__eyebrow">YOUR WORK, IN GOOD COMPANY</p>
-        <h2 className="gc-chats__heading">Workspaces<span aria-hidden="true" className="gc-chats__dot">.</span></h2>
+        <div className="gc-chats__section">
+          <h2 className="gc-chats__heading">Workspaces<span aria-hidden="true" className="gc-chats__dot">.</span></h2>
+          {onWorkspaceCreated ? (
+            <button type="button" className="gc-chats__add" aria-label="Add workspace" title="Add a workspace" onClick={handleAddWorkspace} disabled={addingWorkspace}>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+            </button>
+          ) : null}
+        </div>
         <p className="gc-chats__subtitle">Your directories. One place to build.</p>
       </div>
-      <div className="gc-chats__actions">
-        {onWorkspaceCreated ? <Button variant="ghost" type="button" onClick={handleAddWorkspace} disabled={addingWorkspace}>Add workspace</Button> : null}
-      </div>
+      <hr className="gc-chats__divider" />
       {workspaceError ? <p role="alert" style={{ color: "var(--muted)" }}>Workspace action failed: {workspaceError}</p> : null}
       <div className="gc-chat-list">
         <ul className="gc-chat-list__items" aria-label="Workspace directories">

@@ -356,13 +356,13 @@ export function App() {
           navigationOpen={narrow && navigationOpen}
         />
         {activeChat.kind === "none" ? (
-          // T2 (S3/S4): no workspace open — plain text plus the Add-workspace
+          // T2 (S3/S4): no workspace open — plain text plus the add-workspace
           // hint. No ConversationContainer is rendered, so no child process
           // can be spawned: the placeholder is a real empty state.
           <section className="gc-conversation gc-conversation--empty" aria-label="No workspace open">
             <p className="gc-conversation__empty-title">No workspace is open yet.</p>
             <p className="gc-conversation__empty-hint">
-              Pick a directory with “Add workspace” in the Workspaces panel — Gentle opens a chat for it.
+              Pick a directory with the “+” in the Workspaces panel — Gentle opens a chat for it.
             </p>
           </section>
         ) : (

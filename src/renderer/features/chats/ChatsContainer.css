@@ -7,7 +7,7 @@
   min-height: 0;
   min-width: 0;
 }
-.gc-chats__header { padding: 0 10px 22px; }
+.gc-chats__header { padding: 0 10px 14px; }
 .gc-chats__eyebrow {
   font: 11px var(--font-mono);
   letter-spacing: 1.6px;
@@ -15,25 +15,31 @@
   color: var(--accent);
   margin: 0 0 10px;
 }
-.gc-chats__heading { font-size: 19px; letter-spacing: -.5px; font-weight: 700; color: var(--text); margin: 0 0 4px; }
-.gc-chats__dot { color: var(--accent); }
-.gc-chats__subtitle { font-size: 11px; color: var(--muted); margin: 0; }
-.gc-chats__actions { margin: 0 4px 20px; }
-.gc-chats__actions .gc-button {
-  display: flex;
+/* S12: adding a workspace is a "+" at the far right of the heading row, so the
+heading and the control share one line, followed by the same hairline the panel
+footer uses. */
+.gc-chats__section { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 4px; }
+.gc-chats__add {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  width: 100%;
-  min-height: 36px;
-  padding: 8px 12px;
-  border: 1px solid var(--line-strong);
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
   border-radius: 8px;
-  background: var(--panel);
-  color: var(--text);
-  font: 12px/1.55 var(--font-body);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
 }
-.gc-chats__actions .gc-button:hover { background: var(--raised); }
+.gc-chats__add:hover { background: var(--raised); color: var(--text); }
+.gc-chats__add:focus-visible { border-color: var(--line-strong); outline: none; }
+.gc-chats__add:disabled { cursor: not-allowed; opacity: .45; }
+.gc-chats__divider { height: 0; border: 0; border-top: 1px solid var(--line); margin: 0 8px 14px; }
+.gc-chats__heading { font-size: 19px; letter-spacing: -.5px; font-weight: 700; color: var(--text); margin: 0; }
+.gc-chats__dot { color: var(--accent); }
+.gc-chats__subtitle { font-size: 11px; color: var(--muted); margin: 0; }
 .gc-chats__empty { font-size: 12px; color: var(--muted); padding: 0 12px; }
 .gc-chats__footer { margin: 16px 8px 0; padding-top: 16px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }
 .gc-chats__footer p { margin: 0; }

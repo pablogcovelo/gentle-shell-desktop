@@ -166,8 +166,8 @@ describe("App", () => {
   });
 
   // T2 (S3/S4): with no workspace at all the center shows the placeholder
-  // (plain text plus the Add-workspace hint) and NO child process is
-  // spawned — no synthetic chat, no creation.
+  // (plain text plus the add-workspace hint at the panel's “+”) and NO child
+  // process is spawned — no synthetic chat, no creation.
   it("with no workspace at all the center shows the placeholder and no child is spawned", async () => {
     await mockBridge.removeWorkspace!("/Users/dev/gentle-shell-desktop");
     setMockChats([]);
@@ -178,7 +178,7 @@ describe("App", () => {
 
       const placeholder = await screen.findByRole("region", { name: "No workspace open" });
       expect(placeholder).toHaveTextContent("No workspace is open yet.");
-      expect(placeholder).toHaveTextContent("Add workspace");
+      expect(placeholder).toHaveTextContent("“+” in the Workspaces panel");
       expect(screen.queryByPlaceholderText("Tell Gentle what you need…")).not.toBeInTheDocument();
       expect(newChat).not.toHaveBeenCalled();
       expect(createWorkspace).not.toHaveBeenCalled();
