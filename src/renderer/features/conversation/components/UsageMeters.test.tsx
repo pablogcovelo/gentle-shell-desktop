@@ -217,7 +217,7 @@ describe("UsageMeters", () => {
     };
 
     it("shows the reset as a compact relative time, never a full timestamp", () => {
-      render(<UsageMeters usage={{ providers: [CODEX_WINDOW_OK] }} />);
+      render(<UsageMeters usage={{ providers: [CODEX_WINDOW_OK] }} variant="panel" />);
 
       // 1788777491000 is 2 days, 1 hour and 19 minutes after FIXED_NOW.
       expect(screen.getByText("resets in 2d 1h")).toBeInTheDocument();
@@ -225,7 +225,7 @@ describe("UsageMeters", () => {
     });
 
     it("uses hours and minutes for a window that resets within a day", () => {
-      render(<UsageMeters usage={{ providers: [HOURS_AHEAD] }} />);
+      render(<UsageMeters usage={{ providers: [HOURS_AHEAD] }} variant="panel" />);
 
       expect(screen.getByText("resets in 3h 42m")).toBeInTheDocument();
     });
@@ -243,13 +243,13 @@ describe("UsageMeters", () => {
         ],
       };
 
-      render(<UsageMeters usage={{ providers: [elapsed] }} />);
+      render(<UsageMeters usage={{ providers: [elapsed] }} variant="panel" />);
 
       expect(screen.getByText("resets now")).toBeInTheDocument();
     });
 
     it("keeps the countdown current while the panel stays open", () => {
-      render(<UsageMeters usage={{ providers: [HOURS_AHEAD] }} />);
+      render(<UsageMeters usage={{ providers: [HOURS_AHEAD] }} variant="panel" />);
       expect(screen.getByText("resets in 3h 42m")).toBeInTheDocument();
 
       act(() => {
@@ -259,6 +259,12 @@ describe("UsageMeters", () => {
       });
 
       expect(screen.getByText("resets in 3h 39m")).toBeInTheDocument();
+    });
+
+    it("keeps the card variant's absolute reset instant, which the design did not ask to change", () => {
+      render(<UsageMeters usage={{ providers: [CODEX_WINDOW_OK] }} />);
+
+      expect(screen.getByText(`resets ${new Date(1788777491000).toLocaleString()}`)).toBeInTheDocument();
     });
 
     it("folds the countdown into the meter row in the inspector and keeps the card's second line", () => {

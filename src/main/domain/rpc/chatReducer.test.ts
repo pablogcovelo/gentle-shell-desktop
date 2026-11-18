@@ -581,6 +581,26 @@ describe("reduceChat: fixture replays", () => {
     ]);
   });
 
+  it("keeps every row in place when the wire's final text disagrees with an interleaved stream (S5)", () => {
+    let state = reduceChat(INITIAL_CHAT_STATE, { type: "message_start", message: { role: "assistant", content: [] } });
+    state = reduceChat(state, { type: "tool_execution_start", toolCallId: "call_1", toolName: "bash" });
+    state = reduceChat(state, {
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Hel" },
+    });
+    state = reduceChat(state, { type: "tool_execution_start", toolCallId: "call_2", toolName: "read" });
+    state = reduceChat(state, {
+      type: "message_end",
+      message: { role: "assistant", content: [{ type: "text", text: "Hello world" }] },
+    });
+    expect(state.messages[0]!.text).toBe("Hello world");
+    expect(state.messages[0]!.parts).toEqual([
+      { kind: "tool", toolCallId: "call_1" },
+      { kind: "text", text: "Hello world" },
+      { kind: "tool", toolCallId: "call_2" },
+    ]);
+  });
+
   it("a select dialog mid-turn surfaces in pendingDialogs and leaves the agent working", () => {
     const state = replay(readFixtureEvents("select-dialog.jsonl"));
     expect(state.working).toBe(true);

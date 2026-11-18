@@ -335,11 +335,11 @@ function closeAssistantMessage(state: ChatState, message: RpcMessage): ChatState
  * - A tool-bearing turn whose streamed text already equals the wire's text:
  *   keep the segmentation, because only the stream sees where each row sits.
  * - A tool-bearing turn where they disagree (a corrected or truncated final
- *   message): the wire's text is authoritative but the stream still owns the
- *   row positions, so the text collapses into ONE part carrying the final
- *   text, on the side of the rows where the streamed text started. The
- *   transcript then shows the same words live and after a history replay
- *   (S5), and every character appears exactly once.
+ *   message): the wire's text wins, but the stream still owns the row
+ *   positions, so every row keeps its place and the final text lands where
+ *   the streamed text started; the extra text parts are dropped. Row order
+ *   then matches a replay of the same turn (S5) and no character appears
+ *   twice.
  * - A turn with no streamed text at all ends with the final text after its
  *   rows, once. */
 function finalizeParts(parts: readonly AssistantPart[] | undefined, authoritativeText: string): readonly AssistantPart[] {
@@ -350,11 +350,19 @@ function finalizeParts(parts: readonly AssistantPart[] | undefined, authoritativ
   const streamed = current.reduce((text, part) => (part.kind === "text" ? text + part.text : text), "");
   if (streamed === authoritativeText) return current;
 
-  if (authoritativeText.length === 0) return rows;
-  const firstTextIndex = current.findIndex((part) => part.kind === "text");
-  return firstTextIndex === 0
-    ? [{ kind: "text", text: authoritativeText }, ...rows]
-    : [...rows, { kind: "text", text: authoritativeText }];
+  const merged: AssistantPart[] = [];
+  let textPlaced = false;
+  for (const part of current) {
+    if (part.kind === "tool") {
+      merged.push(part);
+      continue;
+    }
+    if (textPlaced) continue;
+    textPlaced = true;
+    if (authoritativeText.length > 0) merged.push({ kind: "text", text: authoritativeText });
+  }
+  if (!textPlaced && authoritativeText.length > 0) merged.push({ kind: "text", text: authoritativeText });
+  return merged;
 }
 
 /**

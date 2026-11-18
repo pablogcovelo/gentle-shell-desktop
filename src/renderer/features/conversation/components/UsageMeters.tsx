@@ -180,7 +180,15 @@ function UsageLimitGroup({ limit, showName, now, panel }: { readonly limit: Usag
 }
 
 function UsageWindowRow({ window, now, panel }: { readonly window: UsageWindow; readonly now: number; readonly panel: boolean }) {
-  const reset = window.resetAt !== null ? formatReset(window.resetAt, now) : null;
+  // The inspector is what the design comment asked for: a compact countdown.
+  // The chat-stack card keeps the absolute instant it has always shown, so a
+  // surface the request did not name does not change.
+  const reset =
+    window.resetAt === null
+      ? null
+      : panel
+        ? formatReset(window.resetAt, now)
+        : `resets ${new Date(window.resetAt).toLocaleString()}`;
   return (
     <li className="gc-usage__window">
       <div className="gc-usage__window-row">
