@@ -109,11 +109,23 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Secondary line: the window's reset instant, indented past the label. */
+/* Card variant: the countdown is a quiet second line under its own bar. */
 .gc-usage__reset {
   color: var(--muted);
   font-size: 0.7rem;
   padding-left: calc(2.4rem + 0.5rem);
+}
+
+/* Inspector variant: it closes the row instead — label, bar, percent, reset
+ * — so each window is one line and there is no indented footnote
+ * (design/slack-gentle, comment clq1vtao). `nowrap` keeps it intact while the
+ * meter shrinks. */
+.gc-usage__reset--inline {
+  flex: none;
+  white-space: nowrap;
+  padding-left: 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Honest-state notes: a provider without windows says so, never meters. */
@@ -137,31 +149,59 @@
 .gc-usage__note--channel-unavailable {
   color: var(--red);
 }
-.gc-usage--panel .gc-usage__provider { gap: 0; }
+/* Dedicated row metrics for the inspector. The card variant keeps its
+ * rem-based scale; these are the artboard's exact pixels. */
+.gc-usage--panel .gc-usage__provider {
+  gap: 9px;
+}
+
 .gc-usage--panel .gc-usage__provider-head {
-  align-items: center;
-  gap: 10px;
-  padding: 11px 12px;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  margin-bottom: 16px;
+  align-items: baseline;
+  gap: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  margin: 0 0 9px;
 }
-.gc-usage__mark {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  background: var(--raised);
-  font: 600 10px var(--font-mono);
-  color: var(--accent);
+
+/* The provider reads as a section title, and the plan belongs to it: same
+ * size, same weight, joined by a plain separator. */
+.gc-usage--panel .gc-usage__provider-name,
+.gc-usage--panel .gc-usage__plan {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
 }
-.gc-usage--panel .gc-usage__provider-name { display: block; font-size: 12px; }
-.gc-usage--panel .gc-usage__plan { display: block; font-size: 10px; margin-top: 2px; }
-.gc-usage--panel .gc-usage__windows { gap: 14px; }
-.gc-usage--panel .gc-usage__label { font-size: 10px; min-width: 36px; }
-.gc-usage--panel .gc-usage__percent { font-size: 11px; min-width: 34px; }
-.gc-usage--panel .gc-usage__window-row { gap: 10px; }
+
+/* The separator needs its own margin: the spaces inside the text node
+ * collapse at the span's edges in a flex row, so relying on them rendered
+ * "openai-codex·pro". */
+.gc-usage--panel .gc-usage__plan-sep {
+  margin: 0 4px;
+}
+
+.gc-usage--panel .gc-usage__meter {
+  height: 5px;
+}
+
+.gc-usage--panel .gc-usage__windows {
+  gap: 8px;
+}
+
+.gc-usage--panel .gc-usage__window-row {
+  gap: 7px;
+}
+
+.gc-usage--panel .gc-usage__label {
+  font-size: 10px;
+  min-width: 28px;
+}
+
+.gc-usage--panel .gc-usage__percent {
+  font-size: 10px;
+  min-width: 28px;
+}
+
+.gc-usage--panel .gc-usage__reset {
+  font-size: 10px;
+}

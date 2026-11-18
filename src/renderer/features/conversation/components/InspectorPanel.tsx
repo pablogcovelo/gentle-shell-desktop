@@ -66,6 +66,15 @@ export function InspectorPanel({ todo, usage, usageChannelUnavailable, helpers, 
           <span className="gc-inspector__meta">this session</span>
         </div>
         <div className="gc-inspector__scroll" tabIndex={0} role="group" aria-label="Usage in this conversation">
+          {/* The cost opens the section (design/slack-gentle, clq1vtao): one
+          tight row above the meters, so the value the reader checks first is
+          not buried under every window. */}
+          {session?.sessionCost != null && (
+            <div className="gc-inspector__cost">
+              <span>session cost</span>
+              <strong aria-label="Total session cost in US dollars" title="Total session cost in USD">${session.sessionCost.toFixed(2)}</strong>
+            </div>
+          )}
           {/* Rendered unconditionally: the meters already render nothing when
           nothing survives their source filter, so a provider in scope with
           no usage source leaves only this section's reserved empty space —
@@ -73,7 +82,6 @@ export function InspectorPanel({ todo, usage, usageChannelUnavailable, helpers, 
           the channel-unavailable state: a failed probe renders their red
           channel note, which is a failure, not emptiness. */}
           <UsageMeters usage={usage} channelUnavailable={usageChannelUnavailable} variant="panel" />
-          {session?.sessionCost != null && <div className="gc-inspector__cost"><span>Session cost</span><strong>${session.sessionCost.toFixed(2)}</strong></div>}
         </div>
       </section>
 

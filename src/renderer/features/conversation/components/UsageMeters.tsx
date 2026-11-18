@@ -1,5 +1,10 @@
+import { useEffect, useState } from "react";
 import type { SubscriptionUsage, UsageLimit, UsageProvider, UsageWindow } from "@shared/bridge-types";
 import "./UsageMeters.css";
+
+/** How often a visible countdown re-reads the clock. Half the smallest unit
+ * the text shows, so the label never lags a whole step behind. */
+const RESET_CLOCK_INTERVAL_MS = 30_000;
 
 export interface UsageMetersProps {
   /** The open chat's subscription usage (ChatState.usage, desktop-rpc T3).
@@ -75,6 +80,12 @@ export function UsageMeters({ usage, channelUnavailable, variant = "card" }: Usa
   // The panel variant only changes presentation; the honest-state logic
   // below is shared verbatim with the card variant.
   const chrome = variant === "panel" ? "gc-usage gc-usage--panel" : "gc-usage";
+  const providers = usageProvidersWithSource(usage);
+  // Hooks run before every early return below, so the unavailable and empty
+  // states obey the rules of hooks too. The filter is pure, so it can run
+  // first and tell the clock whether anything on screen shows a countdown.
+  const now = useResetClock(providers.some(showsReset));
+
   // The channel-unavailable state (T3 correction) reuses the same
   // honest-note path as the provider statuses below — one note, same
   // styling mechanism, distinct meaning: this says OUR control channel to
@@ -92,41 +103,39 @@ export function UsageMeters({ usage, channelUnavailable, variant = "card" }: Usa
     );
   }
 
-  // Only providers with a usage source are metered; the filter above keeps
-  // the honest pending/failed/stale/ok states and drops the dead
-  // unavailable-without-windows blocks.
-  const providers = usageProvidersWithSource(usage);
   if (providers.length === 0) return null;
 
   return (
     <section className={chrome} aria-label="Subscription usage">
       {providers.map((provider) => (
-        <UsageProviderBlock key={provider.provider} provider={provider} panel={variant === "panel"} />
+        <UsageProviderBlock key={provider.provider} provider={provider} panel={variant === "panel"} now={now} />
       ))}
     </section>
   );
 }
 
-function UsageProviderBlock({ provider, panel }: { readonly provider: UsageProvider; readonly panel: boolean }) {
+function UsageProviderBlock({ provider, panel, now }: { readonly provider: UsageProvider; readonly panel: boolean; readonly now: number }) {
   const limits = provider.limits ?? [];
   const windowCount = limits.reduce((total, limit) => total + limit.windows.length, 0);
 
   return (
     <div className="gc-usage__provider" data-provider={provider.provider}>
+      {/* One title line: provider and plan read together, with no initials
+      badge and no boxed card around them (design/slack-gentle, clq1vtao). */}
       <div className="gc-usage__provider-head">
-        {panel && <span className="gc-usage__mark" aria-hidden="true">{provider.provider.slice(0, 2).toUpperCase()}</span>}
-        {panel ? (
-          <div>
-            <span className="gc-usage__provider-name">{provider.provider}</span>
-            {provider.plan ? <span className="gc-usage__plan">{provider.plan}</span> : null}
-          </div>
-        ) : <>
-          <span className="gc-usage__provider-name">{provider.provider}</span>
-          {provider.plan ? <span className="gc-usage__plan">{provider.plan}</span> : null}
-        </>}
+        <span className="gc-usage__provider-name">{provider.provider}</span>
+        {provider.plan ? (
+          <>
+            {/* The panel joins name and plan into one title line; the card
+            keeps its two-part label. The separator is real text, not CSS
+            content, so assistive technology reads what the eye reads. */}
+            {panel ? <span className="gc-usage__plan-sep">{" · "}</span> : null}
+            <span className="gc-usage__plan">{provider.plan}</span>
+          </>
+        ) : null}
       </div>
       {windowCount > 0 ? (
-        limits.map((limit, index) => <UsageLimitGroup key={index} limit={limit} showName={limits.length > 1} />)
+        limits.map((limit, index) => <UsageLimitGroup key={index} limit={limit} showName={limits.length > 1} now={now} panel={panel} />)
       ) : (
         <p className={`gc-usage__note gc-usage__note--${provider.status}`}>{STATUS_NOTES[provider.status] ?? "No usage windows reported."}</p>
       )}
@@ -134,19 +143,44 @@ function UsageProviderBlock({ provider, panel }: { readonly provider: UsageProvi
   );
 }
 
-function UsageLimitGroup({ limit, showName }: { readonly limit: UsageLimit; readonly showName: boolean }) {
+/** True when this provider reports at least one reset instant, i.e. when it
+ * has a countdown worth keeping current. */
+function showsReset(provider: UsageProvider): boolean {
+  return (provider.limits ?? []).some((limit) => limit.windows.some((window) => window.resetAt !== null));
+}
+
+/**
+ * The reset text is relative, so it has to follow the clock. `rate_limit`
+ * pushes keep the percentages live, but an idle conversation can keep a
+ * panel open for hours and a frozen "resets in 3h 42m" would turn into a
+ * false statement. The interval only runs while a countdown is on screen.
+ */
+function useResetClock(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    // Re-read on activation: the first render's value can predate it.
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), RESET_CLOCK_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [active]);
+  return now;
+}
+
+function UsageLimitGroup({ limit, showName, now, panel }: { readonly limit: UsageLimit; readonly showName: boolean; readonly now: number; readonly panel: boolean }) {
   if (limit.windows.length === 0) return null;
   return (
     <ul className="gc-usage__windows">
       {showName ? <li className="gc-usage__limit-name">{limit.name}</li> : null}
       {limit.windows.map((window) => (
-        <UsageWindowRow key={`${window.label}-${window.windowSeconds}`} window={window} />
+        <UsageWindowRow key={`${window.label}-${window.windowSeconds}`} window={window} now={now} panel={panel} />
       ))}
     </ul>
   );
 }
 
-function UsageWindowRow({ window }: { readonly window: UsageWindow }) {
+function UsageWindowRow({ window, now, panel }: { readonly window: UsageWindow; readonly now: number; readonly panel: boolean }) {
+  const reset = window.resetAt !== null ? formatReset(window.resetAt, now) : null;
   return (
     <li className="gc-usage__window">
       <div className="gc-usage__window-row">
@@ -164,8 +198,11 @@ function UsageWindowRow({ window }: { readonly window: UsageWindow }) {
           <span style={{ width: `${clampWidth(window.usedPercent)}%` }} />
         </span>
         <span className="gc-usage__percent">{window.usedPercent}%</span>
+        {/* Inspector: the countdown closes the row itself. Card: unchanged,
+        it keeps its quiet second line. */}
+        {reset !== null && panel ? <span className="gc-usage__reset gc-usage__reset--inline">{reset}</span> : null}
       </div>
-      {window.resetAt !== null ? <div className="gc-usage__reset">{formatReset(window.resetAt)}</div> : null}
+      {reset !== null && !panel ? <div className="gc-usage__reset">{reset}</div> : null}
     </li>
   );
 }
@@ -174,6 +211,21 @@ function clampWidth(percent: number): number {
   return Math.max(0, Math.min(100, percent));
 }
 
-function formatReset(resetAt: number): string {
-  return `resets ${new Date(resetAt).toLocaleString()}`;
+/**
+ * A reset is a future instant a few minutes to a few days away, and printing
+ * the instant makes the reader subtract dates to learn anything. Days/hours
+ * cover the weekly windows, hours/minutes the short ones, rounded up so a
+ * still-future reset never reads as zero. A snapshot can outlive its own
+ * instant (no new push arrived yet), so a past one says "resets now" instead
+ * of counting backwards.
+ */
+function formatReset(resetAt: number, now: number): string {
+  const remainingMs = resetAt - now;
+  if (remainingMs <= 0) return "resets now";
+  const minutes = Math.ceil(remainingMs / 60_000);
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  if (days > 0) return `resets in ${days}d ${hours}h`;
+  if (hours > 0) return `resets in ${hours}h ${minutes % 60}m`;
+  return `resets in ${minutes}m`;
 }

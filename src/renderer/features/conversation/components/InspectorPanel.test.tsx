@@ -4,6 +4,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import type {
   HelpersActivity,
   HelperTask,
+  SessionIdentityView,
   SubscriptionUsage,
   TodoPanelState,
   TodoTaskView,
@@ -64,6 +65,7 @@ function helpersActivity(tasks: HelperTask[] = [], overrides: Partial<HelpersAct
 
 function renderPanel(props: {
   todo?: TodoPanelState;
+  session?: SessionIdentityView;
   usage?: SubscriptionUsage;
   usageChannelUnavailable?: boolean;
   helpers?: HelpersActivity;
@@ -72,6 +74,7 @@ function renderPanel(props: {
   return render(
     <InspectorPanel
       todo={props.todo}
+      session={props.session}
       usage={props.usage}
       usageChannelUnavailable={props.usageChannelUnavailable}
       helpers={props.helpers ?? helpersActivity()}
@@ -81,6 +84,23 @@ function renderPanel(props: {
 }
 
 describe("InspectorPanel", () => {
+  it("shows the session cost first in the Usage section, above the usage meters", () => {
+    renderPanel({
+      session: { modelName: "Claude Sonnet 4", thinkingLevel: "medium", sessionCost: 0.45 },
+      usage: { providers: [CODEX_WITH_WINDOW] },
+    });
+
+    // One row, lowercase label and value together, in the inspector's own
+    // wording — not a footer line.
+    const cost = screen.getByLabelText("Total session cost in US dollars");
+    expect(cost).toHaveTextContent("$0.45");
+    expect(cost.closest(".gc-inspector__cost")).toHaveTextContent(/session cost\s*\$0\.45/);
+
+    // First element of the section: the cost precedes every meter.
+    const meter = screen.getByRole("progressbar", { name: /week usage/i });
+    expect(cost.compareDocumentPosition(meter) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
   it("keeps real agent metadata behind a collapsed disclosure", () => {
     renderPanel({ helpers: helpersActivity([helperTask({ lastStep: "Reading source" })]) });
     const summary = screen.getByText("refactorer").closest("summary")!;

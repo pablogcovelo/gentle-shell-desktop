@@ -102,8 +102,11 @@
 .gc-inspector__progress-meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 10px; margin-bottom: 8px; }
 .gc-inspector__progress { height: 4px; border-radius: 999px; background: var(--line-strong); }
 .gc-inspector__progress > span { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
-.gc-inspector__cost { display: flex; justify-content: space-between; gap: 10px; border-top: 1px solid var(--line); padding-top: 13px; margin-top: 14px; color: var(--muted); font: 10px var(--font-mono); }
-.gc-inspector__cost strong { color: var(--accent); font-size: 12px; }
+/* Session cost header row of the Usage section (design/slack-gentle,
+   comment clq1vtao): one tight row, no divider — a value in the same list as
+   the meters, not a summary footer. */
+.gc-inspector__cost { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 0 0 12px; color: var(--muted); font: 10px var(--font-mono); }
+.gc-inspector__cost strong { color: var(--accent); font-size: 12px; font-variant-numeric: tabular-nums; }
 .gc-inspector__agent details { border: 0; padding: 0; margin: 0; }
 .gc-inspector__agent summary { display: flex; align-items: center; gap: 6px; min-height: 28px; padding: 3px 0; font: 11px/22px var(--font-mono); list-style: none; cursor: pointer; border-radius: 4px; }
 .gc-inspector__agent summary::-webkit-details-marker { display: none; }

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, within } from "@testing-library/react";
 import type { SubscriptionUsage, UsageProvider } from "@shared/bridge-types";
 import { UsageMeters } from "./UsageMeters";
 
@@ -22,6 +22,7 @@ const ANTHROPIC_PENDING: UsageProvider = { provider: "anthropic", status: "pendi
 const REPRESENTATIVE: SubscriptionUsage = { providers: [CODEX_WINDOW_OK, ANTHROPIC_PENDING] };
 
 describe("UsageMeters", () => {
+
   it("drops only the card chrome in the panel variant (T3 inspector)", () => {
     const { container } = render(<UsageMeters usage={REPRESENTATIVE} variant="panel" />);
 
@@ -30,6 +31,19 @@ describe("UsageMeters", () => {
     expect(screen.getByText("40%")).toBeInTheDocument();
     const section = container.querySelector(".gc-usage") as HTMLElement;
     expect(section).toHaveClass("gc-usage--panel");
+    // The inspector's provider line is a plain title: no initials badge, and
+    // no boxed card around its head (design/slack-gentle, comment clq1vtao).
+    expect(container.querySelector(".gc-usage__mark")).toBeNull();
+  });
+
+  it("keeps the provider and its plan on one title line in the panel variant", () => {
+    const { container } = render(<UsageMeters usage={{ providers: [CODEX_WINDOW_OK] }} variant="panel" />);
+
+    const head = container.querySelector(".gc-usage__provider-head") as HTMLElement;
+    expect(head).toHaveTextContent("openai-codex · pro");
+    // The plan sits in the same head row as the name — one line, not a block
+    // stacked under it.
+    expect(head).toContainElement(screen.getByText("pro"));
   });
 
   it("renders nothing when there is no usage data at all", () => {
@@ -48,13 +62,6 @@ describe("UsageMeters", () => {
     const meter = screen.getByRole("progressbar", { name: /week usage/i });
     expect(meter).toHaveAttribute("aria-valuenow", "40");
     expect(screen.getByText("40%")).toBeInTheDocument();
-  });
-
-  it("renders the reset instant as a secondary line when the wire supplies one", () => {
-    render(<UsageMeters usage={{ providers: [CODEX_WINDOW_OK] }} />);
-
-    const expected = `resets ${new Date(1788777491000).toLocaleString()}`;
-    expect(screen.getByText(expected)).toBeInTheDocument();
   });
 
   it("renders no reset line when resetAt is null (the wire's way of saying the provider does not report one)", () => {
@@ -178,5 +185,88 @@ describe("UsageMeters", () => {
     expect(screen.queryByText("40%")).not.toBeInTheDocument();
     expect(screen.getByText("90%")).toBeInTheDocument();
     expect(screen.getByRole("progressbar", { name: /week usage/i })).toHaveAttribute("aria-valuenow", "90");
+  });
+
+  // The reset line became a compact countdown instead of a full timestamp
+  // (design/slack-gentle, comment clq1vtao). Fake timers pin "now" so the
+  // relative text is deterministic; nothing below reads the real clock.
+  describe("reset countdown", () => {
+    // The desktop-rpc usage contract fixture's `fetchedAt`.
+    const FIXED_NOW = 1788600000000;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(FIXED_NOW);
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const HOURS_AHEAD: UsageProvider = {
+      provider: "anthropic",
+      status: "ok",
+      limits: [
+        {
+          name: "claude",
+          limitReached: false,
+          // 3 hours and 42 minutes from FIXED_NOW.
+          windows: [{ label: "5h", usedPercent: 25, windowSeconds: 18000, resetAt: FIXED_NOW + 222 * 60_000 }],
+        },
+      ],
+    };
+
+    it("shows the reset as a compact relative time, never a full timestamp", () => {
+      render(<UsageMeters usage={{ providers: [CODEX_WINDOW_OK] }} />);
+
+      // 1788777491000 is 2 days, 1 hour and 19 minutes after FIXED_NOW.
+      expect(screen.getByText("resets in 2d 1h")).toBeInTheDocument();
+      expect(screen.queryByText(`resets ${new Date(1788777491000).toLocaleString()}`)).not.toBeInTheDocument();
+    });
+
+    it("uses hours and minutes for a window that resets within a day", () => {
+      render(<UsageMeters usage={{ providers: [HOURS_AHEAD] }} />);
+
+      expect(screen.getByText("resets in 3h 42m")).toBeInTheDocument();
+    });
+
+    it("says the window resets now instead of counting backwards once the instant has passed", () => {
+      const elapsed: UsageProvider = {
+        provider: "anthropic",
+        status: "ok",
+        limits: [
+          {
+            name: "claude",
+            limitReached: false,
+            windows: [{ label: "5h", usedPercent: 25, windowSeconds: 18000, resetAt: FIXED_NOW - 60_000 }],
+          },
+        ],
+      };
+
+      render(<UsageMeters usage={{ providers: [elapsed] }} />);
+
+      expect(screen.getByText("resets now")).toBeInTheDocument();
+    });
+
+    it("keeps the countdown current while the panel stays open", () => {
+      render(<UsageMeters usage={{ providers: [HOURS_AHEAD] }} />);
+      expect(screen.getByText("resets in 3h 42m")).toBeInTheDocument();
+
+      act(() => {
+        // Vitest's fake timers advance the mocked system clock together with
+        // the interval queue, so one advance covers both.
+        vi.advanceTimersByTime(180_000);
+      });
+
+      expect(screen.getByText("resets in 3h 39m")).toBeInTheDocument();
+    });
+
+    it("folds the countdown into the meter row in the inspector and keeps the card's second line", () => {
+      const inspector = render(<UsageMeters usage={{ providers: [HOURS_AHEAD] }} variant="panel" />);
+      expect(inspector.container.querySelector(".gc-usage__window-row .gc-usage__reset")).not.toBeNull();
+
+      const card = render(<UsageMeters usage={{ providers: [HOURS_AHEAD] }} />);
+      expect(card.container.querySelector(".gc-usage__window-row .gc-usage__reset")).toBeNull();
+    });
   });
 });
