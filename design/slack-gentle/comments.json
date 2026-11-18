@@ -537,6 +537,42 @@
       "sentAt": "2026-11-17T19:09:25.323Z",
       "resolvedAt": "2026-11-17T19:10:43.091Z",
       "resolution": "Expanded the example activity to every reported state (read ≡, edit ✎, write +, search ⌕/⌖, list ☷, bash $, delegation →◎↩⨯✉↻☰, rdd 🌹) plus a full vocabulary note."
+    },
+    {
+      "id": "clq1vtao",
+      "file": "01-workspace.html",
+      "selector": "#session-usage > div:nth-of-type(2)",
+      "excerpt": "OA OpenAI ChatGPT Pro · subscription 5h 78% week 8% cost $0.24 Provider and quota windows are examples, not live account data.",
+      "comment": "Haz esta sección más límpia y minimalista. No ues una etiqueta tan grande para la sub, suprime el cuadro y el icono de logo y que \"OpenAI - ChatGPT Pro\" sea como un título de sección.\nLas barras de consumo de abajo estan bien pero reduce márgenes y que todo quede más pegado y que la info sea (5h + barra de consumo + % + resets in h mm) o (week + barra de consumo + % + resets in d h) en lugar de un timestamp completo como se visualiza ahora.\nEl session cost pasalo como primer elemento en lugar de ponerlo en el pie",
+      "createdAt": "2026-11-18T13:18:49.466Z",
+      "status": "resolved",
+      "sentAt": "2026-11-18T13:18:49.482Z",
+      "resolvedAt": "2026-11-18T13:19:32.866Z",
+      "resolution": "Removed the provider card and OA badge, made \"OpenAI · ChatGPT Pro\" a section title, moved session cost to the top, tightened spacing and swapped absolute reset timestamps for \"resets in 3h 42m\" / \"resets in 5d 6h\"."
+    },
+    {
+      "id": "ne6d1j9f",
+      "file": "01-workspace.html",
+      "selector": "#session-usage > div:nth-of-type(2) > p:nth-of-type(1)",
+      "excerpt": "OPENAI · CHATGPT PRO",
+      "comment": "Esto que no sea capitalized por defecto, me gustaba más la letra con la que se mostraba antes",
+      "createdAt": "2026-11-18T13:21:11.125Z",
+      "status": "resolved",
+      "sentAt": "2026-11-18T13:21:11.140Z",
+      "resolvedAt": "2026-11-18T13:21:18.384Z",
+      "resolution": "Dropped the uppercase treatment and restored the previous label type: 12px, weight 500, regular sentence case (\"OpenAI · ChatGPT Pro\")."
+    },
+    {
+      "id": "2u2jhow6",
+      "file": "01-workspace.html",
+      "selector": "#chat-panel > div:nth-of-type(1) > header",
+      "excerpt": "DESKTOP · You lead. Gentle helps.",
+      "comment": "centrado, y no pegado al margen izquierdo",
+      "createdAt": "2026-11-18T13:21:52.369Z",
+      "status": "resolved",
+      "sentAt": "2026-11-18T13:21:52.386Z",
+      "resolvedAt": "2026-11-18T13:22:31.057Z",
+      "resolution": "Centered the welcome header: wordmark and the \"DESKTOP · You lead. Gentle helps.\" line now stack centered instead of sitting against the left margin; removed the 14px left offset and updated the narrow-width rule."
     }
   ]
 }

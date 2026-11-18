@@ -5,11 +5,11 @@
     "01-workspace.html": {
       "status": "implemented",
       "queued": false,
-      "sentAt": "2026-11-15T18:28:20.424Z",
-      "startedAt": "2026-11-15T18:36:25.412Z",
-      "implementedAt": "2026-11-15T19:15:01.861Z",
-      "note": "Segunda ronda aplicada: sidebar leída como workspaces, footer del diseño con identidad y contexto, controles de ventana reales (ventana sin marco), búsqueda en la barra superior, herramientas del compositor y los dos diálogos. 708 tests + typecheck + build en verde.",
-      "previewUrl": "http://127.0.0.1:5173/"
+      "sentAt": "2026-11-18T13:23:17.562Z",
+      "startedAt": "2026-11-18T13:29:47.175Z",
+      "implementedAt": "2026-11-18T13:38:09.119Z",
+      "note": "Usage section: cost row first, plain one-line provider title (no badge, no card), one-line windows with a live relative reset countdown. Welcome hero centered. Tests and typecheck green; verified in the running preview.",
+      "previewUrl": "http://localhost:5199/"
     }
   }
 }
