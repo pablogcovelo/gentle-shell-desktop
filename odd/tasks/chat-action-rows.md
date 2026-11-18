@@ -60,6 +60,7 @@ untouched.
 | T3 | S1, S2 | Render parts in order (`MessageBubble`, `MessageThread`); delete the last-assistant and trailing-group fallbacks | done — `04ce47e` |
 | T4 | S3 | Category colours: `data-category` → glyph colour rules in `ActionRows.css` through the theme tokens, no undefined `--gc-*` fallbacks (`--blue`, `--green` and `--champagne` already existed in `tokens.css`) | done — `04ce47e` |
 | T5 | S4 | `mem_*` → `memory` category (renderer-side fallback, glyph `🧠`, heading `Engram`, accent colour) | done — `04ce47e` |
+| T6 | S1, S2, S5 | Review corrections: keep the message of a tool-only turn, and let the wire's final text win inside a tool-bearing turn | done — `3c2da02` |
 
 Commits: two work units, `d99b999` (T1+T2, the model) and `04ce47e` (T3+T4+T5, rendering and
 colour), each with its tests. Both sit on `develop`; the branch is far past the ~400-line slice
@@ -101,3 +102,24 @@ come from the tokens (`#a9c7ee` read/search/delegation, `#d2cbd0` list, `#e0c27a
 typecheck 0. Not carried over into the preview fixture: `mockBridge` still pushes no `parts`,
 so the browser preview shows its two demo rows in the no-turn region; making the fixture
 interleave would break the mock's "fresh host has no messages" tests, so it stays as is.
+
+**L7** (review, lineage `review-cee8e3f4903bfae2`): the native review ran risk, readability and
+reliability plus one refuter and returned `correction_required` with two CRITICAL reliability
+findings:
+- `R3-001` — a tool-only turn was still dropped on `message_end`, so its rows had no part and
+  fell into the no-turn region at the end of the thread: the very list S2 removed.
+- `R3-002` — a tool-bearing turn kept its streamed text even when the wire's final message
+  disagreed, so the live view and a history replay could show different words (S5).
+Both are fixed in `3c2da02` (T6): the message of a tool-only turn is kept, and disagreeing text
+collapses into one part carrying the wire's final text, on the side of the rows where the
+streamed text started. Red first: 2 failures; green 120/120 focused, 945/945 suite, typecheck 0.
+
+**L8** (blocked, needs a human): submitting the provider-issued correction plan
+(`review.capture-correction-plan`, request hash `sha256:43b537e5…`, revision
+`sha256:d2cf8176…`) is rejected by the Pi facade with
+`capture-binding-rejected: collectBinding is missing or stale for current STATUS`, although the
+binding is copied verbatim from bound STATUS, tried as an object and serialized, both with the
+correction committed and with the frozen target restored. STATUS keeps re-offering the same slot,
+so the correction loop cannot advance from this session. Options: resolve it natively with
+`gentle-ai`, or disable receipt-driven development for this clone
+(`gentle-ai review mode disable --scope clone`).
