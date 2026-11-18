@@ -17,6 +17,18 @@
 .gc-chat-list-item--selected { background: var(--raised); border-color: var(--line-strong); color: var(--accent); }
 .gc-chat-list-item__glyph { flex-shrink: 0; width: 18px; height: 18px; margin-top: 3px; color: var(--muted); }
 .gc-chat-list-item--selected .gc-chat-list-item__glyph { color: var(--accent); }
-.gc-chat-list-item__body { min-width: 0; }
-.gc-chat-list-item__title { font-weight: 500; font-size: 13px; overflow-wrap: anywhere; }
+.gc-chat-list-item__body { display: flex; flex-direction: column; min-width: 0; }
+/* The row is two stacked lines — directory name, then branch — and neither
+line ever wraps: a long name or branch is clipped with an ellipsis instead of
+pushing the card onto several lines. */
+.gc-chat-list-item__title { font-weight: 500; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gc-chat-list-item__branch {
+  display: block;
+  margin-top: 4px;
+  font: 11px/1.55 var(--font-mono);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .gc-chat-list-item:focus-visible { outline: 2px solid var(--accent-active); outline-offset: -2px; }
