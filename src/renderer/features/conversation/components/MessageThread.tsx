@@ -73,8 +73,17 @@ export function MessageThread({ messages, dialogs, onAnswerDialog, welcomeKey, t
   // of `messages` can reintroduce the same empty bubble. A still-streaming
   // empty assistant message stays visible as the typing placeholder; user
   // messages are never filtered.
+  // A text-less assistant turn that ran tools is KEPT: its rows are the only
+  // thing it has to show, and dropping it here sent every one of them to the
+  // no-turn region at the end of the thread — the trailing list this feature
+  // removes (S2). The reducer and the history path both keep such a turn for
+  // exactly this reason.
   const visibleMessages = messages.filter(
-    (message) => message.role !== MESSAGE_ROLE.ASSISTANT || message.streaming === true || message.text.trim().length > 0,
+    (message) =>
+      message.role !== MESSAGE_ROLE.ASSISTANT ||
+      message.streaming === true ||
+      message.text.trim().length > 0 ||
+      (message.parts ?? []).some((part) => part.kind === "tool"),
   );
   const isEmpty = visibleMessages.length === 0 && dialogs.length === 0;
 

@@ -63,6 +63,7 @@ untouched.
 | T6 | S1, S2, S5 | Review corrections: keep the message of a tool-only turn, and let the wire's final text win inside a tool-bearing turn | done — `3c2da02` |
 | T7 | S5 | Review correction 2: history recovery keeps a tool-bearing text-less turn, so its rows replay in place (thinking-only turns still skipped) | done — `daa790d` |
 | T8 | S2, S3, S5 | Review correction 3: interleaved rows keep their place when the wire's text disagrees with the stream, and the relative countdown stays out of the chat-stack card | done — `59fd330` |
+| T9 | S2 | Reported from real use: `MessageThread` dropped text-less assistant turns before computing the claim set, so a tool-only turn's rows fell into the no-turn region again | done (this commit) |
 
 Commits: two work units, `d99b999` (T1+T2, the model) and `04ce47e` (T3+T4+T5, rendering and
 colour), each with its tests. Both sit on `develop`; the branch is far past the ~400-line slice
@@ -169,3 +170,14 @@ Recommended exits, in order: `gentle-ai review mode disable --scope clone` (the 
 and green; the review gate is what cannot advance), or resolve the authority natively with
 `gentle-ai`. Three lineages sit in `correction_required`
 (`review-cee8e3f4903bfae2`, `review-8868ca70509f26b0`, `review-ce36b0a316af656d`).
+
+**L13** (owner report, real session): «Las acciones de bash, read, etc... Siguen apareciendo como una
+lista siempre en el pié del chat, no son comentarios individuales en orden de llegada». Diagnosis
+against the running `electron-vite dev` app (which serves `src/renderer`, so not a stale build): the
+reducer and the history path both keep a text-less tool-bearing turn *with its parts*, but
+`MessageThread`'s empty-bubble filter (`role === assistant && streaming !== true && text.trim() === ""`)
+removed it before the claim set was computed, so every row of such a turn was unclaimed by
+construction and landed in `gc-thread__orphan-actions`. Fixed by keeping a message that carries a
+tool part. Red first: 1 failure; green 172/172 focused, 949/949 suite, typecheck 0. Boundary left as
+is: if the child emits `tool_execution_*` after `message_end` for a text-less turn, the reducer has
+no live part for it and the row is only re-bound when the chat is reopened from history.

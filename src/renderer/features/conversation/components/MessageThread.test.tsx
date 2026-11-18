@@ -225,6 +225,25 @@ describe("MessageThread", () => {
     expect(screen.queryByTestId("gc-orphan-actions")).not.toBeInTheDocument();
   });
 
+  it("keeps a text-less tool turn's rows in that turn, never at the end of the thread (S2)", () => {
+    const messages: ChatMessage[] = [
+      { id: "m1", role: MESSAGE_ROLE.USER, text: "run it" },
+      // A turn that only ran a tool: no text, one row. The reducer and the
+      // history path both keep it; the thread must not drop it here.
+      { id: "m2", role: MESSAGE_ROLE.ASSISTANT, text: "", parts: [{ kind: "tool", toolCallId: "c1" }] },
+      { id: "m3", role: MESSAGE_ROLE.ASSISTANT, text: "After.", parts: [{ kind: "text", text: "After." }] },
+    ];
+    const toolCalls: ToolCallView[] = [{ id: "c1", toolName: "bash", status: "done", messageId: "m2" }];
+
+    render(<MessageThread messages={messages} dialogs={[]} onAnswerDialog={vi.fn()} toolCalls={toolCalls} vocabulary={READ_VOCABULARY} />);
+
+    // No block of rows at the end: the row lives in its own turn.
+    expect(screen.queryByTestId("gc-orphan-actions")).not.toBeInTheDocument();
+    const rows = screen.getAllByTestId("gc-action-row");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveTextContent("bash");
+  });
+
   it("renders calls that belong to no turn as their own rows in a separate region after the thread (S2)", () => {
     const messages: ChatMessage[] = [
       { id: "m1", role: MESSAGE_ROLE.USER, text: "run it" },
