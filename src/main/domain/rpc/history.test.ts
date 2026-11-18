@@ -45,7 +45,15 @@ describe("historyToMessages", () => {
     ];
 
     expect(historyToMessages(messages)).toEqual([
-      { id: "msg-0", role: "assistant", text: "The answer is 4.", streaming: false },
+      {
+        id: "msg-0",
+        role: "assistant",
+        text: "The answer is 4.",
+        streaming: false,
+        // The interleaved toolCall block recovers the row's position: text
+        // → row → text, exactly as the live stream segmented it.
+        parts: [{ kind: "text", text: "The answer is " }, { kind: "tool", toolCallId: "call_1" }, { kind: "text", text: "4." }],
+      },
     ]);
   });
 
@@ -466,7 +474,134 @@ describe("historyToToolCalls (desktop-pending-work T7, S7)", () => {
 
     expect(historyToMessages(messages)).toEqual([
       { id: "msg-0", role: "user", text: "run ls" },
-      { id: "msg-1", role: MESSAGE_ROLE.ASSISTANT, text: "done", streaming: false },
+      {
+        id: "msg-1",
+        role: MESSAGE_ROLE.ASSISTANT,
+        text: "done",
+        streaming: false,
+        parts: [{ kind: "tool", toolCallId: "call_1" }, { kind: "text", text: "done" }],
+      },
+    ]);
+  });
+});
+
+// chat-action-rows T2 (S5): a reopened chat must show the same rows in the
+// same positions as the live stream did. The history walk below recovers
+// the parts segmentation the live reducer produced for the same turn — no
+// text is duplicated, reordered or invented.
+describe("historyToMessages: ordered assistant parts (chat-action-rows T2, S5)", () => {
+  it("an interleaved turn emits the same parts segmentation the live stream would produce: text → row → text", () => {
+    const messages: RpcMessage[] = [
+      { role: "user", content: "run ls", timestamp: 0 },
+      {
+        role: MESSAGE_ROLE.ASSISTANT,
+        content: [
+          { type: "text", text: "Running it…" },
+          { type: "toolCall", id: "call_1", name: "bash", arguments: { command: "ls" } },
+          { type: "text", text: "Done." },
+        ],
+        timestamp: 0,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call_1",
+        toolName: "bash",
+        content: [{ type: "text", text: "file.txt\n" }],
+        isError: false,
+        timestamp: 0,
+      },
+    ];
+
+    expect(historyToMessages(messages)).toEqual([
+      { id: "msg-0", role: "user", text: "run ls" },
+      {
+        id: "msg-1",
+        role: "assistant",
+        text: "Running it…Done.",
+        streaming: false,
+        parts: [{ kind: "text", text: "Running it…" }, { kind: "tool", toolCallId: "call_1" }, { kind: "text", text: "Done." }],
+      },
+    ]);
+  });
+
+  it("a toolCall block before the text lands its part first, matching the live prompt-turn order", () => {
+    const messages: RpcMessage[] = [
+      {
+        role: MESSAGE_ROLE.ASSISTANT,
+        content: [{ type: "toolCall", id: "call_1", name: "bash", arguments: { command: "cat README.md" } }, { type: "text", text: "The README describes Gentle Shell." }],
+        timestamp: 0,
+      },
+    ];
+
+    expect(historyToMessages(messages)).toEqual([
+      {
+        id: "msg-0",
+        role: "assistant",
+        text: "The README describes Gentle Shell.",
+        streaming: false,
+        parts: [{ kind: "tool", toolCallId: "call_1" }, { kind: "text", text: "The README describes Gentle Shell." }],
+      },
+    ]);
+  });
+
+  it("consecutive text blocks merge into one text part, even across thinking blocks, like streamed deltas do", () => {
+    const messages: RpcMessage[] = [
+      {
+        role: MESSAGE_ROLE.ASSISTANT,
+        content: [
+          { type: "text", text: "a" },
+          { type: "thinking", thinking: "hmm" },
+          { type: "text", text: "b" },
+          { type: "toolCall", id: "call_1", name: "read", arguments: {} },
+          { type: "text", text: "c" },
+        ],
+        timestamp: 0,
+      },
+    ];
+
+    expect(historyToMessages(messages)).toEqual([
+      {
+        id: "msg-0",
+        role: "assistant",
+        text: "abc",
+        streaming: false,
+        parts: [{ kind: "text", text: "ab" }, { kind: "tool", toolCallId: "call_1" }, { kind: "text", text: "c" }],
+      },
+    ]);
+  });
+
+  it("a text-only turn omits parts: it renders identically from text, and existing consumers keep passing", () => {
+    const messages: RpcMessage[] = [{ role: MESSAGE_ROLE.ASSISTANT, content: [{ type: "text", text: "hello" }], timestamp: 0 }];
+
+    const recovered = historyToMessages(messages);
+    expect(recovered).toEqual([{ id: "msg-0", role: "assistant", text: "hello", streaming: false }]);
+    expect(recovered[0]?.parts).toBeUndefined();
+  });
+
+  it("malformed and duplicate toolCall blocks contribute no part, like the live path's rows", () => {
+    const messages: RpcMessage[] = [
+      {
+        role: MESSAGE_ROLE.ASSISTANT,
+        content: [
+          { type: "toolCall", id: "call_1", name: "bash", arguments: {} },
+          // A duplicate id opened no second row live — no second part.
+          { type: "toolCall", id: "call_1", name: "bash", arguments: {} },
+          // Missing id: no row live, no part here.
+          { type: "toolCall", name: "bash", arguments: {} },
+          { type: "text", text: "after" },
+        ],
+        timestamp: 0,
+      },
+    ];
+
+    expect(historyToMessages(messages)).toEqual([
+      {
+        id: "msg-0",
+        role: "assistant",
+        text: "after",
+        streaming: false,
+        parts: [{ kind: "tool", toolCallId: "call_1" }, { kind: "text", text: "after" }],
+      },
     ]);
   });
 });

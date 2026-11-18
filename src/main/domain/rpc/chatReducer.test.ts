@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { ODD_PHASE } from "@shared/bridge-types";
+import { MESSAGE_ROLE, ODD_PHASE } from "@shared/bridge-types";
 import { decodeLine } from "./codec";
 import { INITIAL_CHAT_STATE, MAX_NOTIFICATIONS, reduceChat, type ChatState } from "./chatReducer";
 // The bounding constants moved to toolCalls.ts (T7: shared with the history
@@ -53,7 +53,7 @@ describe("reduceChat: assistant message streaming", () => {
       type: "message_start",
       message: { role: "assistant", content: [] },
     });
-    expect(state.messages).toEqual([{ id: "msg-0", role: "assistant", text: "", streaming: true }]);
+    expect(state.messages).toEqual([{ id: "msg-0", role: "assistant", text: "", streaming: true, parts: [] }]);
   });
 
   it("message_start for a non-assistant message is a no-op", () => {
@@ -102,7 +102,15 @@ describe("reduceChat: assistant message streaming", () => {
       type: "message_end",
       message: { role: "assistant", content: [{ type: "text", text: "Hello world" }] },
     });
-    expect(state.messages).toEqual([{ id: "msg-0", role: "assistant", text: "Hello world", streaming: false }]);
+    expect(state.messages).toEqual([
+      {
+        id: "msg-0",
+        role: "assistant",
+        text: "Hello world",
+        streaming: false,
+        parts: [{ kind: "text", text: "Hello world" }],
+      },
+    ]);
   });
 
   it("message_end without text content blocks keeps the accumulated delta text", () => {
@@ -128,7 +136,7 @@ describe("reduceChat: assistant message streaming", () => {
       type: "message_update",
       assistantMessageEvent: { type: "toolcall_start", contentIndex: 0, id: "call_1", toolName: "bash" },
     });
-    expect(state.messages).toEqual([{ id: "msg-0", role: "assistant", text: "", streaming: true }]);
+    expect(state.messages).toEqual([{ id: "msg-0", role: "assistant", text: "", streaming: true, parts: [] }]);
   });
 
   it("message_end drops an assistant message that finalizes with empty trimmed text (tool-only or thinking-only content)", () => {
@@ -206,7 +214,7 @@ describe("reduceChat: thinking, toolcall, tool_execution never touch messages", 
     expect(after.activity).toBe(before.activity + 1);
   });
 
-  it.each(["tool_execution_start", "tool_execution_update", "tool_execution_end"] as const)(
+  it.each(["tool_execution_update", "tool_execution_end"] as const)(
     "%s bumps activity but leaves messages untouched",
     (type) => {
       const before = { ...INITIAL_CHAT_STATE, messages: [{ id: "msg-0", role: "assistant" as const, text: "" }] };
@@ -219,6 +227,18 @@ describe("reduceChat: thinking, toolcall, tool_execution never touch messages", 
       expect(after.activity).toBe(before.activity + 1);
     },
   );
+
+  // chat-action-rows T1 (S1/S2): unlike update/end, a start DOES touch the
+  // message it binds to — it records the row's position marker there. The
+  // row itself, and every other message, stay untouched.
+  it("tool_execution_start bumps activity and records the row's part on the message it binds to", () => {
+    const before = { ...INITIAL_CHAT_STATE, messages: [{ id: "msg-0", role: "assistant" as const, text: "" }] };
+    const after = reduceChat(before, { type: "tool_execution_start", toolCallId: "call_1", toolName: "bash" });
+    expect(after.messages).toEqual([
+      { id: "msg-0", role: "assistant", text: "", parts: [{ kind: "tool", toolCallId: "call_1" }] },
+    ]);
+    expect(after.activity).toBe(before.activity + 1);
+  });
 });
 
 describe("reduceChat: extension UI dialogs", () => {
@@ -495,7 +515,15 @@ describe("reduceChat: fixture replays", () => {
   it("a prompt turn with thinking, a tool call and streamed text ends with only the final assistant text visible", () => {
     const state = replay(readFixtureEvents("prompt-turn.jsonl"));
     expect(state.messages).toEqual([
-      { id: "msg-0", role: "assistant", text: "The README describes Gentle Shell.", streaming: false },
+      {
+        id: "msg-0",
+        role: "assistant",
+        text: "The README describes Gentle Shell.",
+        streaming: false,
+        // The live stream binds the tool execution to this message, so its
+        // part lands BEFORE the text deltas that follow it: row → text.
+        parts: [{ kind: "tool", toolCallId: "call_abc123" }, { kind: "text", text: "The README describes Gentle Shell." }],
+      },
     ]);
     expect(state.working).toBe(false);
     expect(state.pendingDialogs).toEqual([]);
@@ -1049,5 +1077,160 @@ describe("reduceChat: session_state_changed — the ODD phase's only data path (
     const state = reduceChat(INITIAL_CHAT_STATE, { type: "session_state_changed", oddPhase: "implementing" });
 
     expect(reduceChat(state, { type: "session_state_changed", oddPhase: "implementing" })).toBe(state);
+  });
+});
+
+describe("ordered assistant parts (chat-action-rows T1)", () => {
+  function openAssistant(): ChatState {
+    return reduceChat(INITIAL_CHAT_STATE, { type: "message_start", message: { role: "assistant", content: [] } });
+  }
+  function textDelta(state: ChatState, delta: string): ChatState {
+    return reduceChat(state, { type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta } });
+  }
+  function toolStart(state: ChatState, toolCallId: string): ChatState {
+    return reduceChat(state, { type: "tool_execution_start", toolCallId, toolName: "read", args: {} });
+  }
+  function toolEnd(state: ChatState, toolCallId: string, result: unknown): ChatState {
+    return reduceChat(state, { type: "tool_execution_end", toolCallId, toolName: "read", result, isError: false });
+  }
+
+  it("message_start opens the assistant message with an empty parts array (S1/S2)", () => {
+    expect(openAssistant().messages[0]?.parts).toEqual([]);
+  });
+
+  it("text_delta appends to the trailing text part while text keeps accumulating exactly as today (S1)", () => {
+    let state = openAssistant();
+    state = textDelta(state, "Hel");
+    expect(state.messages[0]?.parts).toEqual([{ kind: "text", text: "Hel" }]);
+    expect(state.messages[0]?.text).toBe("Hel");
+
+    state = textDelta(state, "lo");
+    expect(state.messages[0]?.parts).toEqual([{ kind: "text", text: "Hello" }]);
+    expect(state.messages[0]?.text).toBe("Hello");
+  });
+
+  it("a text_delta after a tool part opens a NEW text part, so text → row → text is expressible (S1/S2)", () => {
+    let state = openAssistant();
+    state = textDelta(state, "before");
+    state = toolStart(state, "c1");
+    state = textDelta(state, "after");
+
+    expect(state.messages[0]?.parts).toEqual([
+      { kind: "text", text: "before" },
+      { kind: "tool", toolCallId: "c1" },
+      { kind: "text", text: "after" },
+    ]);
+    // The plain text field keeps accumulating across the row, unchanged.
+    expect(state.messages[0]?.text).toBe("beforeafter");
+  });
+
+  it("tool_execution_start appends a tool part to the message it binds to, at arrival position (S1/S2)", () => {
+    let state = openAssistant();
+    state = textDelta(state, "a");
+    state = toolStart(state, "c1");
+    state = textDelta(state, "b");
+    state = toolStart(state, "c2");
+
+    expect(state.messages[0]?.parts).toEqual([
+      { kind: "text", text: "a" },
+      { kind: "tool", toolCallId: "c1" },
+      { kind: "text", text: "b" },
+      { kind: "tool", toolCallId: "c2" },
+    ]);
+    // The rows themselves keep their current shape and order.
+    expect(state.toolCalls?.map((call) => call.id)).toEqual(["c1", "c2"]);
+    expect(state.toolCalls?.map((call) => call.messageId)).toEqual(["msg-0", "msg-0"]);
+  });
+
+  it("a tool_execution_start bound to no assistant message records no part (S2)", () => {
+    const orphan = toolStart(INITIAL_CHAT_STATE, "c1");
+    expect(orphan.messages).toEqual([]);
+    expect(orphan.toolCalls?.[0]).toMatchObject({ id: "c1", status: "running" });
+
+    // Same when the last message is a user message: a part binds only to
+    // the assistant message the row's messageId binds to.
+    const withUser: ChatState = { ...INITIAL_CHAT_STATE, messages: [{ id: "msg-0", role: MESSAGE_ROLE.USER, text: "hi" }] };
+    const state = toolStart(withUser, "c1");
+    expect(state.messages[0]?.parts).toBeUndefined();
+  });
+
+  it("tool_execution_end replaces its row in place by id — it neither moves the row nor appends a part (S2)", () => {
+    let state = openAssistant();
+    state = textDelta(state, "a");
+    state = toolStart(state, "c1");
+    state = textDelta(state, "b");
+    state = toolStart(state, "c2");
+    state = toolEnd(state, "c1", { lines: 1 });
+
+    // The parts array is untouched by the end frame: the row stays at the
+    // position where its start landed.
+    expect(state.messages[0]?.parts).toEqual([
+      { kind: "text", text: "a" },
+      { kind: "tool", toolCallId: "c1" },
+      { kind: "text", text: "b" },
+      { kind: "tool", toolCallId: "c2" },
+    ]);
+    // And the replaced row keeps its array position instead of moving to
+    // the end of toolCalls.
+    expect(state.toolCalls?.map((call) => call.id)).toEqual(["c1", "c2"]);
+    expect(state.toolCalls?.[0]).toMatchObject({ status: "done", result: { lines: 1 } });
+    expect(state.toolCalls?.[1]).toMatchObject({ status: "running" });
+  });
+
+  it("an end for a call whose start was never seen still yields its done row but appends no part (S2)", () => {
+    const state = toolEnd(INITIAL_CHAT_STATE, "c9", "match");
+
+    expect(state.toolCalls).toEqual([
+      { id: "c9", toolName: "read", args: undefined, result: "match", isError: false, status: "done" },
+    ]);
+    expect(state.messages).toEqual([]);
+  });
+
+  it("message_end with no tool part replaces the parts with a single text part, so the authoritative text is not duplicated (S1)", () => {
+    let state = openAssistant();
+    state = textDelta(state, "Hel");
+    state = textDelta(state, "lo");
+    state = reduceChat(state, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Hello" }] } });
+
+    expect(state.messages[0]?.parts).toEqual([{ kind: "text", text: "Hello" }]);
+    expect(state.messages[0]?.text).toBe("Hello");
+  });
+
+  it("message_end with tool parts keeps the streamed parts and does not append the authoritative text again (S1)", () => {
+    let state = openAssistant();
+    state = textDelta(state, "before");
+    state = toolStart(state, "c1");
+    state = textDelta(state, "after");
+    state = reduceChat(state, {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "c1", name: "read", arguments: {} }, { type: "text", text: "beforeafter" }],
+      },
+    });
+
+    // The streamed segmentation survives and the final text is NOT
+    // appended again: every character appears in the parts exactly once.
+    expect(state.messages[0]?.parts).toEqual([
+      { kind: "text", text: "before" },
+      { kind: "tool", toolCallId: "c1" },
+      { kind: "text", text: "after" },
+    ]);
+    expect(state.messages[0]?.text).toBe("beforeafter");
+  });
+
+  it("message_end with tool parts but no streamed text adds the authoritative text exactly once (S1)", () => {
+    let state = openAssistant();
+    state = toolStart(state, "c1");
+    state = reduceChat(state, {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "c1", name: "read", arguments: {} }, { type: "text", text: "final text" }],
+      },
+    });
+
+    expect(state.messages[0]?.parts).toEqual([{ kind: "tool", toolCallId: "c1" }, { kind: "text", text: "final text" }]);
+    expect(state.messages[0]?.text).toBe("final text");
   });
 });

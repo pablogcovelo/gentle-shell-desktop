@@ -1,4 +1,4 @@
-import { MESSAGE_ROLE, type ChatMessage, type ToolCallView } from "@shared/bridge-types";
+import { MESSAGE_ROLE, type AssistantPart, type ChatMessage, type ToolCallView } from "@shared/bridge-types";
 import { MAX_TOOL_CALLS, boundedPayload, type ToolPayloadValue } from "./toolCalls";
 import type { RpcMessage } from "./types";
 
@@ -46,9 +46,63 @@ function toChatMessage(message: RpcMessage, index: number): ChatMessage | undefi
     // rendering an empty bubble. `result.length` in historyToMessages still
     // assigns the next id, so this never leaves a gap.
     if (text.trim().length === 0) return undefined;
-    return { id: `msg-${index}`, role: MESSAGE_ROLE.ASSISTANT, text, streaming: false };
+    const parts = extractAssistantParts(message);
+    return {
+      id: `msg-${index}`,
+      role: MESSAGE_ROLE.ASSISTANT,
+      text,
+      streaming: false,
+      ...(parts ? { parts } : {}),
+    };
   }
   return undefined;
+}
+
+/**
+ * Recovers the ordered parts segmentation the live stream produced for
+ * this turn (chat-action-rows T2, S5): the live reducer absorbs
+ * consecutive text deltas into ONE trailing text part and opens a new one
+ * only after a tool row lands, so the same walk here keeps a text buffer
+ * across every non-toolCall block and flushes it exactly when a tool row
+ * lands. `thinking` blocks contribute no part live (activity only), so
+ * they keep the buffer running — text on both sides of a thinking block is
+ * ONE part, exactly like the deltas that produced it.
+ *
+ * Fail closed like the live path: a toolCall block without a string id
+ * opened no row live (no `tool_execution_start` for it), so it gets no
+ * part; a duplicate id opened no second row, so it gets no second part.
+ * No text is ever invented: a turn whose text survives the empty-bubble
+ * rule always yields at least one text part.
+ *
+ * Returns `undefined` when the turn interleaved NO row at all: a text-only
+ * turn renders identically from `ChatMessage.text` alone (a single text
+ * part), so `parts` stays absent and the text-only message shape every
+ * existing consumer and test relies on is kept — the renderer's fallback.
+ */
+function extractAssistantParts(message: RpcMessage): AssistantPart[] | undefined {
+  const content = message.content;
+  if (!Array.isArray(content)) return undefined;
+
+  const parts: AssistantPart[] = [];
+  let textBuffer = "";
+  for (const block of content) {
+    if (isTextBlock(block)) {
+      textBuffer += block.text;
+      continue;
+    }
+    if (!isRecord(block) || block.type !== "toolCall") continue;
+    const id = block.id;
+    if (typeof id !== "string") continue;
+    if (parts.some((part) => part.kind === "tool" && part.toolCallId === id)) continue;
+    if (textBuffer.length > 0) {
+      parts.push({ kind: "text", text: textBuffer });
+      textBuffer = "";
+    }
+    parts.push({ kind: "tool", toolCallId: id });
+  }
+  if (!parts.some((part) => part.kind === "tool")) return undefined;
+  if (textBuffer.length > 0) parts.push({ kind: "text", text: textBuffer });
+  return parts;
 }
 
 /**

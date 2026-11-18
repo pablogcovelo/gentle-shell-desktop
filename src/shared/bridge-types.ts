@@ -37,6 +37,21 @@ export const MESSAGE_ROLE = {
 
 export type MessageRole = (typeof MESSAGE_ROLE)[keyof typeof MESSAGE_ROLE];
 
+/**
+ * One ordered entry of an assistant turn's rendered content
+ * (chat-action-rows T1, S1/S2). A `text` part carries a slice of the
+ * turn's text, and a `tool` part is a pure position marker for one action
+ * row: it carries only the `toolCallId` that keys into
+ * `ChatState.toolCalls` — never a payload, never text.
+ *
+ * Invariant of a turn's `ChatMessage.parts`: the text parts CONCATENATE,
+ * in order, to the same text `ChatMessage.text` holds, and the tool parts
+ * mark, in arrival order, where each row belongs — so the parts array
+ * reads text → row → text exactly as the turn happened, and after the
+ * turn finalizes every text character appears in it exactly once.
+ */
+export type AssistantPart = { readonly kind: "text"; readonly text: string } | { readonly kind: "tool"; readonly toolCallId: string };
+
 export interface ChatMessage {
   readonly id: string;
   readonly role: MessageRole;
@@ -48,6 +63,16 @@ export interface ChatMessage {
    * compiling; the chat reducer added in T2 always sets it explicitly.
    */
   readonly streaming?: boolean;
+  /**
+   * The turn's ordered parts (chat-action-rows T1, S1/S2): text parts
+   * concatenate, in order, to `text`, and each tool part marks, in
+   * arrival order, where that action's row belongs — the renderer walks
+   * these INSTEAD of collecting every row into one trailing list.
+   * Optional: a turn with no interleaved row renders identically from
+   * `text` alone, so a message that never interleaves a row (and a
+   * history-recovered text-only turn) may omit it.
+   */
+  readonly parts?: readonly AssistantPart[];
 }
 
 export const DIALOG_METHOD = {

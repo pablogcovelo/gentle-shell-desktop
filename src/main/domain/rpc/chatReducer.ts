@@ -3,6 +3,7 @@ import {
   MESSAGE_ROLE,
   NOTIFICATION_SEVERITY,
   ODD_PHASE,
+  type AssistantPart,
   type ChatMessage,
   type ChatNotification,
   type ChatState,
@@ -139,7 +140,17 @@ export function reduceChat(state: ChatState, event: RpcEvent, now?: string): Cha
           status: "running",
           ...(last && last.role === MESSAGE_ROLE.ASSISTANT ? { messageId: last.id } : {}),
         };
-        return { ...next, toolCalls: [...calls, started].slice(-MAX_TOOL_CALLS) };
+        return {
+          ...next,
+          // chat-action-rows T1 (S1/S2): the row's position marker is
+          // recorded on the bound assistant message's ordered parts, at
+          // arrival position — the same binding rule the messageId above
+          // uses, so a part exists exactly when a row is bound. A call
+          // that binds to no message records no part. A duplicate start
+          // already returned above, so it never opens a second part.
+          messages: appendToolPart(state.messages, event.toolCallId),
+          toolCalls: [...calls, started].slice(-MAX_TOOL_CALLS),
+        };
       }
       const finished: ToolCallView = {
         id: event.toolCallId,
@@ -152,10 +163,13 @@ export function reduceChat(state: ChatState, event: RpcEvent, now?: string): Cha
         // binding is carried through untouched.
         ...(existing?.messageId === undefined ? {} : { messageId: existing.messageId }),
       };
-      return {
-        ...next,
-        toolCalls: [...calls.filter((call) => call.id !== event.toolCallId), finished].slice(-MAX_TOOL_CALLS),
-      };
+      // chat-action-rows T1 (S2): the end frame replaces the row IN PLACE
+      // by id — it must not move the row to the end of the array (that
+      // would reorder the recovered thread) and must not append a part:
+      // the row's position marker was recorded once, at its start.
+      const index = calls.findIndex((call) => call.id === event.toolCallId);
+      const toolCalls = index === -1 ? [...calls, finished].slice(-MAX_TOOL_CALLS) : replaceAt(calls, index, finished);
+      return { ...next, toolCalls };
     }
     case "extension_ui_request":
       return applyExtensionUIRequest(state, event, now);
@@ -207,6 +221,10 @@ function openAssistantMessage(state: ChatState, message: RpcMessage): ChatState 
     role: MESSAGE_ROLE.ASSISTANT,
     text: "",
     streaming: true,
+    // chat-action-rows T1 (S1/S2): the turn's ordered parts start empty
+    // and grow at arrival position (text deltas, then tool parts where
+    // each execution starts).
+    parts: [],
   };
   return { ...state, messages: [...state.messages, chatMessage] };
 }
@@ -229,8 +247,40 @@ function appendToLastAssistantMessage(state: ChatState, delta: string): ChatStat
   const last = state.messages[lastIndex];
   if (!last || last.role !== MESSAGE_ROLE.ASSISTANT) return state;
 
-  const updated: ChatMessage = { ...last, text: last.text + delta };
+  const updated: ChatMessage = {
+    ...last,
+    // chat-action-rows T1 (S1): the delta lands in the trailing text part
+    // (opening one when the last part is a tool part), while `text` keeps
+    // accumulating exactly as today — both views of the same turn.
+    text: last.text + delta,
+    parts: appendTextDelta(last.parts, delta),
+  };
   return { ...state, messages: replaceAt(state.messages, lastIndex, updated) };
+}
+
+/** Appends a streamed text delta to the ordered parts: the trailing text
+ * part absorbs it, and a NEW text part opens only when the parts are empty
+ * or end in a tool part — so the segmentation mirrors where the rows
+ * landed (text → row → text). */
+function appendTextDelta(parts: readonly AssistantPart[] | undefined, delta: string): readonly AssistantPart[] {
+  const current = parts ?? [];
+  const lastPart = current[current.length - 1];
+  if (lastPart?.kind === "text") {
+    return [...current.slice(0, -1), { kind: "text", text: lastPart.text + delta }];
+  }
+  return [...current, { kind: "text", text: delta }];
+}
+
+/** Appends one `{ kind: "tool", toolCallId }` part to the LAST message's
+ * parts when that message is the assistant turn producing the call — the
+ * exact binding condition the row's messageId uses, so a part exists
+ * exactly when a row is bound. An unbound call appends nothing. */
+function appendToolPart(messages: readonly ChatMessage[], toolCallId: string): readonly ChatMessage[] {
+  const lastIndex = messages.length - 1;
+  const last = messages[lastIndex];
+  if (!last || last.role !== MESSAGE_ROLE.ASSISTANT) return messages;
+  const updated: ChatMessage = { ...last, parts: [...(last.parts ?? []), { kind: "tool", toolCallId }] };
+  return replaceAt(messages, lastIndex, updated);
 }
 
 function closeAssistantMessage(state: ChatState, message: RpcMessage): ChatState {
@@ -261,8 +311,40 @@ function closeAssistantMessage(state: ChatState, message: RpcMessage): ChatState
     return { ...state, messages: removeLast(state.messages) };
   }
 
-  const updated: ChatMessage = { ...last, text: authoritativeText, streaming: false };
+  const updated: ChatMessage = {
+    ...last,
+    text: authoritativeText,
+    streaming: false,
+    parts: finalizeParts(last.parts, authoritativeText),
+  };
   return { ...state, messages: replaceAt(state.messages, lastIndex, updated) };
+}
+
+/** Finalizes a turn's ordered parts on message_end (chat-action-rows T1,
+ * S1) and decides which text wins:
+ *
+ * - No tool part in the turn: the parts carry only streamed text, and the
+ *   wire's final message is authoritative (rpc.md), so the streamed parts
+ *   are REPLACED with a single text part of the authoritative text —
+ *   appending would duplicate the final text next to the streamed one.
+ * - The turn HAS tool parts: keep the streamed parts as they accumulated
+ *   around the rows and do NOT append the authoritative text again — the
+ *   streamed text parts already hold every streamed character exactly
+ *   once, and re-appending the final text would repeat them. The streamed
+ *   segmentation wins over the wire's final text here because it
+ *   preserves each row's position; the authoritative text still lands in
+ *   `ChatMessage.text` for every existing consumer.
+ * - The one exception: a turn with tool parts but NO streamed text part
+ *   (its text arrived only in the final wire message) would otherwise
+ *   carry no text at all in its parts, so the authoritative text is added
+ *   there exactly once — either way every character appears once. */
+function finalizeParts(parts: readonly AssistantPart[] | undefined, authoritativeText: string): readonly AssistantPart[] {
+  const current = parts ?? [];
+  if (!current.some((part) => part.kind === "tool")) {
+    return [{ kind: "text", text: authoritativeText }];
+  }
+  if (current.some((part) => part.kind === "text")) return current;
+  return [...current, { kind: "text", text: authoritativeText }];
 }
 
 /**
