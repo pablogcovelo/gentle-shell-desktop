@@ -31,6 +31,16 @@
   color: var(--muted);
   font-size: 14px;
 }
+
+/* Rows without a turn (chat-action-rows T3, S2): calls that belong to no
+ * assistant message keep their own clearly separate region after the
+ * thread, never nested inside a bubble. */
+.gc-thread__orphan-actions {
+  max-width: 65ch;
+  margin: 16px 0 24px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
 @media (max-width: 1200px) {
   .gc-thread { padding: 24px; }
 }

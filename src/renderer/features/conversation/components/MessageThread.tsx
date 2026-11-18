@@ -11,39 +11,26 @@ import "./MessageThread.css";
 const PIN_THRESHOLD_PX = 32;
 
 /**
- * S2: split the calls into the messages that produced them. A call whose
- * message cannot be resolved — never bound, or bound to a message the thread
- * dropped — is never lost either: it rides the last assistant message, or
- * comes back as a trailing group when the thread has no assistant message.
+ * S2 (chat-action-rows T3): a row is bound to the turn position where it
+ * started — the `tool` part the turn itself recorded (chatReducer) — and
+ * never migrates: the fallbacks that attached unresolved calls to the last
+ * assistant message, or to a trailing group outside every bubble, are gone.
+ * What remains here is the complement: calls that belong to NO turn — never
+ * bound, or bound to a message the thread dropped — are rows without a
+ * turn, rendered in their own clearly separate region after the thread so
+ * nothing is silently lost.
  */
-function groupCallsByMessage(
+function callsWithoutTurn(
   visibleMessages: readonly ChatMessage[],
   toolCalls: readonly ToolCallView[] | undefined,
-): { byMessage: Map<string, ToolCallView[]>; trailing: ToolCallView[] } {
-  const byMessage = new Map<string, ToolCallView[]>();
-  const unresolved: ToolCallView[] = [];
-  const messageIds = new Set(visibleMessages.map((message) => message.id));
-
-  for (const call of toolCalls ?? []) {
-    const known = call.messageId !== undefined && messageIds.has(call.messageId);
-    if (!known) {
-      unresolved.push(call);
-      continue;
+): ToolCallView[] {
+  const claimed = new Set<string>();
+  for (const message of visibleMessages) {
+    for (const part of message.parts ?? []) {
+      if (part.kind === "tool") claimed.add(part.toolCallId);
     }
-    const group = byMessage.get(call.messageId as string);
-    if (group) group.push(call);
-    else byMessage.set(call.messageId as string, [call]);
   }
-
-  const lastAssistant = [...visibleMessages].reverse().find((message) => message.role === MESSAGE_ROLE.ASSISTANT);
-  if (lastAssistant === undefined || unresolved.length === 0) {
-    return { byMessage, trailing: unresolved };
-  }
-
-  const group = byMessage.get(lastAssistant.id);
-  if (group) group.push(...unresolved);
-  else byMessage.set(lastAssistant.id, [...unresolved]);
-  return { byMessage, trailing: [] };
+  return (toolCalls ?? []).filter((call) => !claimed.has(call.id));
 }
 
 export interface MessageThreadProps {
@@ -56,7 +43,9 @@ export interface MessageThreadProps {
    * callers that do not own a chat identity.
    */
   readonly welcomeKey?: string;
-  /** The chat's tool executions (ChatState.toolCalls), grouped per message. */
+  /** The chat's tool executions (ChatState.toolCalls): each turn renders
+   * its own `tool` parts inside its bubble; calls that belong to no turn
+   * get their own region after the thread (S2). */
   readonly toolCalls?: readonly ToolCallView[];
   /** The vocabulary the child published, for the action rows' glyphs. */
   readonly vocabulary?: ToolVocabulary;
@@ -89,10 +78,10 @@ export function MessageThread({ messages, dialogs, onAnswerDialog, welcomeKey, t
   );
   const isEmpty = visibleMessages.length === 0 && dialogs.length === 0;
 
-  // S2: group the calls by the message that produced them, using the real
-  // messageId the producers bind (chatReducer / historyToToolCalls), never a
-  // render-time guess over the whole list.
-  const { byMessage: boundByMessage, trailing: trailingCalls } = groupCallsByMessage(visibleMessages, toolCalls);
+  // S2: every turn renders its own ordered parts inside its bubble; only
+  // the calls that belong to no turn stay outside — never nested in a
+  // bubble, never migrated onto the last assistant message.
+  const orphanCalls = callsWithoutTurn(visibleMessages, toolCalls);
 
   // S1: track the reader's position on the real scroll container. The
   // threshold tolerates sub-pixel layout and a partially visible last line,
@@ -141,14 +130,21 @@ export function MessageThread({ messages, dialogs, onAnswerDialog, welcomeKey, t
       ) : (
         <>
           {visibleMessages.map((message) => (
-            <MessageBubble key={message.id} message={message} actions={boundByMessage.get(message.id)} vocabulary={vocabulary} />
+            <MessageBubble key={message.id} message={message} toolCalls={toolCalls} vocabulary={vocabulary} />
           ))}
           {dialogs.map((dialog) => (
             <DialogCard key={dialog.id} dialog={dialog} onAnswer={(answer) => onAnswerDialog(dialog.id, answer)} />
           ))}
         </>
       )}
-      {trailingCalls.length > 0 ? <ActionRows toolCalls={trailingCalls} vocabulary={vocabulary} /> : null}
+      {/* chat-action-rows T3 (S2): rows without a turn — calls that belong
+      to no assistant message's parts — keep their own clearly separate
+      region after the thread, never nested inside a bubble. */}
+      {orphanCalls.length > 0 ? (
+        <div className="gc-thread__orphan-actions" data-testid="gc-orphan-actions">
+          <ActionRows toolCalls={orphanCalls} vocabulary={vocabulary} />
+        </div>
+      ) : null}
       {activity}
       <div ref={bottomRef} />
     </div>

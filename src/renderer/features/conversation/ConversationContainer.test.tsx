@@ -487,7 +487,7 @@ describe("ConversationContainer", () => {
     await vi.waitFor(() => expect(screen.queryByLabelText("Session identity")).not.toBeInTheDocument());
   });
 
-  it("renders each tool call inside the assistant message that produced it, and no standalone list (S2)", async () => {
+  it("renders each tool call of a turn inside that turn's bubble, and calls without a turn in their own region (S2)", async () => {
     let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({
       onState: vi.fn((callback: (state: ChatState) => void) => {
@@ -501,7 +501,15 @@ describe("ConversationContainer", () => {
     await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
 
     pushState({
-      messages: [{ id: "msg-0", role: MESSAGE_ROLE.ASSISTANT, text: "Listing the folder.", streaming: false }],
+      messages: [
+        {
+          id: "msg-0",
+          role: MESSAGE_ROLE.ASSISTANT,
+          text: "Listing the folder.",
+          streaming: false,
+          parts: [{ kind: "text", text: "Listing the folder." }, { kind: "tool", toolCallId: "c1" }],
+        },
+      ],
       working: false,
       pendingDialogs: [],
       activity: 2,
@@ -513,14 +521,18 @@ describe("ConversationContainer", () => {
       toolVocabulary: { categories: ["read"], entries: [{ category: "read", glyph: "≡", tools: ["read"] }] },
     });
 
-    // Both rows live inside the assistant message's bubble: the call bound
-    // to it, AND the unbound orphan (the fallback attaches it to the last
-    // assistant message — no silent loss).
+    // The call of the turn lives inside the assistant message's bubble.
     const bubble = (await screen.findByText("Listing the folder.")).closest("article");
-    const rows = within(bubble!).getByLabelText("Tool actions");
-    // The child's vocabulary glyph, and the raw name for an uncovered tool.
-    expect(within(rows).getByText("≡")).toBeInTheDocument();
-    expect(within(rows).getByText("some_future_tool")).toBeInTheDocument();
+    const row = within(bubble!).getByTestId("gc-action-row");
+    // The child's vocabulary glyph, not an invented one.
+    expect(within(row).getByText("≡")).toBeInTheDocument();
+
+    // The call that belongs to no turn is never nested inside a bubble: it
+    // keeps its own row in the separate region after the thread (no silent
+    // loss).
+    const orphans = screen.getByTestId("gc-orphan-actions");
+    expect(within(orphans).getByText("some_future_tool")).toBeInTheDocument();
+    expect(within(bubble!).queryByText("some_future_tool")).not.toBeInTheDocument();
 
     // The standalone tool activity list at the transcript end is gone (S2).
     expect(screen.queryByLabelText("Tool activity")).not.toBeInTheDocument();

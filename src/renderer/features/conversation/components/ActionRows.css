@@ -1,20 +1,17 @@
-/* Tool action rows (S2): quiet, one line per call, expanding in place to
- * the exact payload. They render INSIDE the message that produced the calls,
- * so the group carries no caption and no standalone-list indent. Same tokens
- * and scroll treatment as the rest of the conversation surface. */
+/* Tool action rows (chat-action-rows T3/T4): quiet, one standalone row per
+ * call, expanding in place to the exact payload. A row is never a list
+ * item: it stands directly in the message flow at its part's position (S1),
+ * and the orphan group after the thread is a plain labelled block, never a
+ * <ul>/<li> list. Same tokens and scroll treatment as the rest of the
+ * conversation surface. */
 
 .gc-action-rows {
   max-width: 65ch;
   margin: 16px 0 24px;
-  /* R3-001: the reset lives on the element that actually renders. It used to
-   * sit on a dead `.gc-action-rows__list` class, so the browser drew default
-   * bullets and padding on every group. */
-  padding: 0;
-  list-style: none;
 }
 
 .gc-action-row {
-  border-bottom: 1px solid var(--gc-line, #2a1720);
+  border-bottom: 1px solid var(--line);
 }
 
 .gc-action-row__summary {
@@ -43,7 +40,7 @@
 }
 
 .gc-action-row__summary:hover {
-  background: var(--gc-panel, #100a0f);
+  background: var(--panel);
 }
 
 .gc-action-row__glyph {
@@ -53,30 +50,68 @@
 }
 
 .gc-action-row__label {
-  font-family: var(--gc-mono, "SFMono-Regular", Consolas, monospace);
+  font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--gc-text-2, #d2cbd0);
+  color: var(--text-2);
   overflow-wrap: anywhere;
 }
 
 .gc-action-row__tool {
   font-size: 10px;
-  color: var(--gc-muted, #a78e9b);
+  color: var(--muted);
 }
 
 .gc-action-row__state {
   font-size: 10px;
-  color: var(--gc-muted, #a78e9b);
+  color: var(--muted);
   white-space: nowrap;
+}
+
+/* S3 (chat-action-rows T4): each category takes its glyph colour from the
+ * design's own rules (design/slack-gentle/01-workspace.html,
+ * .chat-action[data-action=…] .action-glyph), through the design tokens.
+ * rdd keeps its artwork glyph and earns no tint. */
+.gc-action-row[data-category="read"] .gc-action-row__glyph,
+.gc-action-row[data-category="search"] .gc-action-row__glyph,
+.gc-action-row[data-category="delegation"] .gc-action-row__glyph {
+  color: var(--blue);
+}
+
+.gc-action-row[data-category="list"] .gc-action-row__glyph {
+  color: var(--text-2);
+}
+
+.gc-action-row[data-category="bash"] .gc-action-row__glyph {
+  color: var(--champagne);
+}
+
+.gc-action-row[data-category="write"] .gc-action-row__glyph {
+  color: var(--green);
+}
+
+.gc-action-row[data-category="edit"] .gc-action-row__glyph {
+  color: var(--amber);
+}
+
+/* S4 (chat-action-rows T5): the app-owned memory family (mem_* → Engram).
+ * The 🧠 emoji keeps its own colours; the row's label and state use the
+ * accent. */
+.gc-action-row[data-category="memory"] .gc-action-row__glyph {
+  color: var(--accent);
+}
+
+.gc-action-row[data-category="memory"] .gc-action-row__label,
+.gc-action-row[data-category="memory"] .gc-action-row__state {
+  color: var(--accent);
 }
 
 /* Running and failed states earn colour; done stays quiet. */
 .gc-action-row[data-status="running"] .gc-action-row__state {
-  color: var(--gc-amber, #f2b86d);
+  color: var(--amber);
 }
 
 .gc-action-row[data-status="failed"] .gc-action-row__state {
-  color: var(--gc-red, #ff718f);
+  color: var(--red);
 }
 
 .gc-action-row__detail {
@@ -94,15 +129,15 @@
 
 .gc-action-row__field-label {
   font-size: 10px;
-  color: var(--gc-muted, #a78e9b);
+  color: var(--muted);
 }
 
 .gc-action-row__field-value {
   margin: 0;
-  font-family: var(--gc-mono, "SFMono-Regular", Consolas, monospace);
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.6;
-  color: var(--gc-text-2, #d2cbd0);
+  color: var(--text-2);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

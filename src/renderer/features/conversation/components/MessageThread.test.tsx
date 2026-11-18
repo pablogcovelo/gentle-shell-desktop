@@ -146,10 +146,16 @@ describe("MessageThread", () => {
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 
-  it("renders a call bound to a message inside that message's bubble, and no standalone Tool activity list (S2)", () => {
+  it("renders a turn's tool part inside that turn's bubble, and no standalone Tool activity list (S2)", () => {
     const messages: ChatMessage[] = [
       { id: "m1", role: MESSAGE_ROLE.USER, text: "run it" },
-      { id: "m2", role: MESSAGE_ROLE.ASSISTANT, text: "Listed the files.", streaming: false },
+      {
+        id: "m2",
+        role: MESSAGE_ROLE.ASSISTANT,
+        text: "Listed the files.",
+        streaming: false,
+        parts: [{ kind: "text", text: "Listed the files." }, { kind: "tool", toolCallId: "c1" }],
+      },
     ];
     const toolCalls: ToolCallView[] = [
       { id: "c1", toolName: "read", args: { path: "a" }, status: "done", messageId: "m2" },
@@ -165,58 +171,93 @@ describe("MessageThread", () => {
       />,
     );
 
-    // The row lives inside the assistant message that produced it.
+    // The row lives inside the assistant turn that produced it.
     const assistant = screen.getByText("Listed the files.").closest("article");
     expect(assistant).not.toBeNull();
-    const rows = within(assistant!).getByLabelText("Tool actions");
+    const row = within(assistant!).getByTestId("gc-action-row");
     // The child's vocabulary glyph, not an invented one.
-    expect(within(rows).getByText("≡")).toBeInTheDocument();
-    expect(within(rows).getByText("read")).toBeInTheDocument();
+    expect(within(row).getByText("≡")).toBeInTheDocument();
+    expect(within(row).getByText("read")).toBeInTheDocument();
 
     // The user bubble carries no actions.
     const user = screen.getByText("run it").closest("article");
-    expect(within(user!).queryByLabelText("Tool actions")).toBeNull();
+    expect(within(user!).queryByTestId("gc-action-row")).toBeNull();
 
-    // No standalone tool activity list survives at the transcript end.
+    // No trailing group outside the bubbles and no standalone tool activity
+    // list at the transcript end.
+    expect(screen.queryByTestId("gc-orphan-actions")).not.toBeInTheDocument();
     expect(screen.queryByText("Tool activity")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Tool activity")).not.toBeInTheDocument();
   });
 
-  it("still renders a call whose producing message cannot be resolved, attached to the last assistant message (S2 fallback)", () => {
+  it("keeps a second turn's rows in the second turn, with no shared trailing list (S2)", () => {
     const messages: ChatMessage[] = [
-      { id: "m1", role: MESSAGE_ROLE.USER, text: "run it" },
-      { id: "m2", role: MESSAGE_ROLE.ASSISTANT, text: "Listed the files.", streaming: false },
+      { id: "m1", role: MESSAGE_ROLE.USER, text: "go" },
+      {
+        id: "m2",
+        role: MESSAGE_ROLE.ASSISTANT,
+        text: "First.",
+        parts: [{ kind: "text", text: "First." }, { kind: "tool", toolCallId: "c1" }],
+      },
+      {
+        id: "m3",
+        role: MESSAGE_ROLE.ASSISTANT,
+        text: "Second.",
+        parts: [{ kind: "text", text: "Second." }, { kind: "tool", toolCallId: "c2" }],
+      },
     ];
     const toolCalls: ToolCallView[] = [
-      // Never bound to any message.
-      { id: "c1", toolName: "bash", status: "done" },
+      { id: "c1", toolName: "read", status: "done", messageId: "m2" },
+      { id: "c2", toolName: "bash", status: "done", messageId: "m3" },
+    ];
+
+    render(<MessageThread messages={messages} dialogs={[]} onAnswerDialog={vi.fn()} toolCalls={toolCalls} vocabulary={READ_VOCABULARY} />);
+
+    // Each turn's own row stays inside its own bubble.
+    const first = screen.getByText("First.").closest("article") as HTMLElement;
+    const second = screen.getByText("Second.").closest("article") as HTMLElement;
+    expect(within(first).getByTestId("gc-action-row")).toHaveTextContent("read");
+    expect(within(second).getByTestId("gc-action-row")).toHaveTextContent("bash");
+    expect(within(first).queryByText("bash")).not.toBeInTheDocument();
+    expect(within(second).queryByText("read")).not.toBeInTheDocument();
+
+    // Nothing grows into a shared trailing list outside the turns.
+    expect(screen.queryByTestId("gc-orphan-actions")).not.toBeInTheDocument();
+  });
+
+  it("renders calls that belong to no turn as their own rows in a separate region after the thread (S2)", () => {
+    const messages: ChatMessage[] = [
+      { id: "m1", role: MESSAGE_ROLE.USER, text: "run it" },
+      {
+        id: "m2",
+        role: MESSAGE_ROLE.ASSISTANT,
+        text: "Listed the files.",
+        parts: [{ kind: "text", text: "Listed the files." }, { kind: "tool", toolCallId: "c1" }],
+      },
+    ];
+    const toolCalls: ToolCallView[] = [
+      // Bound and part of the turn above.
+      { id: "c1", toolName: "read", status: "done", messageId: "m2" },
+      // Never bound to any turn.
+      { id: "c2", toolName: "bash", status: "done" },
       // Bound to a message the thread does not contain (it was dropped).
-      { id: "c2", toolName: "read", status: "done", messageId: "gone" },
+      { id: "c3", toolName: "grep", status: "done", messageId: "gone" },
     ];
 
     render(<MessageThread messages={messages} dialogs={[]} onAnswerDialog={vi.fn()} toolCalls={toolCalls} />);
 
-    const assistant = screen.getByText("Listed the files.").closest("article");
-    const rows = within(assistant!).getByLabelText("Tool actions");
-    expect(within(rows).getByText("bash")).toBeInTheDocument();
-    expect(within(rows).getByText("read")).toBeInTheDocument();
-
-    // No silent loss, and no second group anywhere else in the thread.
-    expect(screen.getAllByLabelText("Tool actions")).toHaveLength(1);
-  });
-
-  it("renders an orphan call as a trailing group inside the thread when no assistant message exists (S2 fallback)", () => {
-    const messages: ChatMessage[] = [{ id: "m1", role: MESSAGE_ROLE.USER, text: "hi" }];
-    const toolCalls: ToolCallView[] = [{ id: "c1", toolName: "bash", status: "done" }];
-
-    render(<MessageThread messages={messages} dialogs={[]} onAnswerDialog={vi.fn()} toolCalls={toolCalls} />);
-
-    const group = screen.getByLabelText("Tool actions");
+    // The orphan rows stay visible, inside the thread but in their own
+    // clearly separate region — never nested inside a bubble.
+    const orphans = screen.getByTestId("gc-orphan-actions");
     const thread = screen.getByTestId("gc-message-thread");
-    // Inside the thread, but never inside a message bubble.
-    expect(group.parentElement).toBe(thread);
-    const user = screen.getByText("hi").closest("article");
-    expect(within(user!).queryByLabelText("Tool actions")).toBeNull();
+    expect(within(thread).getByTestId("gc-orphan-actions")).toBeInTheDocument();
+    const assistant = screen.getByText("Listed the files.").closest("article") as HTMLElement;
+    expect(within(assistant).queryByText("bash")).not.toBeInTheDocument();
+    expect(within(assistant).queryByText("grep")).not.toBeInTheDocument();
+    const rows = within(orphans).getAllByTestId("gc-action-row");
+    expect(rows).toHaveLength(2);
+    expect(within(orphans).getByText("bash")).toBeInTheDocument();
+    expect(within(orphans).getByText("grep")).toBeInTheDocument();
   });
 
   it("shows the welcome hero only when the caller owns a chat identity", () => {
