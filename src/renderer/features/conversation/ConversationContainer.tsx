@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ChatState, ChatSummary, DialogAnswer, OpenChatResult } from "@shared/bridge-types";
 import { useBridge } from "@renderer/shared/bridge/useBridge";
@@ -204,6 +204,7 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   // chatState.commands and the host id. Mounted only while a conversation is
   // open, so the shortcut does nothing without a chat.
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const commandRunRef = useRef(0);
   const [resumeSelection, setResumeSelection] = useState<{ key: string; directory: string }>();
   const [pane, setPane] = useState<ConversationPane>(CONVERSATION_PANE.CHAT);
   // The packaged app's version for the footer's last group (S9). Asked once:
@@ -486,17 +487,18 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
       openResumePicker();
       return;
     }
-    // T10 (R4-001): the previous refusal described a command that is no longer
-    // pending, so it is cleared when THIS command is dispatched, never when a
-    // later settlement arrives. An acceptance that resolves after a newer
-    // refusal therefore cannot erase it: settlements only ever set the line.
-    setBridgeError(undefined);
+    // T10 (R4-001, R3-001): only the newest run settles the line.
+    const runId = ++commandRunRef.current;
     bridge
       .sendMessage(hostId, "/" + entry.name)
       .then((result) => {
-        if (!result.queued) setBridgeError(result.reason ?? "Gentle did not send the message");
+        if (runId !== commandRunRef.current) return;
+        setBridgeError(result.queued ? undefined : result.reason ?? "Gentle did not send the message");
       })
-      .catch((cause: unknown) => setBridgeError(errorText(cause)));
+      .catch((cause: unknown) => {
+        if (runId !== commandRunRef.current) return;
+        setBridgeError(errorText(cause));
+      });
   };
 
   const handleAbort = (): void => {
