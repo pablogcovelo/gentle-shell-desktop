@@ -4,6 +4,7 @@
 // adapters built on it.
 export * from "./nodeProcessSpawner";
 export * from "./launcherLocator";
+export * from "./childEnv";
 export * from "./piSessionStore";
 export * from "./appConfigStore";
 export * from "./homeSettings";

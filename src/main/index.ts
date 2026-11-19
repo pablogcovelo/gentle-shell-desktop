@@ -8,6 +8,7 @@ import {
   createNodeProcessSpawner,
   createSetupService,
   readGitBranch,
+  sanitizeChildEnv,
 } from "./adapters";
 import { createLocalPiDevelopment } from "./adapters/localPiDevelopment";
 import { boundedStop } from "./domain/lifecycle/boundedStop";
@@ -88,7 +89,11 @@ const hostRegistry = new WorkspaceHostRegistry({
     spawner: createNodeProcessSpawner(),
     locator,
     sessionStore: createDynamicPiSessionStore(homeSettings.homeDir),
-    env: process.env,
+    // The child runs the agent runtime, not this app's dependency tree: a
+    // dev launch puts this repo's `node_modules/.bin` on PATH, where its
+    // pinned pi-coding-agent 0.85.x would shadow the managed `pi` and break
+    // every subagent (see sanitizeChildEnv).
+    env: sanitizeChildEnv(process.env, app.getAppPath()),
     homeSettings,
     log: logPiLine,
   }),
