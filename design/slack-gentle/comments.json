@@ -573,6 +573,138 @@
       "sentAt": "2026-11-18T13:21:52.386Z",
       "resolvedAt": "2026-11-18T13:22:31.057Z",
       "resolution": "Centered the welcome header: wordmark and the \"DESKTOP · You lead. Gentle helps.\" line now stack centered instead of sitting against the left margin; removed the 14px left offset and updated the narrow-width rule."
+    },
+    {
+      "id": "a5lfm1or",
+      "file": "01-workspace.html",
+      "selector": "#chat-panel > div:nth-of-type(1) > article:nth-of-type(2) > div:nth-of-type(2) > div > details:nth-of-type(5) > summary > span:nth-of-type(1)",
+      "excerpt": "$",
+      "comment": "¿Este símbolo no quedaría mejor ocmo $_ o >_ para diferenciarlo del significado de costo/dinero que representa $ por sí solo?",
+      "createdAt": "2026-11-19T10:30:57.303Z",
+      "status": "resolved",
+      "sentAt": "2026-11-19T10:45:51.323Z",
+      "resolvedAt": "2026-11-19T10:49:54.595Z",
+      "resolution": "Bash glyph is now >_; every role label and avatar is gone; user turns sit in a tinted box and agent answers run boxless at full width."
+    },
+    {
+      "id": "acsfs0c3",
+      "file": "01-workspace.html",
+      "selector": "#chat-panel > div:nth-of-type(1) > article:nth-of-type(1) > div:nth-of-type(1)",
+      "excerpt": "YOU",
+      "comment": "Quítalo",
+      "createdAt": "2026-11-19T10:42:55.843Z",
+      "status": "resolved",
+      "sentAt": "2026-11-19T10:45:51.323Z",
+      "resolvedAt": "2026-11-19T10:49:54.595Z",
+      "resolution": "Bash glyph is now >_; every role label and avatar is gone; user turns sit in a tinted box and agent answers run boxless at full width."
+    },
+    {
+      "id": "eosgarop",
+      "file": "01-workspace.html",
+      "selector": "#chat-panel > div:nth-of-type(1) > article:nth-of-type(1) > div:nth-of-type(2) > header > strong",
+      "excerpt": "You",
+      "comment": "Quítalo",
+      "createdAt": "2026-11-19T10:43:02.039Z",
+      "status": "resolved",
+      "sentAt": "2026-11-19T10:45:51.323Z",
+      "resolvedAt": "2026-11-19T10:49:54.595Z",
+      "resolution": "Bash glyph is now >_; every role label and avatar is gone; user turns sit in a tinted box and agent answers run boxless at full width."
+    },
+    {
+      "id": "juaokud7",
+      "file": "01-workspace.html",
+      "selector": "#chat-panel > div:nth-of-type(1) > article:nth-of-type(2) > div:nth-of-type(1)",
+      "excerpt": "",
+      "comment": "Quítalo",
+      "createdAt": "2026-11-19T10:43:11.699Z",
+      "status": "resolved",
+      "sentAt": "2026-11-19T10:45:51.323Z",
+      "resolvedAt": "2026-11-19T10:49:54.595Z",
+      "resolution": "Bash glyph is now >_; every role label and avatar is gone; user turns sit in a tinted box and agent answers run boxless at full width."
+    },
+    {
+      "id": "gdsbxh05",
+      "file": "01-workspace.html",
+      "selector": "#chat-panel > div:nth-of-type(1) > article:nth-of-type(2) > div:nth-of-type(2) > header > strong",
+      "excerpt": "el Gentleman",
+      "comment": "Quítalo",
+      "createdAt": "2026-11-19T10:43:26.811Z",
+      "status": "resolved",
+      "sentAt": "2026-11-19T10:45:51.323Z",
+      "resolvedAt": "2026-11-19T10:49:54.595Z",
+      "resolution": "Bash glyph is now >_; every role label and avatar is gone; user turns sit in a tinted box and agent answers run boxless at full width."
+    },
+    {
+      "id": "zqkyipin",
+      "file": "01-workspace.html",
+      "selector": "#chat-panel > div:nth-of-type(1) > article:nth-of-type(2) > div:nth-of-type(2) > header > span",
+      "excerpt": "GENTLE",
+      "comment": "Quítalo",
+      "createdAt": "2026-11-19T10:43:39.074Z",
+      "status": "resolved",
+      "sentAt": "2026-11-19T10:45:51.323Z",
+      "resolvedAt": "2026-11-19T10:49:54.595Z",
+      "resolution": "Bash glyph is now >_; every role label and avatar is gone; user turns sit in a tinted box and agent answers run boxless at full width."
+    },
+    {
+      "id": "30058vcw",
+      "file": "01-workspace.html",
+      "selector": "#chat-panel > div:nth-of-type(1) > article:nth-of-type(1) > div:nth-of-type(2) > p",
+      "excerpt": "Let’s make the empty chat feel more welcoming, without adding another onboarding screen.",
+      "comment": "Los comentarios del usuario que queden dentro de un cuadro con color para representar que es un comentario del usuario y diferenciarlo claramente de los del agente",
+      "createdAt": "2026-11-19T10:44:51.284Z",
+      "status": "resolved",
+      "sentAt": "2026-11-19T10:45:51.323Z",
+      "resolvedAt": "2026-11-19T10:49:54.595Z",
+      "resolution": "Bash glyph is now >_; every role label and avatar is gone; user turns sit in a tinted box and agent answers run boxless at full width."
+    },
+    {
+      "id": "skxa5mox",
+      "file": "01-workspace.html",
+      "selector": "#chat-panel > div:nth-of-type(1) > article:nth-of-type(4) > div:nth-of-type(2)",
+      "excerpt": "el Gentleman GENTLE 10:44 One invitation. Your own words. No extra ceremony. This board illustrates the conversation and its supporting work. All agent states shown here are examples, not live activity.",
+      "comment": "Las respuestas del agente van sin recuadro, como están pero que ocupen todo el ancho del chat disponible",
+      "createdAt": "2026-11-19T10:45:49.013Z",
+      "status": "resolved",
+      "sentAt": "2026-11-19T10:45:51.323Z",
+      "resolvedAt": "2026-11-19T10:49:54.595Z",
+      "resolution": "Bash glyph is now >_; every role label and avatar is gone; user turns sit in a tinted box and agent answers run boxless at full width."
+    },
+    {
+      "id": "e6zyneuo",
+      "file": "01-workspace.html",
+      "selector": "#chat-panel > div:nth-of-type(1) > article:nth-of-type(1)",
+      "excerpt": "10:42 Let’s make the empty chat feel more welcoming, without adding another onboarding screen.",
+      "comment": "Los comentarios del usuario parten del margen derecho como se hacía antes",
+      "createdAt": "2026-11-19T11:33:54.930Z",
+      "status": "resolved",
+      "sentAt": "2026-11-19T11:33:54.957Z",
+      "resolvedAt": "2026-11-19T11:34:19.623Z",
+      "resolution": "User turns now set margin-right:0, so they align flush to the right margin instead of inheriting the centered column's auto margins."
+    },
+    {
+      "id": "n9xfvhck",
+      "file": "01-workspace.html",
+      "selector": "#chat-panel > div:nth-of-type(1) > article:nth-of-type(1)",
+      "excerpt": "10:42 Let’s make the empty chat feel more welcoming, without adding another onboarding screen.",
+      "comment": "Pero margen derecho con respecto a los 700px que definimos para el chat...",
+      "createdAt": "2026-11-19T11:34:53.185Z",
+      "status": "resolved",
+      "sentAt": "2026-11-19T11:34:53.201Z",
+      "resolvedAt": "2026-11-19T11:35:13.688Z",
+      "resolution": "User box right margin now reserves the 700px column inset, so its right edge lands on the reading column instead of the panel edge."
+    },
+    {
+      "id": "vrxfpp45",
+      "file": "01-workspace.html",
+      "selector": "#chat-panel > div:nth-of-type(1) > header",
+      "excerpt": "DESKTOP · You lead. Gentle helps.",
+      "comment": "Esto forma parte del chat así que también debe de estar centrado con respecto a los 700px del chat",
+      "createdAt": "2026-11-19T11:35:48.179Z",
+      "status": "resolved",
+      "sentAt": "2026-11-19T11:35:48.196Z",
+      "resolvedAt": "2026-11-19T11:36:35.873Z",
+      "resolution": "Welcome hero margin changed to 0 auto 24px so it shares the 700px centered column instead of hugging the thread's left edge."
     }
   ]
 }
