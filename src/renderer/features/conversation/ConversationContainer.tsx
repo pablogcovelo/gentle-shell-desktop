@@ -167,10 +167,11 @@ function errorText(cause: unknown): string {
  * Conversation container: ONE source of truth for the thread is the pushed
  * `ChatState` (messages, working, pendingDialogs, lastError) — nothing is
  * derived or invented locally. Errors (ChatState.lastError and
- * bridge.onError pushes) render in a dedicated StatusLine, never as a
- * synthetic ChatMessage appended to the thread. Keyed statuses and
- * notifications (desktop-rpc T2b) render in the same status surface for
- * the same reason: they are feedback chrome, never transcript entries.
+ * bridge.onError pushes) render in the chat pane's StatusLine and stay
+ * visible until the wire clears them, never as a synthetic ChatMessage
+ * appended to the thread. Keyed statuses and notifications (desktop-rpc
+ * T2b) are diagnostics: they render only in the Helpers pane's status
+ * surface and never enter the chat flow.
  */
 export function ConversationContainer({ activeChat, activeHostId, onHostResolved, onWorktreeBranch, createdWorkspace, footerTarget, onResumeChat, onWorkspacePath }: ConversationContainerProps) {
   const bridge = useBridge();
@@ -511,12 +512,14 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
               // stack still renders after the thread.
               toolCalls={chatState.toolCalls}
               vocabulary={chatState.toolVocabulary}
-              // S12 (gui-design-alignment): the chat pane renders the same
-              // persistent status surfaces the Helpers pane shows — errors,
-              // keyed statuses and notifications — so nothing is lost on a
-              // timer. They live in the status surface, never as synthetic
-              // ChatMessages appended to the thread.
-              activity={<StatusLine error={error} statuses={chatState.statuses} notifications={chatState.notifications} />}
+              // S12 (gui-design-alignment, revised): the chat pane renders
+              // ONLY the error — an error belongs to the conversation and
+              // stays visible until the wire clears it. Keyed statuses and
+              // notifications are diagnostics; they never enter the chat
+              // flow and stay in the Helpers pane's status surface. They
+              // live in the status surface, never as synthetic ChatMessages
+              // appended to the thread.
+              activity={<StatusLine error={error} />}
             />
             <Composer
               value={draft}

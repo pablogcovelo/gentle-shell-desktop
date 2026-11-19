@@ -943,10 +943,10 @@ describe("ConversationContainer", () => {
     expect(screen.queryByRole("button", { name: "Back to chat" })).not.toBeInTheDocument();
   });
 
-  // S12 (gui-design-alignment): keyed statuses are persistent entries in
-  // the chat flow too — the chat pane shows what the Helpers pane shows —
-  // but they are still never transcript messages.
-  it("renders a pushed keyed status in the chat pane, and never as a message", async () => {
+  // S12 (gui-design-alignment, revised): the chat pane renders only the
+  // error — a keyed status is a diagnostic that belongs to the Helpers
+  // pane and never enters the chat flow, nor as a transcript message.
+  it("keeps a pushed keyed status in the Helpers pane and out of the chat pane", async () => {
     let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({
       onState: vi.fn((callback: (state: ChatState) => void) => {
@@ -964,21 +964,25 @@ describe("ConversationContainer", () => {
       working: false,
       pendingDialogs: [],
       activity: 0,
-      helpers: EMPTY_HELPERS,
+      helpers: HELPERS_WITH_TASKS,
       statuses: { "gentle-todo": "2 tasks open" },
     });
 
     // Wait for the pushed state to land before asserting what it renders —
     // otherwise the presence assertion passes on a stale pane.
     await screen.findByText("Status probe");
-    const statusList = screen.getByLabelText("Session status");
+    // Not in the chat pane at all: no status list, no transcript entry.
+    expect(screen.queryByLabelText("Session status")).not.toBeInTheDocument();
+    expect(screen.queryByText("2 tasks open", { selector: ".gc-message__text" })).not.toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open helpers" }));
+    const statusList = await screen.findByLabelText("Session status");
     expect(statusList).toHaveTextContent("gentle-todo");
     expect(statusList).toHaveTextContent("2 tasks open");
-    // Persistent status chrome, still never a transcript entry.
-    expect(screen.queryByText("2 tasks open", { selector: ".gc-message__text" })).not.toBeInTheDocument();
   });
 
-  it("renders pushed child notifications in the chat pane, and never as conversation messages", async () => {
+  // Same revised rule for notifications: they are diagnostics, not chat.
+  it("keeps pushed child notifications in the Helpers pane and out of the chat pane", async () => {
     let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({
       onState: vi.fn((callback: (state: ChatState) => void) => {
@@ -996,7 +1000,7 @@ describe("ConversationContainer", () => {
       working: false,
       pendingDialogs: [],
       activity: 0,
-      helpers: EMPTY_HELPERS,
+      helpers: HELPERS_WITH_TASKS,
       notifications: [
         { message: "Command blocked by user", severity: "warning" },
         { message: "Disk full", severity: "error" },
@@ -1004,16 +1008,20 @@ describe("ConversationContainer", () => {
     });
 
     await screen.findByText("Notice probe");
-    const stack = screen.getByLabelText("Notifications");
-    expect(stack).toHaveTextContent("Command blocked by user");
-    expect(stack).toHaveTextContent("Disk full");
-    // No bubble, no transcript entry, no placeholder in the message list.
+    // Not in the chat pane at all: no notification stack, no transcript entry.
+    expect(screen.queryByLabelText("Notifications")).not.toBeInTheDocument();
     expect(screen.queryByText("Command blocked by user", { selector: ".gc-message__text" })).not.toBeInTheDocument();
     expect(screen.queryByText("Disk full", { selector: ".gc-message__text" })).not.toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open helpers" }));
+    const stack = await screen.findByLabelText("Notifications");
+    expect(stack).toHaveTextContent("Command blocked by user");
+    expect(stack).toHaveTextContent("Disk full");
   });
 
-  // S12: the Helpers pane keeps its status surface alongside the chat pane's
-  // persistent entries — pinned here so a later cleanup cannot silently drop it.
+  // S12: the Helpers pane keeps its complete status surface — it is the
+  // diagnostic pane, not the chat — pinned here so a later cleanup cannot
+  // silently drop it.
   it("keeps the keyed status surface in the Helpers pane", async () => {
     let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({

@@ -17,7 +17,7 @@ S8. Each inspector Agents row is flat, one line: `<status glyph> <agent name> ·
 S9. Status glyphs and words: `◐` Running, `✓` Done, `✕` Failed, `⊘` Cancelled, `○` Queued, `○` Waiting.
 S10. The Agents section head carries an eye button that opens the helpers view (`aria-label="Open helpers"`); it replaces the `Open helpers` text button.
 S11. The helpers view is kept as-is: list, thread, footer, Stop, `Earlier · N finished`, and the way back to the chat.
-S12. Errors, keyed statuses and notifications render as persistent entries in the chat flow, coloured by severity, and are never auto-hidden. Notifications stay bounded by the reducer cap.
+S12. The chat keeps errors only: an error belongs to the conversation, renders in the chat pane and stays visible until the wire clears it — never auto-hidden. Keyed statuses and notifications are diagnostics that never enter the chat flow and stay in the helpers view, which keeps the complete status surface.
 S13. Orphan action rows (tool calls bound to no turn) are kept and must be represented in the design board.
 S14. An expanded action row shows its vocabulary variants as chips, derived from the published vocabulary: one chip per distinct glyph in the row's category, the current one marked with `aria-current`. The label is `phases` when every entry of that category carries a `heading`, otherwise `also reports`. The row appears only when the category publishes two or more distinct glyphs.
 S15. The footer extensions counter stays `0` with its existing title explaining the bridge does not report it.
@@ -34,6 +34,7 @@ T4 — S8, S9 · flat subagent rows in the inspector · `3014c52`
 T5 — S14 · vocabulary variant chips in the action detail · `fa40d32`
 T6 — S2, S16 · composer hint, double-Esc stop, emoji removal · `01a5b74`
 T7 — S13, S18 · design board: flat agents, eye, chips, orphan region, status entry, dead CSS · `fd5feb1` (amended)
+T8 — S12 · informational cards leave the chat · commit pending
 
 Delivery slices on `feat/gui-design-alignment`, none pushed:
 `3014c52` shell structure, agents and status surfaces · `01a5b74` composer ·
@@ -51,3 +52,5 @@ L3 (decisions, second round): "2.4.1 Tienes razón no ponemos el texto y nos que
 L4 (decisions, third round): "1.2 Descartamos" · "2.4 Confirmo" · "3.2 / 3.3 Vamos a cambiar el enfoque, entiendo que helpers vine siendo como un visor de subagentes. En lugar de tener un botón \"Helpers\" vamos a poner un \"ojo\" en el panel de Agents que lleve a esta vista ¿si?" · "3.5 Ok, pero en este caso los mantendría como mensajes persistentes en el propio chat, en rojo para indicar error o lo que sea necesario, si solo se muestran por un periodo de tiemp limitado es muy fácil que el usuario se pierda estos StatusLine" · "3.6 Lo mantenemos pero entonces es necesario representarlo en el diseño" · "1.4 Mostramos solo ◐ gentle-ai-explore · Running... / ✕ gentle-ai-explore · Error/Fail / ✓ gentle-ai-explore · Complete/Finish"
 
 L5 (scope): 3.4 (commands in ⌘K, `/` out of the composer) stays as the next task because the ⌘K dialog still needs its own design. The composer hint therefore drops `/` now and the command list keeps working until that task lands.
+
+L6 (T8, revision of S12): "Estas tarjetas que son como informativas no deben aparecer en el chat" — the maintainer saw the running app and rejected the informational cards inside the conversation (`gentle:mode Permissions: NORMAL`, a keyed status, and the child's long notification). They are StatusLine entries, not messages. Errors stay persistent and red, as decided in L4. The helpers view keeps its complete status surface: it is a diagnostic pane, not the chat.
