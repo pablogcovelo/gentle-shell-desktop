@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { useState } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ChatCommand } from "@shared/bridge-types";
 import { Composer } from "./Composer";
@@ -82,7 +82,9 @@ describe("Composer", () => {
     render(<Composer value="" working={false} onChange={vi.fn()} onSend={vi.fn()} onAbort={vi.fn()} />);
 
     expect(screen.getByPlaceholderText("Tell Gentle what you need…")).toBeInTheDocument();
-    expect(screen.getByText("Enter to send · Shift+Enter for a new line · Esc to stop")).toBeInTheDocument();
+    expect(
+      screen.getByText("Enter to send · Shift+Enter for a new line · Esc Esc to stop the agent"),
+    ).toBeInTheDocument();
   });
 
   it("calls onSend and does not insert a newline when Enter is pressed without Shift", () => {
@@ -113,19 +115,13 @@ describe("Composer", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  it("calls onAbort on Escape only while working", () => {
-    const onAbort = vi.fn();
-    const { rerender } = render(
-      <Composer value="" working={false} onChange={vi.fn()} onSend={vi.fn()} onAbort={onAbort} />,
-    );
-    const textarea = screen.getByPlaceholderText("Tell Gentle what you need…");
+  it("removes the emoji picker while Attachment and the disabled Microphone remain", () => {
+    render(<Harness onPickFile={() => Promise.resolve("/tmp/notes.md")} />);
 
-    fireEvent.keyDown(textarea, { key: "Escape" });
-    expect(onAbort).not.toHaveBeenCalled();
-
-    rerender(<Composer value="" working onChange={vi.fn()} onSend={vi.fn()} onAbort={onAbort} />);
-    fireEvent.keyDown(textarea, { key: "Escape" });
-    expect(onAbort).toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Emoji" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Emoji" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Attachment" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Microphone/ })).toBeDisabled();
   });
 
   it("marks the field read-only while working so Escape still reaches it, and disables Send", () => {
@@ -161,32 +157,9 @@ it("keeps Send disabled while the pane has no host to send to", () => {
   expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
 });
 
-it("appends the picked emoji to the draft and closes the panel", async () => {
-  render(<Harness initial="hi" />);
-
-  fireEvent.click(screen.getByRole("button", { name: "Emoji" }));
-  const panel = screen.getByRole("group", { name: "Emoji" });
-  fireEvent.click(within(panel).getByRole("button", { name: "🙂" }));
-
-  await waitFor(() => expect(screen.getByPlaceholderText("Tell Gentle what you need…")).toHaveValue("hi🙂"));
-  expect(screen.queryByRole("group", { name: "Emoji" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Emoji" })).toHaveAttribute("aria-expanded", "false");
-});
-
-it("closes the emoji panel on Escape without touching the draft", () => {
-  render(<Harness initial="hi" />);
-
-  fireEvent.click(screen.getByRole("button", { name: "Emoji" }));
-  fireEvent.keyDown(screen.getByRole("group", { name: "Emoji" }), { key: "Escape" });
-
-  expect(screen.queryByRole("group", { name: "Emoji" })).not.toBeInTheDocument();
-  expect(screen.getByPlaceholderText("Tell Gentle what you need…")).toHaveValue("hi");
-});
-
-it("renders the tool buttons as type=button so they never submit the form", () => {
+it("renders the remaining tool buttons as type=button so they never submit the form", () => {
   render(<Composer value="" working={false} onChange={vi.fn()} onSend={vi.fn()} onAbort={vi.fn()} />);
 
-  expect(screen.getByRole("button", { name: "Emoji" })).toHaveAttribute("type", "button");
   expect(screen.getByRole("button", { name: /Microphone/ })).toHaveAttribute("type", "button");
 });
 
@@ -236,6 +209,68 @@ it("renders the microphone always but disabled, with the reason in its accessibl
 // what the child answered for `get_commands`, filtered by the typed token,
 // completing through the same draft contract — never a hardcoded replica.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// The double-Esc stop gesture (S2): two consecutive Escape presses inside a
+// 1500 ms window stop the agent while it is working; a single Escape keeps
+// its non-destructive job and never stops the agent.
+// ---------------------------------------------------------------------------
+
+describe("Composer: double-Esc stop gesture (S2)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function renderWorkingComposer(onAbort: () => void) {
+    render(<Composer value="" working onChange={vi.fn()} onSend={vi.fn()} onAbort={onAbort} />);
+    return screen.getByPlaceholderText("Tell Gentle what you need…");
+  }
+
+  it("stops the agent when Escape is pressed twice inside the 1500 ms window", () => {
+    const onAbort = vi.fn();
+    const textarea = renderWorkingComposer(onAbort);
+
+    fireEvent.keyDown(textarea, { key: "Escape" });
+    vi.advanceTimersByTime(1000);
+    fireEvent.keyDown(textarea, { key: "Escape" });
+
+    expect(onAbort).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not stop the agent on a single Escape", () => {
+    const onAbort = vi.fn();
+    const textarea = renderWorkingComposer(onAbort);
+
+    fireEvent.keyDown(textarea, { key: "Escape" });
+
+    expect(onAbort).not.toHaveBeenCalled();
+  });
+
+  it("does not stop the agent when the two presses fall outside the window", () => {
+    const onAbort = vi.fn();
+    const textarea = renderWorkingComposer(onAbort);
+
+    fireEvent.keyDown(textarea, { key: "Escape" });
+    vi.advanceTimersByTime(1501);
+    fireEvent.keyDown(textarea, { key: "Escape" });
+
+    expect(onAbort).not.toHaveBeenCalled();
+  });
+
+  it("never stops a non-working agent, even on repeated Escapes", () => {
+    const onAbort = vi.fn();
+    render(<Composer value="" working={false} onChange={vi.fn()} onSend={vi.fn()} onAbort={onAbort} />);
+    const textarea = screen.getByPlaceholderText("Tell Gentle what you need…");
+
+    fireEvent.keyDown(textarea, { key: "Escape" });
+    fireEvent.keyDown(textarea, { key: "Escape" });
+
+    expect(onAbort).not.toHaveBeenCalled();
+  });
+});
 
 describe("Composer: slash command list (desktop-pending-work T6, S6)", () => {
   it("renders no list without a commands prop", () => {

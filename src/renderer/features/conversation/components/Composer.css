@@ -114,48 +114,10 @@
   cursor: not-allowed;
 }
 
-/* Inline emoji palette: raised surface, strong line, no shadows. */
-.gc-composer__emoji-panel {
-  position: absolute;
-  bottom: calc(100% + 4px);
-  left: 0;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 6px;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  background: var(--raised);
-}
-
-.gc-composer__emoji {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text);
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.gc-composer__emoji:hover {
-  background: var(--line);
-}
-
-.gc-composer__emoji:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
 /* S6 (desktop-pending-work T6): the slash-command list, anchored to the
- * composer box just above it (the EmojiPanel popup precedent), in the
- * order the child answered for get_commands. Only rendered when the child
- * answered and the draft is a slash token. */
+ * composer box just above it, in the order the child answered for
+ * get_commands. Only rendered when the child answered and the draft is a
+ * slash token. */
 .gc-composer__commands {
   position: absolute;
   bottom: calc(100% + 4px);

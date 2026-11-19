@@ -27,15 +27,14 @@ export interface ComposerProps {
   readonly resumeAvailable?: boolean;
 }
 
-/** The fixed palette: literal characters, no emoji data source. */
-const EMOJIS = ["🙂", "🎉", "✅", "🚧", "❤️", "⚡", "🔍", "📌"] as const;
-
 /** Artboard `.composer-tool` icons, by their 24px stroke path. */
 const ICON_PATHS = {
-  emoji: "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0M8 9h.01M16 9h.01M8 14s1.5 3 4 3 4-3 4-3",
   attachment: "m21 11-8.5 8.5a6 6 0 0 1-8.5-8.5L13 2.5a4 4 0 0 1 5.7 5.7l-8.5 8.5a2 2 0 0 1-2.8-2.8L15 6.3",
   microphone: "M9 6a3 3 0 0 1 6 0v6a3 3 0 0 1-6 0V6ZM5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8",
 } as const;
+
+/** S2: two consecutive Escape presses inside this window stop the agent. */
+const DOUBLE_ESCAPE_STOP_WINDOW_MS = 1500;
 
 function ToolIcon({ d }: { readonly d: string }) {
   return (
@@ -55,55 +54,25 @@ function ToolIcon({ d }: { readonly d: string }) {
   );
 }
 
-interface EmojiPanelProps {
-  readonly id: string;
-  readonly onPick: (emoji: string) => void;
-  readonly onClose: () => void;
-}
-
-function EmojiPanel({ id, onPick, onClose }: EmojiPanelProps) {
-  return (
-    <div
-      className="gc-composer__emoji-panel"
-      role="group"
-      aria-label="Emoji"
-      id={id}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") onClose();
-      }}
-    >
-      {EMOJIS.map((emoji) => (
-        <button
-          key={emoji}
-          type="button"
-          className="gc-composer__emoji"
-          aria-label={emoji}
-          title={emoji}
-          onClick={() => onPick(emoji)}
-        >
-          {emoji}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 /**
  * Presentational: local draft text and the bridge calls both live in
  * ConversationContainer. Enter sends (and is prevented from inserting a
  * newline), Shift+Enter inserts a newline (default textarea behaviour, left
- * alone), Esc aborts while working. The field is `readOnly` (not
- * `disabled`) while working: a disabled textarea would stop receiving the
- * Escape keydown the abort shortcut depends on.
+ * alone), and two consecutive Escapes inside the stop window abort the agent
+ * while it is working (S2); a single Escape keeps its non-destructive job.
+ * The field is `readOnly` (not `disabled`) while working: a disabled
+ * textarea would stop receiving the Escape keydown the gesture depends on.
  */
 export function Composer({ value, working, onChange, onSend, onAbort, ready = true, onPickFile, commands, resumeAvailable = false }: ComposerProps) {
   // A pane that does not know its host has nowhere to send: offering an enabled
   // Send there only produces a request main must refuse, so it waits instead.
   const canSend = ready && !working && value.trim().length > 0;
 
-  const [emojiOpen, setEmojiOpen] = useState(false);
-  const emojiPanelId = useId();
+  const draftId = useId();
   const fieldRef = useRef<HTMLTextAreaElement>(null);
+  // Timestamp (ms) of the previous Escape handled by this composer, for the
+  // S2 double-Esc stop gesture; 0 means "no previous press".
+  const lastEscapeAtRef = useRef(0);
 
   // The slash-command list (desktop-pending-work T6, S6). The token is the
   // typed text after a leading "/" while no space has been typed yet; the
@@ -175,9 +144,23 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
     if (event.key === "Escape") {
       if (listOpen) {
         setDismissedToken(slashToken);
+        // Dismissing the list counts as the first Esc of the double-Esc stop
+        // gesture: from the reader's side it is simply two consecutive Esc
+        // presses, and the hint advertises no distinction.
+        lastEscapeAtRef.current = Date.now();
         return;
       }
-      if (working) onAbort();
+      const now = Date.now();
+      if (working && now - lastEscapeAtRef.current <= DOUBLE_ESCAPE_STOP_WINDOW_MS) {
+        // S2: the second of two consecutive Escapes inside the window stops
+        // the agent; reset so a later pair needs two fresh presses.
+        lastEscapeAtRef.current = 0;
+        onAbort();
+        return;
+      }
+      // Either press (while idle) or first press (while working): record it
+      // and keep Escape's non-destructive job — nothing is stopped here.
+      lastEscapeAtRef.current = now;
       return;
     }
     if (event.key === "Enter" && !event.shiftKey) {
@@ -201,11 +184,6 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
     onChange(value + suffix);
   };
 
-  const handlePickEmoji = (emoji: string): void => {
-    appendToDraft(emoji);
-    setEmojiOpen(false);
-  };
-
   /** S14: the chosen absolute path is INSERTED, never read or uploaded. */
   const handlePickFile = async (): Promise<void> => {
     if (!onPickFile) return;
@@ -218,11 +196,11 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
     <form className="gc-composer" aria-label="Composer" onSubmit={handleSubmit}>
       <div className="gc-composer__box">
         <div className="gc-composer__input-column">
-        <label className="gc-composer__eyebrow" htmlFor={`${emojiPanelId}-draft`}>Your next move</label>
+        <label className="gc-composer__eyebrow" htmlFor={`${draftId}-draft`}>Your next move</label>
         <textarea
           className="gc-text-field"
           ref={fieldRef}
-          id={`${emojiPanelId}-draft`}
+          id={`${draftId}-draft`}
           rows={2}
           placeholder="Tell Gentle what you need…"
           value={value}
@@ -233,17 +211,6 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
           aria-controls={listOpen ? commandsListId : undefined}
         />
           <div className="gc-composer__tools">
-            <button
-              type="button"
-              className="gc-composer__tool"
-              aria-label="Emoji"
-              title="Emoji"
-              aria-expanded={emojiOpen}
-              aria-controls={emojiPanelId}
-              onClick={() => setEmojiOpen((open) => !open)}
-            >
-              <ToolIcon d={ICON_PATHS.emoji} />
-            </button>
             {onPickFile ? (
               <button
                 type="button"
@@ -255,10 +222,9 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
                 <ToolIcon d={ICON_PATHS.attachment} />
               </button>
             ) : null}
-            {emojiOpen ? <EmojiPanel id={emojiPanelId} onPick={handlePickEmoji} onClose={() => setEmojiOpen(false)} /> : null}
         {listOpen ? (
-          // Anchored inside the composer box, just above it (the EmojiPanel
-          // popup precedent), in the order the child answered. An entry
+          // Anchored inside the composer box, just above it, in the order
+          // the child answered. An entry
           // without a description renders only its name; no argument hint
           // exists on the wire and none is invented (S6/S11).
           <ul
@@ -303,7 +269,7 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
           </div>
         </div>
       </div>
-      <p className="gc-composer__hints">Enter to send · Shift+Enter for a new line · Esc to stop{resumeAvailable ? " · /resume to choose a saved session (no arguments)" : ""}</p>
+      <p className="gc-composer__hints">Enter to send · Shift+Enter for a new line · Esc Esc to stop the agent</p>
     </form>
   );
 }
