@@ -5,8 +5,10 @@
  * <ul>/<li> list. Same tokens and scroll treatment as the rest of the
  * conversation surface. */
 
+/* No measure of its own: a row spans the reading column, so it never reads
+ * narrower than the answer it belongs to. */
 .gc-action-rows {
-  max-width: 65ch;
+  max-width: none;
   margin: 16px 0 24px;
 }
 

@@ -10,6 +10,14 @@
   flex-direction: column;
   gap: 0;
   flex: none;
+  /* 756px with the 12px/28px/16px padding puts the inner box exactly on the
+   * thread's 700px reading column, sharing its vertical axis. `width: 100%`
+   * is required: auto margins on the cross axis disable a flex item's stretch
+   * alignment, so without it the box shrinks to its content. */
+  max-width: 756px;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
   padding: 12px 28px 16px;
 }
 

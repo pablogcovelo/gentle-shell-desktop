@@ -17,8 +17,6 @@ describe("MessageBubble", () => {
     const { container } = render(<MessageBubble message={message} />);
 
     expect(container.querySelector(".gs-markdown strong")).toHaveTextContent("bold");
-    expect(container).toHaveTextContent("el Gentleman");
-    expect(container).toHaveTextContent("GENTLE");
     expect(container.querySelector("time")).toBeNull();
   });
 
@@ -27,8 +25,6 @@ describe("MessageBubble", () => {
     const { container } = render(<MessageBubble message={message} />);
 
     expect(container.querySelector(".gc-message__text strong")).toBeNull();
-    expect(container).toHaveTextContent("YOU");
-    expect(container).toHaveTextContent("You");
     expect(container).toHaveTextContent("**bold**");
   });
 
@@ -37,6 +33,27 @@ describe("MessageBubble", () => {
     const { container } = render(<MessageBubble message={message} />);
 
     expect(container.querySelector(".gc-message--user")).not.toBeNull();
+  });
+
+  // Workspace artboard rule: the speaker reads from the shape, never from a
+  // label — no avatar, no name header, no badge, in either role.
+  it("pins the role to the shape alone: no speaker label, no badge, no avatar", () => {
+    const user: ChatMessage = { id: "u1", role: MESSAGE_ROLE.USER, text: "hi" };
+    const assistant: ChatMessage = { id: "a1", role: MESSAGE_ROLE.ASSISTANT, text: "hello" };
+    const { container: userView } = render(<MessageBubble message={user} />);
+    const { container: assistantView } = render(<MessageBubble message={assistant} />);
+
+    for (const container of [userView, assistantView]) {
+      expect(container.querySelector(".gc-message__avatar")).toBeNull();
+      expect(container.querySelector(".gc-message__speaker")).toBeNull();
+      expect(container.querySelector(".gc-message__badge")).toBeNull();
+      expect(container.textContent).not.toContain("You");
+      expect(container.textContent).not.toContain("el Gentleman");
+    }
+    // The shape carries the role: the user turn is the tinted box, the
+    // assistant turn the plain full-width block.
+    expect(userView.querySelector("article.gc-message--user")).not.toBeNull();
+    expect(assistantView.querySelector("article.gc-message--assistant")).not.toBeNull();
   });
 
   it("renders the turn's tool part as one action row inside the bubble body, below the text (S2)", () => {
@@ -54,7 +71,8 @@ describe("MessageBubble", () => {
     expect(within(row).getByText("≡")).toBeInTheDocument();
     expect(within(row).getByText("read")).toBeInTheDocument();
     // Below the text, still inside the message block.
-    expect(row.compareDocumentPosition(body.querySelector(".gc-message__speaker")!)).toBeTruthy();
+    const text = body.querySelector(".gs-markdown")!;
+    expect(text.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("renders a text → row → text turn in that DOM order inside the bubble (S1)", () => {

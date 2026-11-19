@@ -13,6 +13,14 @@
   scrollbar-color: var(--line-strong) transparent;
 }
 
+/* The reading column never grows past 700px: on a wide monitor a centred
+ * measure keeps long answers readable instead of stretching edge to edge. */
+.gc-thread > * {
+  max-width: 700px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
 .gc-thread::-webkit-scrollbar {
   width: 6px;
 }
@@ -26,8 +34,13 @@
   border-radius: 999px;
 }
 
+/* The hint only ever shows in an empty chat, so it lives inside the reading
+ * column and reads centred there instead of hanging off the thread's left
+ * padding. `auto` on both sides is what keeps it on the column; a literal 0
+ * would win over the column rule and pin it to the edge. */
 .gc-thread__empty {
-  margin: 0 0 26px;
+  margin: 0 auto 26px;
+  text-align: center;
   color: var(--muted);
   font-size: 14px;
 }
@@ -36,8 +49,10 @@
  * assistant message keep their own clearly separate region after the
  * thread, never nested inside a bubble. */
 .gc-thread__orphan-actions {
-  max-width: 65ch;
-  margin: 16px 0 24px;
+  max-width: none;
+  /* auto on both sides: the column rule centres every direct child, and a
+   * literal 0 here would pin this region to the thread's left edge. */
+  margin: 16px auto 24px;
   padding-top: 8px;
   border-top: 1px solid var(--line);
 }

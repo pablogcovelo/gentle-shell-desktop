@@ -51,15 +51,12 @@ export function MessageBubble({ message, toolCalls, vocabulary }: MessageBubbleP
     <Markdown text={message.text} />
   );
 
+  // The speaker reads from the shape, never from a label (Workspace
+  // artboard): the user turn is the tinted box, the assistant turn the plain
+  // block — no avatar, no name header, no badge.
   return (
     <article className={`gc-message gc-message--${isUser ? "user" : "assistant"}`}>
-      <div className="gc-message__avatar" aria-hidden="true">
-        {isUser ? "YOU" : <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3Z" /></svg>}
-      </div>
-      <div className="gc-message__body">
-        <header className="gc-message__speaker"><strong>{isUser ? "You" : "el Gentleman"}</strong>{!isUser && <span className="gc-message__badge">GENTLE</span>}</header>
-        {body}
-      </div>
+      <div className="gc-message__body">{body}</div>
     </article>
   );
 }
