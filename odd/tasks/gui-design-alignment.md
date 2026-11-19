@@ -27,13 +27,18 @@ S18. Orphan code from earlier iterations is removed from the app and from the de
 
 ## Tasks
 
-T1 — S1, S3, S4, S5, S6, S7 · copy and structure alignment in the renderer · commit `feat(gui): align copy and structure with the board`
-T2 — S10, S11 · eye button in Agents, helpers view kept · commit `feat(agents): open the helpers view from an eye control`
-T3 — S12 · persistent in-chat status, error and notification entries · commit `feat(chat): keep status entries visible in the thread`
-T4 — S8, S9 · flat subagent rows in the inspector · commit `feat(agents): flatten subagent rows to name and status`
-T5 — S14 · vocabulary variant chips in the action detail · commit `feat(chat): show vocabulary variants as chips`
-T6 — S2, S16 · composer hint, double-Esc stop, emoji removal · commit `feat(composer): advertise the double-Esc stop and drop the emoji picker`
-T7 — S13, S18 · design board: flat agents, eye, chips, orphan region, status entry, dead CSS · commit `docs(design): align the workspace board with the shipped GUI`
+T1 — S1, S3, S4, S5, S6, S7 · copy and structure alignment in the renderer · `3014c52`
+T2 — S10, S11 · eye button in Agents, helpers view kept · `3014c52`
+T3 — S12 · persistent in-chat status, error and notification entries · `3014c52`
+T4 — S8, S9 · flat subagent rows in the inspector · `3014c52`
+T5 — S14 · vocabulary variant chips in the action detail · `fa40d32`
+T6 — S2, S16 · composer hint, double-Esc stop, emoji removal · `01a5b74`
+T7 — S13, S18 · design board: flat agents, eye, chips, orphan region, status entry, dead CSS · `fd5feb1` (amended)
+
+Delivery slices on `feat/gui-design-alignment`, none pushed:
+`3014c52` shell structure, agents and status surfaces · `01a5b74` composer ·
+`fa40d32` vocabulary chips · `fd5feb1` design board. Push, PR and merge stay the
+maintainer's decision.
 
 ## Log
 
