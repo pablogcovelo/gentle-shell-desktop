@@ -10,6 +10,12 @@ import "./MessageThread.css";
  * sub-pixel layout and a partially visible last line. */
 const PIN_THRESHOLD_PX = 32;
 
+/** S1: how far the reader sits from the end. One function, so the latch and
+ * the jump can never disagree about what "at the bottom" means. */
+function distanceFromBottom(thread: HTMLElement): number {
+  return thread.scrollHeight - thread.scrollTop - thread.clientHeight;
+}
+
 /**
  * S2 (chat-action-rows T3): a row is bound to the turn position where it
  * started — the `tool` part the turn itself recorded (chatReducer) — and
@@ -92,18 +98,33 @@ export function MessageThread({ messages, dialogs, onAnswerDialog, welcomeKey, t
   // bubble, never migrated onto the last assistant message.
   const orphanCalls = callsWithoutTurn(visibleMessages, toolCalls);
 
-  // S1: track the reader's position on the real scroll container. The
-  // threshold tolerates sub-pixel layout and a partially visible last line,
-  // so a reader who is effectively at the end still follows.
+  // S1: track the reader's position on the real scroll container, and follow
+  // CONTENT growth — never "which prop identity happened to change". A tool
+  // row that appears inside an existing bubble (chat-action-rows) or a
+  // streamed delta grows the thread while `messages` keeps its identity; a
+  // follow effect that only watches `messages` skips it, the reader drifts
+  // below the fold, the next measurement sees more than PIN_THRESHOLD_PX of
+  // unread content, and following stays off until they scroll by hand.
+  // Observing the thread's own mutations catches every cause of growth, so a
+  // reader pinned to the end is never left behind.
   useEffect(() => {
     const thread = threadRef.current;
     if (!thread) return;
-    const handleScroll = () => {
-      pinnedToBottom.current = thread.scrollHeight - thread.scrollTop - thread.clientHeight <= PIN_THRESHOLD_PX;
+    const follow = (): void => {
+      if (isEmpty || !pinnedToBottom.current) return;
+      bottomRef.current?.scrollIntoView({ behavior: "auto" });
+    };
+    const handleScroll = (): void => {
+      pinnedToBottom.current = distanceFromBottom(thread) <= PIN_THRESHOLD_PX;
     };
     thread.addEventListener("scroll", handleScroll, { passive: true });
-    return () => thread.removeEventListener("scroll", handleScroll);
-  }, []);
+    const observer = typeof MutationObserver === "undefined" ? undefined : new MutationObserver(follow);
+    observer?.observe(thread, { childList: true, characterData: true, subtree: true });
+    return () => {
+      thread.removeEventListener("scroll", handleScroll);
+      observer?.disconnect();
+    };
+  }, [isEmpty]);
 
   // S1: a different chat is a fresh reading position. This ref outlives the
   // switch, so it is reset explicitly instead of inheriting the previous
@@ -117,13 +138,16 @@ export function MessageThread({ messages, dialogs, onAnswerDialog, welcomeKey, t
   // Scrolling to the bottom is about following a conversation. An empty chat
   // has nothing to follow, and scrolling there would push the welcome hero
   // (T9b) — the first thing the reader should meet — out of view. Neither
-  // does an update move a reader who scrolled up (S1).
+  // does an update move a reader who scrolled up (S1). This is also the
+  // fallback for an environment without MutationObserver, so `toolCalls`
+  // belongs here too: a row that arrives without replacing `messages` still
+  // follows.
   useEffect(() => {
     if (isEmpty || !pinnedToBottom.current) {
       return;
     }
     bottomRef.current?.scrollIntoView({ behavior: "auto" });
-  }, [messages, dialogs, isEmpty]);
+  }, [messages, dialogs, toolCalls, isEmpty]);
 
   return (
     <div className="gc-thread" ref={threadRef} data-testid="gc-message-thread">

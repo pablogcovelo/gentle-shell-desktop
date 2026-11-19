@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MESSAGE_ROLE, type ChatMessage, type Dialog, type ToolCallView, type ToolVocabulary } from "@shared/bridge-types";
 import { MessageThread } from "./MessageThread";
 
@@ -66,6 +66,66 @@ describe("MessageThread", () => {
     rerender(<MessageThread messages={third} dialogs={[]} onAnswerDialog={vi.fn()} />);
 
     expect(scrollIntoView).toHaveBeenCalled();
+  });
+
+  // S1 (regression): a tool row that arrives inside the thread grows it
+  // WITHOUT replacing `messages`. The follow effect watched only `messages`,
+  // so the reader had to scroll by hand to see the new row.
+  it("follows a tool row that arrives without replacing the messages", async () => {
+    const messages: ChatMessage[] = [{ id: "m1", role: MESSAGE_ROLE.USER, text: "run the tool" }];
+    const running: ToolCallView[] = [{ id: "t1", toolName: "read", status: "running", messageId: "m1" }];
+    // A STABLE dialogs reference: a fresh [] per render would change the
+    // follow effect's dependencies on its own and hide the very regression
+    // this test pins.
+    const dialogs: Dialog[] = [];
+    const { rerender } = render(
+      <MessageThread messages={messages} dialogs={dialogs} onAnswerDialog={vi.fn()} toolCalls={[]} vocabulary={READ_VOCABULARY} />,
+    );
+    const thread = screen.getByTestId("gc-message-thread");
+    const scrollIntoView = Element.prototype.scrollIntoView as unknown as ReturnType<typeof vi.fn>;
+    Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 600 });
+    Object.defineProperty(thread, "clientHeight", { configurable: true, value: 200 });
+    thread.scrollTop = 400; // pinned to the end
+    fireEvent.scroll(thread);
+    scrollIntoView.mockClear();
+
+    rerender(
+      <MessageThread messages={messages} dialogs={dialogs} onAnswerDialog={vi.fn()} toolCalls={running} vocabulary={READ_VOCABULARY} />,
+    );
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+  });
+
+  // S1: the same growth must NOT move a reader who scrolled up — following is
+  // a property of the reader's position, not of the kind of content that
+  // arrived.
+  it("does not follow a tool row while the reader is scrolled up", async () => {
+    const messages: ChatMessage[] = [{ id: "m1", role: MESSAGE_ROLE.USER, text: "run the tool" }];
+    const running: ToolCallView[] = [{ id: "t1", toolName: "read", status: "running", messageId: "m1" }];
+    // A STABLE dialogs reference: a fresh [] per render would change the
+    // follow effect's dependencies on its own and hide the very regression
+    // this test pins.
+    const dialogs: Dialog[] = [];
+    const { rerender } = render(
+      <MessageThread messages={messages} dialogs={dialogs} onAnswerDialog={vi.fn()} toolCalls={[]} vocabulary={READ_VOCABULARY} />,
+    );
+    const thread = screen.getByTestId("gc-message-thread");
+    const scrollIntoView = Element.prototype.scrollIntoView as unknown as ReturnType<typeof vi.fn>;
+    Object.defineProperty(thread, "scrollHeight", { configurable: true, value: 600 });
+    Object.defineProperty(thread, "clientHeight", { configurable: true, value: 200 });
+    thread.scrollTop = 300; // 100px of unread content below the fold
+    fireEvent.scroll(thread);
+    scrollIntoView.mockClear();
+
+    rerender(
+      <MessageThread messages={messages} dialogs={dialogs} onAnswerDialog={vi.fn()} toolCalls={running} vocabulary={READ_VOCABULARY} />,
+    );
+    // Let every queued mutation observer callback run before asserting.
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
   // S1 / R3-002: the pin belongs to the chat, not to the component. A reader
