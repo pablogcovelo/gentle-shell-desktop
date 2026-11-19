@@ -39,7 +39,7 @@ T5 — S14 · vocabulary variant chips in the action detail · `fa40d32`
 T6 — S2, S16 · composer hint, double-Esc stop, emoji removal · `01a5b74`
 T7 — S13, S18 · design board: flat agents, eye, chips, orphan region, status entry, dead CSS · `fd5feb1` (amended)
 T8 — S12 · informational cards leave the chat · `afd5706`
-T9 — S19, S20, S21 · command palette, chat search removed, slash typing removed from the composer · commit pending
+T9 — S19, S20, S21 · command palette, chat search removed, slash typing removed from the composer · `ae04f1c`
 
 Delivery slices on `feat/gui-design-alignment`, none pushed:
 `3014c52` shell structure, agents and status surfaces · `01a5b74` composer ·
