@@ -170,7 +170,6 @@ dialog input{font:12px var(--mono);width:100%;background:var(--bg);border:1px so
 .chat-action[data-action="search"] .action-glyph{color:var(--blue)}
 .chat-action[data-action="list"] .action-glyph{color:var(--text-2)}
 .chat-action[data-action="bash"] .action-glyph{color:var(--champagne)}
-.chat-action[data-action="bash"] .action-glyph{font:12px/1 var(--mono);letter-spacing:.5px}
 .action-label{font:11px/1.5 var(--mono);color:var(--text-2);overflow-wrap:anywhere}
 .action-state{font-size:10px;white-space:nowrap;color:var(--muted)}
 .chat-action[data-action="delegation"] .action-state,.chat-action[data-action="edit"] .action-state{color:var(--amber)}
@@ -287,8 +286,8 @@ dialog input{font:12px var(--mono);width:100%;background:var(--bg);border:1px so
 <summary><span class="action-glyph" aria-hidden="true">☷</span><span class="action-label">list · src/renderer/chat</span><span class="action-state">12 entries</span></summary>
 <div class="action-detail"><code>find</code><p>Example directory listing that establishes which files the chat view owns. This prototype enumerated nothing.</p></div>
 </details>
-<details class="chat-action" data-action="bash" data-native-glyph=">_">
-<summary><span class="action-glyph" aria-hidden="true">&gt;_</span><span class="action-label">bash · npm test -- --run</span><span class="action-state">Exit 0</span></summary>
+<details class="chat-action" data-action="bash" data-native-glyph="$">
+<summary><span class="action-glyph" aria-hidden="true">$</span><span class="action-label">bash · npm test -- --run</span><span class="action-state">Exit 0</span></summary>
 <div class="action-detail"><code>bash</code><p>Example shell command with its exit status shown next to it; the glyph never hides a failure. No command ran for this visual state.</p></div>
 </details>
 <details class="chat-action" data-action="write" data-native-glyph="+">
