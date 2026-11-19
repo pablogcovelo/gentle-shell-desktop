@@ -5,6 +5,7 @@ import { useBridge } from "@renderer/shared/bridge/useBridge";
 import { HelpersContainer } from "@renderer/features/helpers/HelpersContainer";
 import { directoryOf } from "@renderer/features/chats/components/ChatListItem";
 import { Composer } from "./components/Composer";
+import { CommandPalette, type PaletteEntry } from "./components/CommandPalette";
 import { ResumeSessionDialog } from "./components/ResumeSessionDialog";
 import { Footer } from "./components/Footer";
 import { CONVERSATION_PANE, ConversationHeader, type ConversationPane } from "./components/ConversationHeader";
@@ -193,6 +194,10 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   const hostId = closedHosts.has(candidateHostId) ? "" : candidateHostId;
   const [bridgeError, setBridgeError] = useState<string | undefined>(undefined);
   const [draft, setDraft] = useState("");
+  // T9 (S19): the command palette lives here because this container owns
+  // chatState.commands and the host id. Mounted only while a conversation is
+  // open, so the shortcut does nothing without a chat.
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [resumeSelection, setResumeSelection] = useState<{ key: string; directory: string }>();
   const [pane, setPane] = useState<ConversationPane>(CONVERSATION_PANE.CHAT);
   // The packaged app's version for the footer's last group (S9). Asked once:
@@ -271,6 +276,20 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
       unsubscribeClosed?.();
     };
   }, [bridge, hostId]);
+
+  // T9 (S19): Ctrl/Cmd+K toggles the palette. A document-level listener so
+  // it works while the composer or the thread has focus; the container only
+  // exists while a chat is open, so the shortcut does nothing without one.
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent): void => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+      }
+    };
+    document.addEventListener("keydown", keydown);
+    return () => document.removeEventListener("keydown", keydown);
+  }, []);
 
   // Opens (or starts) the selected chat whenever the selection changes.
   // Guarded against stale resolutions: if the selection changes again
@@ -414,17 +433,44 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
       setDraft("");
       if (text !== "/resume") {
         setBridgeError("Use /resume without arguments to choose a session in this directory.");
-      } else if (!workspacePath) {
-        setBridgeError("Open a workspace directory before using /resume.");
       } else {
-        setBridgeError(undefined);
-        setResumeSelection({ key: currentKey, directory: workspacePath });
+        openResumePicker();
       }
       return;
     }
     setDraft("");
     bridge
       .sendMessage(hostId, text)
+      .then((result) => {
+        if (!result.queued) setBridgeError(result.reason ?? "Gentle did not send the message");
+      })
+      .catch((cause: unknown) => setBridgeError(errorText(cause)));
+  };
+
+  /** The shared GUI /resume path: the palette's app entry (S19) and a typed
+   * "/resume" draft both land here. Gated by the workspace directory, exactly
+   * as the composer gated /resume before. */
+  const openResumePicker = (): void => {
+    if (!workspacePath) {
+      setBridgeError("Open a workspace directory before using /resume.");
+      return;
+    }
+    setBridgeError(undefined);
+    setResumeSelection({ key: currentKey, directory: workspacePath });
+  };
+
+  /** T9 (S19): a palette row was run. The desktop's own entry opens the
+   * resume dialog; a wire command is sent as "/name" to the active host, and
+   * a `queued: false` answer surfaces its reason like the composer's send
+   * path does. */
+  const handleRunCommand = (entry: PaletteEntry): void => {
+    setPaletteOpen(false);
+    if (entry.source === "app") {
+      openResumePicker();
+      return;
+    }
+    bridge
+      .sendMessage(hostId, "/" + entry.name)
       .then((result) => {
         if (!result.queued) setBridgeError(result.reason ?? "Gentle did not send the message");
       })
@@ -534,11 +580,9 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
               // without a file picker (or a cancelled pick, which answers
               // null) changes nothing.
               onPickFile={bridge.chooseFile ? () => bridge.chooseFile!() : undefined}
-              // S6 (desktop-pending-work T6): the composer's slash list is
-              // whatever the child answered for `get_commands` — absent means
-              // the child did not answer, and the feature is simply off.
-              commands={chatState.commands}
-              resumeAvailable={Boolean(workspacePath)}
+              // S21: the composer's slash affordance is gone; this quiet
+              // button opens the palette this container owns.
+              onOpenPalette={() => setPaletteOpen(true)}
             />
           </div>
           {/* The artboard's fixed three-section inspector (T3): the chat's own
@@ -558,6 +602,14 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
       )}
       {/* The shell owns the global slot; standalone callers retain the inline footer. */}
       {footerTarget ? createPortal(footer, footerTarget) : footer}
+      {paletteOpen ? (
+        <CommandPalette
+          commands={chatState.commands ?? []}
+          resumeAvailable={Boolean(workspacePath)}
+          onRun={handleRunCommand}
+          onClose={() => setPaletteOpen(false)}
+        />
+      ) : null}
       {resumeSelection?.key === currentKey && resumeSelection.directory === workspacePath ? (
         <ResumeSessionDialog
           directory={resumeSelection.directory}

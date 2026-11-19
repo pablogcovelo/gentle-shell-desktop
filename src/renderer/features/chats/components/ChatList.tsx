@@ -6,9 +6,9 @@ import "./ChatList.css";
 
 export interface WorkspaceGroup {
   readonly directory: string;
-  /** The chats whose session cwd is this directory (already filtered by
-   * the panel's search). A persisted directory with no chat yet keeps its
-   * row with an empty list — that is the whole point of the registry. */
+  /** The chats whose session cwd is this directory. A persisted directory
+   * with no chat yet keeps its row with an empty list — that is the whole
+   * point of the registry. */
   readonly chats: readonly ChatSummary[];
   /** Whether a persisted registry entry backs this row: only such a row
    * carries a remove action (see WorkspaceRow). */

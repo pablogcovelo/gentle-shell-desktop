@@ -1,0 +1,230 @@
+/*
+ * Command palette (S19, artboard design/command-palette/01-spotlight-overlay.html):
+ * a centred 640px spotlight over the app's existing dimmed dialog backdrop.
+ * Panel surface, 1px strong boundary, radius 12, no shadows — the design
+ * system declares none. The backdrop class itself lives in AppDialogs.css.
+ */
+
+.gc-command-palette {
+  width: min(640px, 100%);
+  max-height: calc(100dvh - 32px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.gc-command-palette__input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.gc-command-palette__slash {
+  font: 600 16px var(--font-mono);
+  color: var(--accent);
+}
+
+.gc-command-palette__input input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: 14px var(--font-mono);
+}
+
+.gc-command-palette__input input:focus {
+  outline-offset: -2px;
+}
+
+.gc-command-palette__input input::placeholder {
+  color: var(--muted);
+}
+
+.gc-command-palette__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 400px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.gc-command-palette__group-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px 5px;
+}
+
+.gc-command-palette__group-name {
+  font: 10px var(--font-mono);
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.gc-command-palette__group-count {
+  font: 9px var(--font-mono);
+  color: var(--muted);
+}
+
+.gc-command-palette__row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 9px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.gc-command-palette__row:hover {
+  background: var(--line);
+}
+
+/* Selected row: raised surface, strong boundary and an accent marker. */
+.gc-command-palette__row.is-selected {
+  background: var(--raised);
+  border-color: var(--line-strong);
+}
+
+.gc-command-palette__row.is-selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.gc-command-palette__name {
+  grid-column: 1;
+  grid-row: 1;
+  font: 600 13px var(--font-mono);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gc-command-palette__desc {
+  grid-column: 1;
+  grid-row: 2;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gc-command-palette__badge {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  justify-self: end;
+  padding: 3px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font: 9px var(--font-mono);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* Source badges are always paired with their text (design/system.md). */
+.gc-command-palette__row[data-source="prompt"] .gc-command-palette__badge {
+  color: var(--blue);
+}
+
+.gc-command-palette__row[data-source="skill"] .gc-command-palette__badge {
+  color: var(--champagne);
+}
+
+.gc-command-palette__row[data-source="extension"] .gc-command-palette__badge {
+  color: var(--purple);
+}
+
+/* Selected rows bring their name and description up to full contrast. */
+.gc-command-palette__row.is-selected .gc-command-palette__name {
+  color: var(--accent);
+}
+
+.gc-command-palette__row.is-selected .gc-command-palette__desc {
+  color: var(--text-2);
+}
+
+.gc-command-palette__empty {
+  flex: none;
+  padding: 36px 24px;
+  text-align: center;
+}
+
+.gc-command-palette__empty p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.gc-command-palette__empty button {
+  margin-top: 14px;
+  padding: 6px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.gc-command-palette__empty button:hover {
+  background: var(--raised);
+}
+
+.gc-command-palette__foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: none;
+  padding: 9px 14px;
+  border-top: 1px solid var(--line);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.gc-command-palette__hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.gc-command-palette__foot kbd {
+  padding: 2px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  font: 10px var(--font-mono);
+  color: var(--text-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gc-command-palette,
+  .gc-command-palette * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

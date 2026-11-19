@@ -22,13 +22,12 @@ export interface ChatsContainerProps {
    * SELECTED directory only; every other row answers from the registry's
    * per-directory map (`workspaces.branches`). */
   readonly activeBranch?: string;
-  readonly query?: string;
   readonly navigationTools?: ReactNode;
   readonly navigationOpen?: boolean;
 }
 
 /** Directory navigation never reads Pi history. Saved sessions live in /resume. */
-export function ChatsContainer({ onNewChat, onWorkspaceCreated, onSelectWorkspace, workspaces, onWorkspacesChanged, onCloseWorkspace, workspaceRevision = 0, selectedDirectory, activeBranch, query, navigationTools, navigationOpen }: ChatsContainerProps) {
+export function ChatsContainer({ onNewChat, onWorkspaceCreated, onSelectWorkspace, workspaces, onWorkspacesChanged, onCloseWorkspace, workspaceRevision = 0, selectedDirectory, activeBranch, navigationTools, navigationOpen }: ChatsContainerProps) {
   const bridge = useBridge();
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [addingWorkspace, setAddingWorkspace] = useState(false);
@@ -38,9 +37,9 @@ export function ChatsContainer({ onNewChat, onWorkspaceCreated, onSelectWorkspac
   revisionRef.current = workspaceRevision;
   const closing = useRef(new Set<string>());
   const [closingRows, setClosingRows] = useState<ReadonlySet<string>>(new Set());
-  const normalizedQuery = query?.trim();
-  const needle = normalizedQuery?.toLowerCase();
-  const directories = (workspaces?.directories ?? []).filter((directory) => !needle || directory.toLowerCase().includes(needle));
+  // T9 (S20): the chat-search dialog and its query filter are gone — the
+  // panel always renders every directory row.
+  const directories = workspaces?.directories ?? [];
 
   // A branch is a fact about each workspace, so every row answers one. The
   // live child's report wins for the open workspace (it is the freshest: it
@@ -162,7 +161,6 @@ export function ChatsContainer({ onNewChat, onWorkspaceCreated, onSelectWorkspac
           {directories.map((directory) => <WorkspaceRow key={directory} directory={directory} persisted selected={directory === selectedDirectory} branch={branchOf(directory)} disabled={closingRows.has(directory)} onSelect={handleSelectWorkspace} onRemove={handleRemoveWorkspace} />)}
         </ul>
       </div>
-      {normalizedQuery && directories.length === 0 ? <p className="gc-chats__empty">No workspaces match &quot;{normalizedQuery}&quot;.</p> : null}
       <div className="gc-chats__footer">
         <p>You lead. Gentle helps.</p><p>Local directory workspaces.</p>
         <div className="gc-chats__mobile-tools">{navigationTools}</div>

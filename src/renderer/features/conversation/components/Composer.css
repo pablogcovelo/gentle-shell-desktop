@@ -114,51 +114,30 @@
   cursor: not-allowed;
 }
 
-/* S6 (desktop-pending-work T6): the slash-command list, anchored to the
- * composer box just above it, in the order the child answered for
- * get_commands. Only rendered when the child answered and the draft is a
- * slash token. */
-.gc-composer__commands {
-  position: absolute;
-  bottom: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  margin: 0;
-  padding: 4px;
-  list-style: none;
+/* S21: the slash-command list left the composer; the quiet Commands button
+ * opens the palette ConversationContainer owns. Mono, muted, next to the
+ * send control area. */
+.gc-composer__palette {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
-  background: var(--raised);
-  max-height: 240px;
-  overflow-y: auto;
-}
-
-.gc-composer__command {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: 11px var(--font-mono);
   cursor: pointer;
 }
 
-.gc-composer__command:hover,
-.gc-composer__command.is-active {
-  background: var(--line);
+.gc-composer__palette:hover {
+  background: var(--raised);
+  color: var(--accent);
 }
 
-.gc-composer__command-name {
-  color: var(--text);
-  font: 13px var(--font-mono);
-  white-space: nowrap;
-}
-
-.gc-composer__command-desc {
-  color: var(--muted);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.gc-composer__palette:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .gc-composer__input-column { flex: 1; min-width: 0; }

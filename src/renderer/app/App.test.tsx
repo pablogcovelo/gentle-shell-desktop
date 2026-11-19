@@ -395,22 +395,30 @@ describe("App", () => {
     expect(screen.queryByRole("combobox", { name: "Chat" })).not.toBeInTheDocument();
   });
 
-  it("keeps search available through Ctrl+K without a top bar search control", async () => {
+  // T9 (S20): the command palette replaces the chat search entirely. The
+  // shortcut is owned by the open conversation, and the search dialog, the
+  // sidebar query filter and their copy are gone.
+  it("opens the command palette through Ctrl+K instead of the removed search dialog", async () => {
     render(<App />);
 
     expect(await screen.findByRole("button", { name: "gentle-shell-desktop — workspace" })).toBeInTheDocument();
     expect(within(screen.getByRole("banner", { name: "Application chrome" })).queryByRole("searchbox")).not.toBeInTheDocument();
-    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
-    const search = screen.getByRole("searchbox", { name: "Search chats" });
 
-    fireEvent.change(search, { target: { value: "no-such-chat-anywhere" } });
+    fireEvent.keyDown(screen.getByPlaceholderText("Tell Gentle what you need…"), { key: "k", ctrlKey: true });
 
-    expect(await screen.findByText(/No workspaces match/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "gentle-shell-desktop — workspace" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Commands" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Search chats" })).not.toBeInTheDocument();
+  });
 
-    fireEvent.change(search, { target: { value: "gentle-shell" } });
+  it("does nothing through Ctrl+K while no workspace is open", async () => {
+    await mockBridge.removeWorkspace!("/Users/dev/gentle-shell-desktop");
+    setMockChats([]);
+    render(<App />);
 
-    expect(await screen.findByRole("button", { name: "gentle-shell-desktop — workspace" })).toBeInTheDocument();
+    await screen.findByRole("region", { name: "No workspace open" });
+    fireEvent.keyDown(document.body, { key: "k", ctrlKey: true });
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("opens the settings and shortcut dialogs, and draws the window controls when the bridge offers them", async () => {

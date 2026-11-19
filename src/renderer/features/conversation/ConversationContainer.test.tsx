@@ -1712,3 +1712,110 @@ describe("ConversationContainer workspace pane (T2)", () => {
     expect(bridge.openWorkspace).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// T9 (S19/S20): the command palette lives in the container, which owns
+// chatState.commands and the host id. Ctrl/Cmd+K toggles it; running a wire
+// command sends "/name" to the active host; the app /resume entry opens the
+// resume dialog; the old chat-search dialog is gone.
+// ---------------------------------------------------------------------------
+
+describe("ConversationContainer command palette (T9)", () => {
+  const PALETTE_STATE = {
+    ...emptyState(),
+    commands: [
+      { name: "plan", description: "Make a plan", source: "prompt" as const },
+      { name: "skill:review", source: "skill" as const },
+    ],
+  };
+
+  async function renderWithPalette(activeChat: ActiveChat = NEW_CHAT, overrides: Partial<Parameters<typeof makeBridge>[0]> = {}) {
+    window.gentle = makeBridge({
+      newChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: PALETTE_STATE }),
+      ...overrides,
+    });
+    render(<ConversationContainer activeChat={activeChat} />);
+    await act(async () => {});
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    return screen.getByRole("dialog", { name: "Commands" });
+  }
+
+  it("opens the palette with Ctrl+K and closes it with Escape", async () => {
+    window.gentle = makeBridge();
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    expect(screen.queryByRole("dialog", { name: "Commands" })).not.toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    expect(screen.getByRole("dialog", { name: "Commands" })).toBeInTheDocument();
+
+    fireEvent.keyDown(
+      within(screen.getByRole("dialog", { name: "Commands" })).getByRole("combobox"),
+      { key: "Escape" },
+    );
+    expect(screen.queryByRole("dialog", { name: "Commands" })).not.toBeInTheDocument();
+  });
+
+  it("opens the palette with Cmd+K as well", async () => {
+    const dialog = await renderWithPalette();
+    expect(dialog).toBeInTheDocument();
+  });
+
+  it("runs a wire command from the palette as '/name' to the active host", async () => {
+    const bridge = makeBridge({
+      newChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: PALETTE_STATE }),
+      sendMessage: vi.fn().mockResolvedValue({ queued: true }),
+    });
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const palette = screen.getByRole("dialog", { name: "Commands" });
+
+    fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
+
+    expect(bridge.sendMessage).toHaveBeenCalledExactlyOnceWith("host-1", "/plan");
+    // Running the command closes the palette again.
+    expect(screen.queryByRole("dialog", { name: "Commands" })).not.toBeInTheDocument();
+  });
+
+  it("surfaces the refusal reason when the run answers queued: false", async () => {
+    const bridge = makeBridge({
+      newChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: PALETTE_STATE }),
+      sendMessage: vi.fn().mockResolvedValue({ queued: false, reason: "The child refused the prompt" }),
+    });
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    fireEvent.keyDown(within(screen.getByRole("dialog", { name: "Commands" })).getByRole("combobox"), { key: "Enter" });
+
+    expect(await screen.findByRole("status")).toHaveTextContent("The child refused the prompt");
+  });
+
+  it("opens the resume dialog from the app /resume entry instead of sending text", async () => {
+    const bridge = makeBridge({
+      listChats: vi.fn().mockResolvedValue([EXISTING_CHAT]),
+      sendMessage: vi.fn().mockResolvedValue({ queued: true }),
+    });
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} />);
+    await act(async () => {});
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const palette = screen.getByRole("dialog", { name: "Commands" });
+    // The app entry comes first: it is selected on open, so Enter runs it.
+    expect(within(palette).getByRole("option", { name: /^\/resume/ })).toBeInTheDocument();
+
+    fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
+
+    const resumeDialog = await screen.findByRole("dialog", { name: "Resume a session" });
+    expect(resumeDialog).toHaveTextContent("/tmp/project");
+    expect(bridge.sendMessage).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "Commands" })).not.toBeInTheDocument();
+  });
+
+  it("leaves the removed Search chats dialog gone when Ctrl+K opens the palette", async () => {
+    await renderWithPalette();
+    expect(screen.queryByRole("searchbox", { name: "Search chats" })).not.toBeInTheDocument();
+  });
+});

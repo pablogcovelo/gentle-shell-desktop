@@ -1,5 +1,4 @@
-import { useId, useState, useLayoutEffect, useRef, useEffect, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
-import type { ChatCommand } from "@shared/bridge-types";
+import { useId, useLayoutEffect, useRef, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
 import "./Composer.css";
 
 export interface ComposerProps {
@@ -17,15 +16,17 @@ export interface ComposerProps {
    * draft — it never reads or uploads the file. Omitted hides the
    * attachment action entirely (a bridge without a picker). */
   readonly onPickFile?: () => Promise<string | null>;
-  /** The slash commands the child answered for `get_commands`
-   * (desktop-pending-work T6, S6), in the order it sent them. Absent or
-   * empty means the child did not answer (or answered none): the list is
-   * simply not available — no empty popup, no placeholder entry, and never
-   * a hardcoded `/gentle:*` replica (S6/S11). */
-  readonly commands?: readonly ChatCommand[];
-  /** Local GUI action, not a claimed child RPC capability. */
-  readonly resumeAvailable?: boolean;
+  /** Opens the command palette owned by ConversationContainer (S19/S21):
+   * the slash affordance left the composer; this quiet button is the only
+   * way in. Omitted hides the button (a bare caller without the palette). */
+  readonly onOpenPalette?: () => void;
 }
+
+/** The palette-open shortcut glyph depends on the platform, asked exactly
+ * once at module load — no new dependency (S21). */
+const IS_MAC = /mac/i.test(
+  typeof navigator === "undefined" ? "" : navigator.platform || navigator.userAgent,
+);
 
 /** Artboard `.composer-tool` icons, by their 24px stroke path. */
 const ICON_PATHS = {
@@ -63,7 +64,7 @@ function ToolIcon({ d }: { readonly d: string }) {
  * The field is `readOnly` (not `disabled`) while working: a disabled
  * textarea would stop receiving the Escape keydown the gesture depends on.
  */
-export function Composer({ value, working, onChange, onSend, onAbort, ready = true, onPickFile, commands, resumeAvailable = false }: ComposerProps) {
+export function Composer({ value, working, onChange, onSend, onAbort, ready = true, onPickFile, onOpenPalette }: ComposerProps) {
   // A pane that does not know its host has nowhere to send: offering an enabled
   // Send there only produces a request main must refuse, so it waits instead.
   const canSend = ready && !working && value.trim().length > 0;
@@ -74,38 +75,6 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
   // S2 double-Esc stop gesture; 0 means "no previous press".
   const lastEscapeAtRef = useRef(0);
 
-  // The slash-command list (desktop-pending-work T6, S6). The token is the
-  // typed text after a leading "/" while no space has been typed yet; the
-  // visible entries are the child's own commands filtered by it,
-  // case-insensitively, in the order received.
-  const slashToken = /^\/\S*$/.test(value) ? value.slice(1) : undefined;
-  const commandChoices = [
-    ...(resumeAvailable ? [{ name: "resume", description: "Choose a saved Pi session in this directory" }] : []),
-    ...(commands ?? []),
-  ].filter((command, index, all) => all.findIndex((other) => other.name.toLowerCase() === command.name.toLowerCase()) === index);
-  const matches = slashToken !== undefined
-    ? commandChoices.filter((command) => command.name.toLowerCase().startsWith(slashToken.toLowerCase()))
-    : [];
-  const commandsListId = useId();
-  // Escape dismisses the list for the CURRENT token only: the next typed
-  // character changes the token, so the list re-opens and re-filters, while
-  // returning to the dismissed token keeps it closed.
-  const [dismissedToken, setDismissedToken] = useState<string | undefined>(undefined);
-  const listOpen = slashToken !== undefined && matches.length > 0 && dismissedToken !== slashToken;
-  // Nothing is highlighted until an arrow key moves there; Enter only
-  // completes a HIGHLIGHTED command (S6), so a freshly opened list does not
-  // silently swallow a submit.
-  const [activeIndex, setActiveIndex] = useState(-1);
-  useEffect(() => {
-    setActiveIndex(-1);
-  }, [slashToken, matches.length]);
-
-  /** Completes the draft to `/name ` — through the same onChange contract
-   * that owns it; the completed token is the whole draft, since a token
-   * only exists while no space has been typed. */
-  const completeCommand = (name: string): void => {
-    onChange(`/${name} `);
-  };
   useLayoutEffect(() => {
     const field = fieldRef.current;
     if (!field) return;
@@ -125,31 +94,10 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
-    // While the slash list is open it owns ArrowDown/ArrowUp (highlight,
-    // wrapping), Enter (complete the HIGHLIGHTED command instead of
-    // submitting) and Escape (dismiss for this token) — desktop-pending-work
-    // T6, S6. Every other keystroke falls through and keeps typing; the list
-    // re-filters from the new draft.
-    if (listOpen && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
-      event.preventDefault();
-      const delta = event.key === "ArrowDown" ? 1 : -1;
-      setActiveIndex((index) => {
-        const count = matches.length;
-        if (count === 0) return -1;
-        if (index < 0) return delta === 1 ? 0 : count - 1;
-        return (index + delta + count) % count;
-      });
-      return;
-    }
+    // S21: the slash list and its keys are gone. Escape keeps exactly its S2
+    // double-Esc stop job; every other keystroke falls through and keeps
+    // typing.
     if (event.key === "Escape") {
-      if (listOpen) {
-        setDismissedToken(slashToken);
-        // Dismissing the list counts as the first Esc of the double-Esc stop
-        // gesture: from the reader's side it is simply two consecutive Esc
-        // presses, and the hint advertises no distinction.
-        lastEscapeAtRef.current = Date.now();
-        return;
-      }
       const now = Date.now();
       if (working && now - lastEscapeAtRef.current <= DOUBLE_ESCAPE_STOP_WINDOW_MS) {
         // S2: the second of two consecutive Escapes inside the window stops
@@ -165,11 +113,6 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
     }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      const highlighted = listOpen && activeIndex >= 0 ? matches[activeIndex] : undefined;
-      if (highlighted) {
-        completeCommand(highlighted.name);
-        return;
-      }
       if (canSend) onSend();
     }
   };
@@ -207,8 +150,6 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
           readOnly={working}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
-          aria-expanded={listOpen}
-          aria-controls={listOpen ? commandsListId : undefined}
         />
           <div className="gc-composer__tools">
             {onPickFile ? (
@@ -222,35 +163,6 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
                 <ToolIcon d={ICON_PATHS.attachment} />
               </button>
             ) : null}
-        {listOpen ? (
-          // Anchored inside the composer box, just above it, in the order
-          // the child answered. An entry
-          // without a description renders only its name; no argument hint
-          // exists on the wire and none is invented (S6/S11).
-          <ul
-            className="gc-composer__commands"
-            id={commandsListId}
-            role="listbox"
-            aria-label="Slash commands"
-          >
-            {matches.map((command, index) => (
-              <li
-                key={command.name}
-                role="option"
-                id={`${commandsListId}-option-${index}`}
-                aria-selected={index === activeIndex}
-                className={index === activeIndex ? "gc-composer__command is-active" : "gc-composer__command"}
-                // Keep the textarea focused and the draft intact; the click
-                // itself completes the entry.
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => completeCommand(command.name)}
-              >
-                <span className="gc-composer__command-name">/{command.name}</span>
-                {command.description ? <span className="gc-composer__command-desc">{command.description}</span> : null}
-              </li>
-            ))}
-          </ul>
-        ) : null}
         <div className="gc-composer__foot">
             {/** No audio pipeline exists: disclose the unavailable action. */}
             <button
@@ -262,6 +174,21 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
             >
               <ToolIcon d={ICON_PATHS.microphone} />
             </button>
+          {onOpenPalette ? (
+            // S21: the quiet way back into commands — opens the palette
+            // ConversationContainer owns. The shortcut glyph follows the
+            // platform; the accessible name stays "Commands".
+            <button
+              type="button"
+              className="gc-composer__palette"
+              aria-label="Commands"
+              title={`Open the command palette (${IS_MAC ? "⌘K" : "Ctrl+K"})`}
+              onClick={onOpenPalette}
+            >
+              <span aria-hidden="true">{IS_MAC ? "⌘" : "Ctrl"}</span>
+              Commands
+            </button>
+          ) : null}
           <button className="gc-composer__send" type="submit" aria-label="Send" disabled={!canSend}>
             <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true"><path d="M4 3.5 21 12 4 20.5V14l10-2-10-2V3.5Z" /></svg>
           </button>

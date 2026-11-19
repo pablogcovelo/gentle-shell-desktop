@@ -110,6 +110,9 @@ it("never discovers history or resurrects closed rows through a flat fallback or
   expect(bridge.listChats).not.toHaveBeenCalled();
 });
 
+// T9 (S20): the sidebar query filter is gone with the chat-search dialog;
+// the panel always renders its rows.
+
 it("calls onNewChat through Ctrl+N without a visible New chat button", async () => {
   window.gentle = makeBridge();
   const onNewChat = vi.fn();
@@ -119,17 +122,6 @@ it("calls onNewChat through Ctrl+N without a visible New chat button", async () 
   fireEvent.keyDown(window, { key: "n", ctrlKey: true });
 
   expect(onNewChat).toHaveBeenCalled();
-});
-
-it.each(["ALPH", "/tmp/alpha", "   ", "zzz"])("filters opened directory rows for query %s without consulting chat titles", async (query) => {
-  const bridge = makeBridge({ listChats: vi.fn().mockResolvedValue([makeChat({ title: "Secret title" })]) });
-  window.gentle = bridge;
-  render(<ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} workspaces={{ directories: ["/tmp/alpha", "/tmp/beta"], persisted: ["/tmp/alpha", "/tmp/beta"] }} query={query} />);
-  await act(async () => {});
-  expect(screen.queryByRole("button", { name: "alpha — workspace" }) !== null).toBe(query !== "zzz");
-  expect(screen.queryByRole("button", { name: "beta — workspace" }) !== null).toBe(query.trim() === "");
-  if (query === "zzz") expect(screen.getByText('No workspaces match "zzz".')).toBeInTheDocument();
-  expect(bridge.listChats).not.toHaveBeenCalled();
 });
 
 const EMPTY_STATE: ChatState = {

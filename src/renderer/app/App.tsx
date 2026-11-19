@@ -86,9 +86,6 @@ export function App() {
   const [narrow, setNarrow] = useState(() => window.innerWidth <= 800);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [footerTarget, setFooterTarget] = useState<HTMLDivElement | null>(null);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const searchRef = useRef<HTMLInputElement>(null);
-  const searchTrigger = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const resize = (): void => {
@@ -99,8 +96,6 @@ export function App() {
     return () => window.removeEventListener("resize", resize);
   }, []);
   const [inspectorVisible, setInspectorVisible] = useState(true);
-  // Search stays available through Ctrl/⌘+K without restoring removed chrome.
-  const [query, setQuery] = useState("");
   // The chrome's two dialogs: which one is open, if any.
   const [dialog, setDialog] = useState<AppDialogName | undefined>(undefined);
   // Facts the dialogs report: what the first-run probe found, and the
@@ -184,37 +179,23 @@ export function App() {
   useEffect(() => {
     if (screen !== SCREEN.CHAT) return;
     const keydown = (event: KeyboardEvent): void => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k" && !dialog) {
-        event.preventDefault();
-        searchTrigger.current = document.activeElement as HTMLElement;
-        setSearchOpen(true);
-        setNavigationOpen(true);
-        setSidebarVisible(true);
-      }
-      if (event.key === "Escape" && !dialog) {
-        if (searchOpen) {
-          setSearchOpen(false);
-          setQuery("");
-          searchTrigger.current?.focus();
-        } else if (navigationOpen) {
-          setNavigationOpen(false);
-          document.querySelector<HTMLButtonElement>('.gc-topbar__toggle')?.focus();
-        }
+      // T9 (S20): Ctrl/Cmd+K belongs to the command palette, owned by the
+      // open conversation — the shell's own Escape job (collapsing the
+      // narrow navigation) is all that is left here.
+      if (event.key === "Escape" && !dialog && navigationOpen) {
+        setNavigationOpen(false);
+        document.querySelector<HTMLButtonElement>('.gc-topbar__toggle')?.focus();
       }
     };
     window.addEventListener("keydown", keydown);
     return () => window.removeEventListener("keydown", keydown);
-  }, [screen, dialog, searchOpen, navigationOpen]);
+  }, [screen, dialog, navigationOpen]);
 
   useEffect(() => {
-    if (searchOpen) searchRef.current?.focus();
-  }, [searchOpen]);
-
-  useEffect(() => {
-    if (narrow && navigationOpen && !searchOpen) {
+    if (narrow && navigationOpen) {
       document.querySelector<HTMLButtonElement>(".gc-chats button")?.focus();
     }
-  }, [narrow, navigationOpen, searchOpen]);
+  }, [narrow, navigationOpen]);
 
   // Every selection change shares one rule (T5b/T11): the old host id must
   // never answer for the new pane, and a stale creation must not adopt into
@@ -229,8 +210,6 @@ export function App() {
 
   const handleSelectChat = (chat: ChatSummary): void => {
     setNavigationOpen(false);
-    setSearchOpen(false);
-    setQuery("");
     openPane({ kind: "existing", chat });
   };
 
@@ -241,8 +220,6 @@ export function App() {
   const handleSelectWorkspace = (directory: string): void => {
     if (pendingCloses.current.has(directory)) return;
     setNavigationOpen(false);
-    setSearchOpen(false);
-    setQuery("");
     openPane({ kind: "workspace", directory });
   };
 
@@ -283,7 +260,6 @@ export function App() {
 
   const handleNewChat = (): void => {
     setNavigationOpen(false);
-    setQuery("");
     openPane({ kind: "new", epoch: nextNewChatEpoch.current++ });
   };
 
@@ -351,7 +327,6 @@ export function App() {
           selectedDirectory={activeDirectory}
           selectedChatId={activeChat.kind === "existing" ? activeChat.chat.id : undefined}
           activeBranch={activeBranch}
-          query={query}
           navigationTools={<RailTools onOpenSettings={() => setDialog(APP_DIALOG.SETTINGS)} onOpenShortcuts={() => setDialog(APP_DIALOG.SHORTCUTS)} />}
           navigationOpen={narrow && navigationOpen}
         />
@@ -379,22 +354,6 @@ export function App() {
         )}
       </div>
       <div className="gc-app__footer" ref={setFooterTarget} />
-      {searchOpen ? (
-        <div className="gc-dialog-backdrop">
-          <div className="gc-dialog" role="dialog" aria-modal="true" aria-label="Search chats" onKeyDown={(event) => {
-            if (event.key !== "Tab") return;
-            const input = searchRef.current;
-            const button = event.currentTarget.querySelector("button");
-            if (event.shiftKey && document.activeElement === input) { event.preventDefault(); button?.focus(); }
-            else if (!event.shiftKey && document.activeElement === button) { event.preventDefault(); input?.focus(); }
-          }}>
-            <h2>Search chats</h2>
-            <input ref={searchRef} type="search" aria-label="Search chats" placeholder="Search chats…" value={query} onChange={(event) => setQuery(event.target.value)} />
-            <p>Search by title or directory. Escape clears the filter and closes search.</p>
-            <button type="button" onClick={() => { setSearchOpen(false); searchTrigger.current?.focus(); }}>Show results</button>
-          </div>
-        </div>
-      ) : null}
       <AppDialogs
         dialog={dialog}
         onClose={() => setDialog(undefined)}
