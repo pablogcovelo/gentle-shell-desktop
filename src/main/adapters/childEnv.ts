@@ -18,14 +18,29 @@ import path from "node:path";
  * The desktop is a client of the agent runtime, never a provider of it, so
  * nothing under its own `node_modules` belongs on the child's PATH.
  */
-export function sanitizeChildEnv(env: NodeJS.ProcessEnv, appRoot: string): NodeJS.ProcessEnv {
+export function sanitizeChildEnv(env: NodeJS.ProcessEnv, appRoot: string, platform: NodeJS.Platform = process.platform): NodeJS.ProcessEnv {
   const key = pathKey(env);
   const value = key === undefined ? undefined : env[key];
   if (key === undefined || value === undefined) return { ...env };
 
   const owned = realpathOrSelf(path.join(appRoot, "node_modules"));
-  const kept = value.split(path.delimiter).filter((entry) => !isInsideAppNodeModules(entry, owned));
-  return { ...env, [key]: kept.join(path.delimiter) };
+  const kept = value.split(path.delimiter).filter((entry) => !isInsideAppNodeModules(entry, owned, platform));
+
+  // Windows treats environment names case-insensitively, so `env.PATH` answers
+  // even when the real key is spelled `Path`. The copy below keeps every own key
+  // with its original spelling, which would leave the UNsanitized `Path` next to
+  // the sanitized `PATH` — the child then inherits both and the app's bins
+  // survive. Only Windows gets this sweep: elsewhere `PATH` and `Path` are two
+  // different variables and deleting one would change a child's environment
+  // outside the scope of this function.
+  const sanitized: NodeJS.ProcessEnv = { ...env };
+  if (platform === "win32") {
+    for (const existing of Object.keys(sanitized)) {
+      if (existing !== key && existing.toUpperCase() === key.toUpperCase()) delete sanitized[existing];
+    }
+  }
+  sanitized[key] = kept.join(path.delimiter);
+  return sanitized;
 }
 
 /** Windows spells the variable `Path`; whichever spelling the environment uses is the one to rewrite. */
@@ -44,9 +59,9 @@ function realpathOrSelf(target: string): string {
   }
 }
 
-function isInsideAppNodeModules(entry: string, owned: string): boolean {
+function isInsideAppNodeModules(entry: string, owned: string, platform: NodeJS.Platform = process.platform): boolean {
   const candidate = realpathOrSelf(entry);
-  const [left, right] = process.platform === "win32"
+  const [left, right] = platform === "win32"
     ? [candidate.toLowerCase(), owned.toLowerCase()]
     : [candidate, owned];
   return left === right || left.startsWith(right.endsWith(path.sep) ? right : `${right}${path.sep}`);

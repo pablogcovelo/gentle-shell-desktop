@@ -48,6 +48,38 @@ describe("sanitizeChildEnv", () => {
     expect(sanitized[key === "Path" ? "PATH" : "Path"]).toBeUndefined();
   });
 
+  // Windows answers `env.PATH` even when the real key is `Path`, and a spread keeps
+  // the original spelling, so both variants can reach the child. The unsanitized
+  // copy must not survive next to the clean one.
+  it("removes every case variant of the PATH name on Windows so only the sanitized list survives", () => {
+    const owned = path.join(appRoot, "node_modules", ".bin");
+    const env: NodeJS.ProcessEnv = {
+      PATH: "/usr/bin",
+      Path: [owned, "/usr/bin"].join(path.delimiter),
+    };
+
+    const sanitized = sanitizeChildEnv(env, appRoot, "win32");
+
+    expect(sanitized.PATH).toBe("/usr/bin");
+    expect(sanitized.Path).toBeUndefined();
+    expect(Object.keys(sanitized).filter((name) => name.toUpperCase() === "PATH")).toEqual(["PATH"]);
+  });
+
+  // Outside Windows the two names are different variables; a distinct `Path` is
+  // none of this function's business and must survive untouched.
+  it("leaves a distinct Path variable alone on POSIX", () => {
+    const owned = path.join(appRoot, "node_modules", ".bin");
+    const env: NodeJS.ProcessEnv = {
+      PATH: [owned, "/usr/bin"].join(path.delimiter),
+      Path: "/opt/other-tool/bin",
+    };
+
+    const sanitized = sanitizeChildEnv(env, appRoot, "linux");
+
+    expect(sanitized.PATH).toBe("/usr/bin");
+    expect(sanitized.Path).toBe("/opt/other-tool/bin");
+  });
+
   it("leaves an environment without PATH untouched", () => {
     const env = { HOME: "/home/dev" };
 
