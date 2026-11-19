@@ -1,24 +1,29 @@
+/* Persistent status entries (S12, gui-design-alignment): errors, keyed
+ * statuses and notifications are part of the conversation flow — no
+ * absolute positioning, no dismissal animation, no opacity transition.
+ * They sit under the last message, inside the thread's 700px reading
+ * column, dense and quiet, coloured by severity:
+ * error var(--red), warning var(--amber), info/status var(--blue). */
 .gc-status-line {
   color: var(--red);
   font-size: 0.85rem;
   background: var(--raised);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border-left: 3px solid var(--red);
+  border-radius: 4px;
   padding: 0.5rem 0.75rem;
-  margin: 0 1rem;
+  margin: 0.5rem 0 0;
 }
 
 /* Keyed statuses (desktop-rpc T2b): status chrome from ChatState.statuses,
- * one row per wire statusKey, in the same boxed style as the error line
- * but in neutral text colour — they are state, not a failure. */
+ * one row per wire statusKey, severity info — state, not a failure. */
 .gc-status-entries {
   list-style: none;
-  margin: 0.5rem 1rem 0;
+  margin: 0.5rem 0 0;
   padding: 0.5rem 0.75rem;
   font-size: 0.85rem;
   background: var(--raised);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border-left: 3px solid var(--blue);
+  border-radius: 4px;
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
@@ -36,20 +41,22 @@
 }
 
 .gc-status-entries__text {
-  color: var(--text-2);
+  color: var(--blue);
 }
 
-/* Transient notifications (desktop-rpc T2b): one row per retained
- * notification, coloured by wire severity so info / warning / error are
- * distinguishable at a glance. They never join the message thread. */
+/* Notifications (desktop-rpc T2b): one row per retained notification,
+ * coloured by wire severity so info / warning / error are distinguishable
+ * at a glance. Persistent — the reducer cap bounds the stack, the wire
+ * clears it, and nothing here hides on a timer. They never join the
+ * message thread. */
 .gc-status-notifications {
   list-style: none;
-  margin: 0.5rem 1rem 0;
+  margin: 0.5rem 0 0;
   padding: 0.5rem 0.75rem;
   font-size: 0.85rem;
   background: var(--raised);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border-left: 3px solid var(--line);
+  border-radius: 4px;
   display: flex;
   flex-direction: column;
   gap: 0.25rem;

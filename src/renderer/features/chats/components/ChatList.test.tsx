@@ -108,8 +108,8 @@ describe("ChatList workspace groups (T1)", () => {
   it("keeps the remove action on persisted rows only — a session-only row has nothing persisted to forget", () => {
     render(<ChatList chats={[]} groups={groups} onSelect={vi.fn()} onRemoveWorkspace={vi.fn()} />);
 
-    expect(screen.getByRole("button", { name: "Remove workspace added" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Remove workspace project" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close workspace added" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close workspace project" })).not.toBeInTheDocument();
   });
 
   // S4: the highlight box is the row, so the selected workspace's close
@@ -125,7 +125,7 @@ describe("ChatList workspace groups (T1)", () => {
 
     const row = screen.getByRole("button", { name: "project — workspace" }).closest("li");
     expect(row).toHaveClass("gc-workspace-row", "gc-workspace-row--selected");
-    expect(row).toContainElement(screen.getByRole("button", { name: "Remove workspace project" }));
+    expect(row).toContainElement(screen.getByRole("button", { name: "Close workspace project" }));
   });
 
   it("reports the picked workspace directory without touching chat selection", () => {
@@ -141,7 +141,7 @@ describe("ChatList workspace groups (T1)", () => {
     const onRemoveWorkspace = vi.fn();
     render(<ChatList chats={[]} groups={groups} onSelect={vi.fn()} onRemoveWorkspace={onRemoveWorkspace} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Remove workspace added" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close workspace added" }));
 
     expect(onRemoveWorkspace).toHaveBeenCalledWith("/tmp/added");
   });

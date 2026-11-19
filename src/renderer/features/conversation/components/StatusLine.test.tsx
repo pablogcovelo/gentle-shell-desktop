@@ -10,14 +10,18 @@ function notification(message: string, severity: ChatNotification["severity"]): 
 }
 
 describe("StatusLine", () => {
-  it("renders nothing when there is no error", () => {
+  it("renders nothing when there is nothing at all to show", () => {
     const { container } = render(<StatusLine />);
     expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByLabelText("Session status")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Notifications")).not.toBeInTheDocument();
   });
 
-  it("renders the error message with role status", () => {
+  it("renders the error message with role status and error severity", () => {
     render(<StatusLine error="pi exited unexpectedly" />);
-    expect(screen.getByRole("status")).toHaveTextContent("pi exited unexpectedly");
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("pi exited unexpectedly");
+    expect(status).toHaveClass("gc-status-line--error");
   });
 
   describe("keyed statuses (desktop-rpc T2b)", () => {
@@ -29,6 +33,11 @@ describe("StatusLine", () => {
       expect(list).toHaveTextContent("2 tasks open");
       expect(list).toHaveTextContent("other-ext");
       expect(list).toHaveTextContent("busy");
+    });
+
+    it("renders with info severity", () => {
+      render(<StatusLine statuses={{ "gentle-todo": "2 tasks open" }} />);
+      expect(screen.getByLabelText("Session status")).toHaveClass("gc-status-entries--info");
     });
 
     it("replaces the entry in place when the same key arrives again, never duplicating it", () => {
@@ -82,41 +91,32 @@ describe("StatusLine", () => {
       expect(stack.querySelector(".gc-status-line__notification--error")).toHaveTextContent("Disk full");
     });
 
-    it("hides the transient stack NOTIFICATION_VISIBLE_MS after the newest arrival, and shows a later one again", () => {
-      const { rerender } = render(<StatusLine notifications={[notification("Disk full", "error")]} />);
-      expect(screen.getByLabelText("Notifications")).toBeInTheDocument();
+    // S12 (gui-design-alignment): the maintainer's decision — "si solo se
+    // muestran por un periodo de tiempo limitado es muy fácil que el
+    // usuario se pierda estos StatusLine". Nothing here hides on a timer
+    // any more: past any former window the entries are still rendered.
+    it("keeps error, keyed status and notification rendered well past the former 6s window", () => {
+      render(
+        <StatusLine
+          error="pi exited unexpectedly"
+          statuses={{ "gentle-todo": "2 tasks open" }}
+          notifications={[notification("Disk full", "error")]}
+        />,
+      );
 
+      const farPastTheFormerWindow = 60000;
       act(() => {
-        vi.advanceTimersByTime(6000);
+        vi.advanceTimersByTime(farPastTheFormerWindow);
       });
-      expect(screen.queryByLabelText("Notifications")).not.toBeInTheDocument();
 
-      // A new arrival restarts visibility: the transient feedback is
-      // rendered again and clears again — never a growing history.
-      rerender(<StatusLine notifications={[notification("Sync finished", "info")]} />);
-      expect(screen.getByLabelText("Notifications")).toBeInTheDocument();
-      act(() => {
-        vi.advanceTimersByTime(6000);
-      });
-      expect(screen.queryByLabelText("Notifications")).not.toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent("pi exited unexpectedly");
+      expect(screen.getByLabelText("Session status")).toHaveTextContent("gentle-todo");
+      expect(screen.getByLabelText("Notifications")).toHaveTextContent("Disk full");
     });
 
-    it("restarts the visibility window when a notification arrives while one is already showing", () => {
-      const { rerender } = render(<StatusLine notifications={[notification("Disk full", "error")]} />);
-
-      act(() => {
-        vi.advanceTimersByTime(5000);
-      });
-      rerender(<StatusLine notifications={[notification("Disk full", "error"), notification("Sync finished", "info")]} />);
-
-      act(() => {
-        vi.advanceTimersByTime(5000);
-      });
-      // Only 5s since the newest arrival — still visible.
-      expect(screen.getByLabelText("Notifications")).toBeInTheDocument();
-      act(() => {
-        vi.advanceTimersByTime(1000);
-      });
+    it("renders nothing when the notification list is empty", () => {
+      const { container } = render(<StatusLine notifications={[]} />);
+      expect(container).toBeEmptyDOMElement();
       expect(screen.queryByLabelText("Notifications")).not.toBeInTheDocument();
     });
   });

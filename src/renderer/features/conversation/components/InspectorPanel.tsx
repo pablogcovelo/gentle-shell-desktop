@@ -1,4 +1,4 @@
-import type { HelpersActivity, SessionIdentityView, SubscriptionUsage, TodoPanelState } from "@shared/bridge-types";
+import type { HelperStatus, HelpersActivity, SessionIdentityView, SubscriptionUsage, TodoPanelState } from "@shared/bridge-types";
 import type { ReactElement } from "react";
 import { TodoCard, todoProgress } from "./TodoCard";
 import { UsageMeters } from "./UsageMeters";
@@ -17,9 +17,32 @@ export interface InspectorPanelProps {
   readonly usageChannelUnavailable?: boolean;
   /** The open chat's delegated-agent activity (ChatState.helpers). */
   readonly helpers: HelpersActivity;
-  /** Opens the helpers view (S6: the button performs its stated action). */
+  /** Opens the helpers view (S10: the Agents head's eye button performs its stated action). */
   readonly onOpenHelpers: () => void;
 }
+
+/**
+ * S9 (gui-design-alignment): the glyph and word a flat agent row shows,
+ * total over the six statuses the app knows (HELPER_STATUS in
+ * src/shared/bridge-types.ts). A status value outside that set falls
+ * back to ○ and its raw word — the row never invents a reading.
+ */
+const AGENT_GLYPH: Record<HelperStatus, string> = {
+  queued: "○",
+  running: "◐",
+  waiting: "○",
+  done: "✓",
+  failed: "✕",
+  cancelled: "⊘",
+};
+const AGENT_WORD: Record<HelperStatus, string> = {
+  queued: "Queued",
+  running: "Running",
+  waiting: "Waiting",
+  done: "Done",
+  failed: "Failed",
+  cancelled: "Cancelled",
+};
 
 /**
  * The artboard's fixed three-section inspector (T3 — design/slack-gentle/
@@ -47,13 +70,7 @@ export function InspectorPanel({ todo, usage, usageChannelUnavailable, helpers, 
         </div>
         <div className="gc-inspector__scroll" tabIndex={0} role="group" aria-label="Tasks in this conversation">
           {todo && tasks.length > 0 ? (
-            <>
-              <p className="gc-inspector__note gc-inspector__intro">A small plan. A clear next step.</p>
-              {progress?.percent != null && <>
-                <div className="gc-inspector__progress" role="progressbar" aria-label="Task progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent}><span style={{ width: `${progress.percent}%` }} /></div>
-              </>}
-              <TodoCard todo={todo} variant="panel" />
-            </>
+            <TodoCard todo={todo} variant="panel" />
           ) : (
             <p className="gc-inspector__note">No tasks in this conversation yet.</p>
           )}
@@ -91,6 +108,14 @@ export function InspectorPanel({ todo, usage, usageChannelUnavailable, helpers, 
           <span className="gc-inspector__meta">
             {helpers.summary.running} active · {helpers.summary.finished} finished
           </span>
+          {hasAgents ? (
+            <button type="button" className="gc-inspector__eye" aria-label="Open helpers" title="Open helpers" onClick={onOpenHelpers}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            </button>
+          ) : null}
         </div>
         <div className="gc-inspector__scroll" tabIndex={0} role="group" aria-label="Delegated agents in this conversation">
           {hasAgents ? (
@@ -99,21 +124,13 @@ export function InspectorPanel({ todo, usage, usageChannelUnavailable, helpers, 
               <ul className="gc-inspector__agents">
                 {helpers.tasks.map((task) => (
                   <li key={task.id} className="gc-inspector__agent" data-status={task.status}>
-                    <details>
-                      <summary aria-label={`${task.status} subagent ${task.agent}: ${task.label}`}><span className="gc-inspector__agent-tree" aria-hidden="true">└</span><span className="gc-inspector__agent-status" aria-hidden="true">{task.status === "running" ? "◐" : task.status === "done" ? "✓" : task.status === "failed" ? "✕" : "○"}</span><span className="gc-inspector__agent-name">Subagent <code>{task.agent}</code></span></summary>
-                      <div className="gc-inspector__agent-log">
-                        <p className="gc-inspector__agent-label">{task.label}</p>
-                        <p><code>{task.id}</code> · {task.status}</p>
-                        {task.lastStep ? <p className="gc-inspector__agent-step">{task.lastStep}</p> : null}
-                        <p className="gc-inspector__agent-counters">{task.turns} turns · {task.toolCalls} tool calls</p>
-                      </div>
-                    </details>
+                    <span className="gc-inspector__agent-status" aria-hidden="true">{AGENT_GLYPH[task.status] ?? "○"}</span>
+                    <code className="gc-inspector__agent-name">{task.agent}</code>
+                    <span className="gc-inspector__agent-sep">·</span>
+                    <span className="gc-inspector__agent-word">{AGENT_WORD[task.status] ?? task.status}</span>
                   </li>
                 ))}
               </ul>
-              <button type="button" className="gc-inspector__open-helpers" onClick={onOpenHelpers}>
-                Open helpers
-              </button>
             </>
           ) : (
             <p className="gc-inspector__note">No delegated agents in this conversation yet.</p>

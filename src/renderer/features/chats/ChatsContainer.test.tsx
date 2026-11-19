@@ -166,8 +166,8 @@ describe("ChatsContainer workspace registry (T1)", () => {
       <ChatsContainer onSelectChat={vi.fn()} onNewChat={vi.fn()} workspaces={WORKSPACES} />,
     );
 
-    expect(await screen.findByRole("button", { name: "Remove workspace added" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Remove workspace project" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Close workspace added" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close workspace project" })).toBeInTheDocument();
   });
 
   it("remove deletes only the persisted entry: bridge.removeWorkspace with the directory, the fresh list reported up, no host touched", async () => {
@@ -185,7 +185,7 @@ describe("ChatsContainer workspace registry (T1)", () => {
         onWorkspacesChanged={onWorkspacesChanged}
       />,
     );
-    (await screen.findByRole("button", { name: "Remove workspace added" })).click();
+    (await screen.findByRole("button", { name: "Close workspace added" })).click();
 
     await vi.waitFor(() => expect(removeWorkspace).toHaveBeenCalledWith("/tmp/added"));
     await vi.waitFor(() => expect(onWorkspacesChanged).toHaveBeenCalledWith(fresh));
@@ -203,7 +203,7 @@ describe("ChatsContainer workspace registry (T1)", () => {
         onWorkspacesChanged={vi.fn()}
       />,
     );
-    (await screen.findByRole("button", { name: "Remove workspace added" })).click();
+    (await screen.findByRole("button", { name: "Close workspace added" })).click();
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/disk refused/);
   });

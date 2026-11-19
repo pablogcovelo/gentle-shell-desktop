@@ -57,7 +57,7 @@ export function WorkspaceRow({ directory, persisted = false, selected = false, d
         <button
           type="button"
           className="gc-chat-list-item__remove"
-          aria-label={`Remove workspace ${name}`}
+          aria-label={`Close workspace ${name}`}
           disabled={disabled}
           title="Close this workspace — Pi sessions and files are kept"
           onClick={() => onRemove(directory)}

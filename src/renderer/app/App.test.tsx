@@ -56,7 +56,9 @@ describe("App", () => {
     }
   });
 
-  it("header closes a resumed workspace through removeWorkspace and selects another opened directory", async () => {
+  // S6: the header close control is gone — the Workspaces panel's row
+  // control (S1: "Close workspace <name>") is the only close path.
+  it("the sidebar row closes a resumed workspace through removeWorkspace and selects another opened directory", async () => {
     await mockBridge.removeWorkspace!("/Users/dev/gentle-shell-desktop");
     await mockBridge.addWorkspace!("/tmp/other-open");
     await mockBridge.addWorkspace!("/Users/dev/gentle-shell-desktop");
@@ -71,7 +73,7 @@ describe("App", () => {
       fireEvent.click(screen.getByRole("button", { name: "Send" }));
       fireEvent.click(await within(await screen.findByRole("dialog")).findByRole("button", { name: /Write the README intro/ }));
       await act(async () => {});
-      fireEvent.click(screen.getByRole("button", { name: "Close this workspace" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close workspace gentle-shell-desktop" }));
       await screen.findByRole("heading", { name: "other-open" });
       expect(remove).toHaveBeenCalledExactlyOnceWith("/Users/dev/gentle-shell-desktop");
       expect(close).not.toHaveBeenCalled();
@@ -96,7 +98,7 @@ describe("App", () => {
     try {
       render(<App />);
       await screen.findByRole("heading", { name: "background" });
-      fireEvent.click(screen.getByRole("button", { name: "Remove workspace background" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close workspace background" }));
       await act(async () => {});
       fireEvent.click(screen.getByRole("button", { name: "gentle-shell-desktop — workspace" }));
       await screen.findByRole("heading", { name: "gentle-shell-desktop" });
@@ -107,7 +109,7 @@ describe("App", () => {
     } finally { remove.mockRestore(); }
   });
 
-  it("a header close invalidates an Add picker before it can reopen the closed directory", async () => {
+  it("closing a workspace invalidates an Add picker before it can reopen the closed directory", async () => {
     let release!: (directory: string) => void;
     const choose = vi.spyOn(mockBridge, "chooseDirectory").mockImplementation(() => new Promise<string>((done) => { release = done; }));
     const create = vi.spyOn(mockBridge, "createWorkspace");
@@ -115,7 +117,7 @@ describe("App", () => {
       render(<App />);
       await screen.findByRole("heading", { name: "gentle-shell-desktop" });
       fireEvent.click(screen.getByRole("button", { name: "Add workspace" }));
-      fireEvent.click(screen.getByRole("button", { name: "Close this workspace" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close workspace gentle-shell-desktop" }));
       await screen.findByRole("region", { name: "No workspace open" });
       await act(async () => { release("/Users/dev/gentle-shell-desktop"); });
       expect(create).not.toHaveBeenCalled();
@@ -131,19 +133,20 @@ describe("App", () => {
       fireEvent.keyDown(window, { key: "n", ctrlKey: true });
       await waitFor(() => expect(newChat).toHaveBeenCalledTimes(1));
       await act(async () => {});
-      fireEvent.click(screen.getByRole("button", { name: "Remove workspace gentle-shell-desktop" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close workspace gentle-shell-desktop" }));
       await screen.findByRole("region", { name: "No workspace open" });
       expect(newChat).toHaveBeenCalledTimes(1);
     } finally { newChat.mockRestore(); }
   });
 
-  it("renders the sidebar heading and the composer placeholder", async () => {
+  it("renders the sidebar heading, the composer placeholder and the row close control's accessible name (S1)", async () => {
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: "Workspaces" })).toBeInTheDocument();
     expect(
       screen.getByPlaceholderText("Tell Gentle what you need…"),
     ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close workspace gentle-shell-desktop" })).toBeInTheDocument();
   });
 
   // T2 (S3/S4/S11): the app no longer starts on a synthetic new chat that
@@ -206,7 +209,7 @@ describe("App", () => {
       await screen.findByRole("heading", { name: "solo-ws" });
       await vi.waitFor(() => expect(screen.getByLabelText("Session footer")).toHaveTextContent("/tmp/solo-ws"));
 
-      fireEvent.click(screen.getByRole("button", { name: "Remove workspace solo-ws" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close workspace solo-ws" }));
       expect(await screen.findByRole("region", { name: "No workspace open" })).toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: "solo-ws" })).not.toBeInTheDocument();
     } finally {
@@ -236,7 +239,7 @@ describe("App", () => {
       // first) is auto-selected and has no session: a new chat opens for it.
       await screen.findByRole("heading", { name: "beta-ws" });
 
-      fireEvent.click(screen.getByRole("button", { name: "Remove workspace beta-ws" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close workspace beta-ws" }));
 
       expect(await screen.findByRole("heading", { name: "alpha-ws" })).toBeInTheDocument();
 

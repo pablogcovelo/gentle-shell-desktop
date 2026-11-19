@@ -1,5 +1,4 @@
 import type { OddPhase } from "@shared/bridge-types";
-import { Button } from "@renderer/shared/ui/atoms/Button";
 import "./ConversationHeader.css";
 
 export const CONVERSATION_PANE = { CHAT: "chat", HELPERS: "helpers" } as const;
@@ -18,13 +17,6 @@ export interface ConversationHeaderProps {
   readonly pane?: ConversationPane;
   readonly runningHelpersCount?: number;
   readonly onSelectPane?: (pane: ConversationPane) => void;
-  /** P2: whether this pane addresses a live host it can close. False
-   * before the open/new resolution answers, because there is no host to
-   * stop yet — a control that cannot act must not be drawn. */
-  readonly canCloseWorkspace?: boolean;
-  /** P2: asks the container to close the addressed host through
-   * chat.close. Nothing is stopped here; the header only reports intent. */
-  readonly onCloseWorkspace?: () => void;
 }
 
 /** The app's own wording per ODD phase token (desktop-pending-work T5,
@@ -42,10 +34,10 @@ export const ODD_PHASE_LABELS: Readonly<Record<OddPhase, string>> = {
   closing: "Closing",
 };
 
-/** The board's directory-only context bar, plus the workspace's own close
- * control (P2) once the pane knows which host it is addressing, and the
- * ODD phase the child last published (T5, S5). */
-export function ConversationHeader({ title, oddPhase, canCloseWorkspace = false, onCloseWorkspace }: ConversationHeaderProps) {
+/** The board's directory-only context bar: the workspace title and the
+ * ODD phase the child last published (T5, S5). S6: no close control here —
+ * closing a workspace lives in the Workspaces panel's row control. */
+export function ConversationHeader({ title, oddPhase }: ConversationHeaderProps) {
   return (
     <header className="gc-conversation-header">
       <div className="gc-conversation-header__context">
@@ -60,17 +52,6 @@ export function ConversationHeader({ title, oddPhase, canCloseWorkspace = false,
         plain text, no click handler, no tooltip claiming a capability.
         Absent means unknown or cleared: nothing is rendered at all. */}
         {oddPhase ? <span className="gc-conversation-header__phase">{ODD_PHASE_LABELS[oddPhase]}</span> : null}
-        {canCloseWorkspace && onCloseWorkspace ? (
-          <Button
-            variant="ghost"
-            className="gc-conversation-header__close"
-            aria-label="Close this workspace"
-            title="Stops this workspace's child process"
-            onClick={onCloseWorkspace}
-          >
-            Close
-          </Button>
-        ) : null}
       </div>
     </header>
   );

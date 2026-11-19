@@ -11,7 +11,7 @@ export interface AppRailProps {
 export function AppRail({ sidebarVisible, onToggleSidebar, onOpenSettings, onOpenShortcuts }: AppRailProps) {
   return (
     <nav className="gc-rail" aria-label="Application">
-      <button type="button" className={`gc-rail__item${sidebarVisible ? " gc-rail__item--active" : ""}`} aria-expanded={sidebarVisible} aria-controls="gc-chats" onClick={onToggleSidebar}>
+      <button type="button" className="gc-rail__item gc-rail__item--active" aria-expanded={sidebarVisible} aria-controls="gc-chats" onClick={onToggleSidebar}>
         <RailGlyph kind="folder" />
         <span className="gc-rail__label">Workspaces</span>
       </button>

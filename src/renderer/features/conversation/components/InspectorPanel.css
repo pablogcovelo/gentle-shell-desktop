@@ -93,46 +93,46 @@
   padding: 0;
 }
 
+/* S8 (gui-design-alignment): one flat line per agent — status glyph,
+ * agent name, separator, status word. No disclosure, no log body. */
 .gc-inspector__agent {
-  padding: 0;
-  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 3px 0;
+  font: 11px var(--font-mono);
 }
 
-.gc-inspector__intro { margin: 2px 0 20px; }
-.gc-inspector__progress-meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 10px; margin-bottom: 8px; }
-.gc-inspector__progress { height: 4px; border-radius: 999px; background: var(--line-strong); }
-.gc-inspector__progress > span { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
 /* Session cost header row of the Usage section (design/slack-gentle,
    comment clq1vtao): one tight row, no divider — a value in the same list as
    the meters, not a summary footer. */
 .gc-inspector__cost { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 0 0 12px; color: var(--muted); font: 10px var(--font-mono); }
 .gc-inspector__cost strong { color: var(--accent); font-size: 12px; font-variant-numeric: tabular-nums; }
-.gc-inspector__agent details { border: 0; padding: 0; margin: 0; }
-.gc-inspector__agent summary { display: flex; align-items: center; gap: 6px; min-height: 28px; padding: 3px 0; font: 11px/22px var(--font-mono); list-style: none; cursor: pointer; border-radius: 4px; }
-.gc-inspector__agent summary::-webkit-details-marker { display: none; }
-.gc-inspector__agent summary:hover { background: var(--raised); }
-.gc-inspector__agent summary::after { content: "⋯"; margin-left: auto; color: var(--muted); }
-.gc-inspector__agent details[open] summary::after { content: "−"; }
-.gc-inspector__agent-tree { color: var(--muted); }
 .gc-inspector__agent-caption { margin: 4px 0 10px; color: var(--muted); font-size: 10px; }
 .gc-inspector__agent-caption code { font: inherit; }
-.gc-inspector__agent-name code { color: var(--accent); font: inherit; }
-.gc-inspector__agent-log { padding: 8px 12px 14px 24px; margin: 2px 0 8px 5px; border-left: 1px solid var(--line-strong); overflow-wrap: anywhere; }
-.gc-inspector__agent-log p { margin: 3px 0 5px; }
-.gc-inspector__agent-log code { font: 10px var(--font-mono); color: var(--muted); }
-@media (max-width: 1200px) {
-  .gc-inspector__head { padding: 12px 16px 8px; }
-  .gc-inspector__scroll { padding: 0 16px 14px; }
-}
-
 .gc-inspector__agent-name {
-  flex: 1;
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-family: var(--font-mono);
-  color: var(--text-2);
+  color: var(--accent);
+  font: inherit;
+}
+
+.gc-inspector__agent-sep {
+  flex: none;
+  color: var(--muted);
+}
+
+.gc-inspector__agent-word {
+  flex: none;
+  color: var(--muted);
+  font: inherit;
+}
+@media (max-width: 1200px) {
+  .gc-inspector__head { padding: 12px 16px 8px; }
+  .gc-inspector__scroll { padding: 0 16px 14px; }
 }
 
 /* Status color comes from the row's data-status and the project's status
@@ -159,37 +159,30 @@
   color: var(--blue);
 }
 
-.gc-inspector__agent-label {
-  color: var(--text-2);
-  overflow-wrap: anywhere;
-}
-
-.gc-inspector__agent-step {
-  color: var(--text-2);
-  font-size: 11px;
-  overflow-wrap: anywhere;
-}
-
-.gc-inspector__agent-counters {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--muted);
-}
-
-/* S6: the button performs its stated action — opens the helpers view. */
-.gc-inspector__open-helpers {
-  align-self: flex-start;
-  margin-top: 12px;
-  font-size: 11px;
-  color: var(--accent);
+/* S10 (gui-design-alignment): the Agents head's eye control — visually
+ * quiet like the sibling meta text at rest; hover and focus use the
+ * panel's raised/accent treatment, like the other icon buttons. */
+.gc-inspector__eye {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
   background: transparent;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-2);
   cursor: pointer;
 }
 
-.gc-inspector__open-helpers:hover {
-  color: var(--accent-active);
-  border-color: var(--accent);
+.gc-inspector__eye:hover {
+  background: var(--raised);
+  color: var(--text);
+}
+
+.gc-inspector__eye:focus-visible {
+  outline: 2px solid var(--accent-active);
+  outline-offset: 1px;
 }

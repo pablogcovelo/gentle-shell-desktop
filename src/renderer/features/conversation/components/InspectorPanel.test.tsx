@@ -101,22 +101,76 @@ describe("InspectorPanel", () => {
     expect(cost.compareDocumentPosition(meter) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
-  it("keeps real agent metadata behind a collapsed disclosure", () => {
-    renderPanel({ helpers: helpersActivity([helperTask({ lastStep: "Reading source" })]) });
-    const summary = screen.getByText("refactorer").closest("summary")!;
-    const details = summary.closest("details")!;
-    expect(details).not.toHaveAttribute("open");
-    fireEvent.click(summary);
-    expect(details).toHaveAttribute("open");
-    expect(details).toHaveTextContent("a1");
-    expect(details).toHaveTextContent("Reading source");
-    expect(details).toHaveTextContent("3 turns · 7 tool calls");
+  // S8 (gui-design-alignment): each agent row is one flat line — status
+  // glyph, agent name, status word. No disclosure, label, task id, last
+  // step or counters.
+  it("renders one flat line per agent: glyph, name, status word (S8)", () => {
+    renderPanel({
+      helpers: helpersActivity([
+        helperTask({ id: "a1", agent: "gentle-ai-explore", status: "running", lastStep: "Reading source", turns: 3, toolCalls: 7 }),
+      ]),
+    });
+
+    const row = screen.getByRole("listitem");
+    expect(row).toHaveAttribute("data-status", "running");
+    expect(row).toHaveTextContent("gentle-ai-explore");
+    expect(row).toHaveTextContent("Running");
+    expect(within(row).queryByText("Reading source")).not.toBeInTheDocument();
+    expect(within(row).queryByText("3 turns · 7 tool calls")).not.toBeInTheDocument();
+    expect(within(row).queryByText("a1")).not.toBeInTheDocument();
+    expect(row.querySelector("details")).toBeNull();
+    expect(row.querySelector("summary")).toBeNull();
   });
 
-  it("shows derived task progress without changing the card variant", () => {
+  // S9 (gui-design-alignment): glyph/word per status, with a safe fallback
+  // for an unknown status that renders the raw status word and ○.
+  it("maps each known status to its glyph and word (S9)", () => {
+    renderPanel({
+      helpers: helpersActivity([
+        helperTask({ id: "a1", agent: "runner", status: "running" }),
+        helperTask({ id: "a2", agent: "finisher", status: "done" }),
+        helperTask({ id: "a3", agent: "breaker", status: "failed" }),
+        helperTask({ id: "a4", agent: "stopper", status: "cancelled" }),
+        helperTask({ id: "a5", agent: "starter", status: "queued" }),
+        helperTask({ id: "a6", agent: "waiter", status: "waiting" }),
+      ]),
+    });
+
+    const rows = screen.getAllByRole("listitem");
+    expect(rows).toHaveLength(6);
+    const text = (index: number) => rows[index]!.textContent;
+    expect(text(0)).toContain("◐");
+    expect(text(0)).toContain("Running");
+    expect(text(1)).toContain("✓");
+    expect(text(1)).toContain("Done");
+    expect(text(2)).toContain("✕");
+    expect(text(2)).toContain("Failed");
+    expect(text(3)).toContain("⊘");
+    expect(text(3)).toContain("Cancelled");
+    expect(text(4)).toContain("○");
+    expect(text(4)).toContain("Queued");
+    expect(text(5)).toContain("○");
+    expect(text(5)).toContain("Waiting");
+  });
+
+  it("renders an unknown status as the raw word with the ○ glyph, never an invented word (S9)", () => {
+    renderPanel({
+      helpers: helpersActivity([helperTask({ id: "a1", status: "timed_out" as HelperTask["status"] })]),
+    });
+
+    const row = screen.getByRole("listitem");
+    expect(row.textContent).toContain("○");
+    expect(row.textContent).toContain("timed_out");
+    expect(row.textContent).not.toContain("Running");
+  });
+
+  // S3 (gui-design-alignment): the Todo section keeps the head meta but
+  // renders neither the intro line nor the percentage progress bar.
+  it("keeps the head meta but renders no intro line and no task progress bar", () => {
     renderPanel({ todo: todoState([todoTask({ id: 1, status: "done" }), todoTask({ id: 2 })]) });
-    expect(screen.getByRole("progressbar", { name: "Task progress" })).toHaveAttribute("aria-valuenow", "50");
     expect(screen.getByText("1/2 · 50%")).toBeInTheDocument();
+    expect(screen.queryByText("A small plan. A clear next step.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("progressbar", { name: "Task progress" })).not.toBeInTheDocument();
   });
   it("renders the three sections in the fixed order Todo / Usage / Agents (S3)", () => {
     renderPanel();
@@ -232,20 +286,22 @@ describe("InspectorPanel", () => {
     expect(rows).toHaveLength(4);
     expect(rows[0]).toHaveAttribute("data-status", "running");
     expect(rows[0]).toHaveTextContent("refactorer");
-    expect(rows[0]).toHaveTextContent("running");
-    expect(rows[1]).toHaveTextContent("Review the diff");
+    expect(rows[0]).toHaveTextContent("Running");
     expect(rows[1]).toHaveAttribute("data-status", "done");
+    expect(within(rows[1]!).queryByText("Review the diff")).not.toBeInTheDocument();
     expect(rows[2]).toHaveAttribute("data-status", "failed");
+    expect(rows[2]).toHaveTextContent("Failed");
     expect(rows[3]).toHaveAttribute("data-status", "waiting");
+    expect(rows[3]).toHaveTextContent("Waiting");
   });
 
-  it("renders a helper's last step and turn/tool counters when the wire supplied them", () => {
+  it("never renders a helper's last step or turn/tool counters, even when the wire supplied them (S8)", () => {
     renderPanel({
       helpers: helpersActivity([helperTask({ id: "a1", lastStep: "Editing Composer.tsx", turns: 3, toolCalls: 7 })]),
     });
 
-    expect(screen.getByText("Editing Composer.tsx")).toBeInTheDocument();
-    expect(screen.getByText("3 turns · 7 tool calls")).toBeInTheDocument();
+    expect(screen.queryByText("Editing Composer.tsx")).not.toBeInTheDocument();
+    expect(screen.queryByText("3 turns · 7 tool calls")).not.toBeInTheDocument();
   });
 
   it("renders no last-step line when the wire did not supply one (never invented)", () => {
@@ -254,14 +310,24 @@ describe("InspectorPanel", () => {
     expect(screen.getByRole("listitem")).not.toHaveTextContent("Editing Composer");
   });
 
-  it('"Open helpers" is a real button that fires the callback (S6)', () => {
+  // S10 (gui-design-alignment): the Agents section head carries an
+  // icon-only eye button, named "Open helpers", that opens the helpers
+  // view; it replaces the old text button.
+  it('carries an icon-only "Open helpers" eye button in the Agents head (S10)', () => {
     const onOpenHelpers = vi.fn();
     renderPanel({
       helpers: helpersActivity([helperTask({ id: "a1" })]),
       onOpenHelpers,
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Open helpers" }));
+    const button = screen.getByRole("button", { name: "Open helpers" });
+    expect(button).toHaveAttribute("type", "button");
+    expect(button).toHaveAttribute("title", "Open helpers");
+    expect(button).toHaveClass("gc-inspector__eye");
+    expect(button.textContent).toBe("");
+    expect(button.querySelector("svg")).not.toBeNull();
+    expect(button.closest(".gc-inspector__head")).not.toBeNull();
+    fireEvent.click(button);
     expect(onOpenHelpers).toHaveBeenCalledTimes(1);
   });
 });

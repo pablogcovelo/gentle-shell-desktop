@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import type { ChatState, ChatSummary, DialogAnswer, OpenChatResult, WorkspaceList } from "@shared/bridge-types";
+import type { ChatState, ChatSummary, DialogAnswer, OpenChatResult } from "@shared/bridge-types";
 import { useBridge } from "@renderer/shared/bridge/useBridge";
 import { HelpersContainer } from "@renderer/features/helpers/HelpersContainer";
 import { directoryOf } from "@renderer/features/chats/components/ChatListItem";
@@ -37,7 +37,6 @@ export interface ConversationContainerProps {
   readonly footerTarget?: HTMLDivElement | null;
   /** Renderer-owned GUI picker selection; App uses the existing openChat route. */
   readonly onResumeChat?: (chat: ChatSummary) => void;
-  readonly onCloseWorkspace?: (directory: string) => Promise<WorkspaceList>;
   /** T5b: the active chat's workspace host id, OWNED BY App — set from
    * the open/new resolution (see onHostResolved) and reset on every
    * selection change. Every request the container sends is addressed to
@@ -66,9 +65,6 @@ export interface ConversationContainerProps {
    * workspace. The directory arrived validated in main; it reaches the
    * footer through ChatState.workspacePath. */
   readonly createdWorkspace?: { readonly chatKey: string; readonly result: OpenChatResult };
-  /** Standalone notification after successful directory removal. App uses
-   * onCloseWorkspace to reconcile the registry and current pane atomically. */
-  readonly onWorkspaceClosed?: () => void;
 }
 
 /**
@@ -176,7 +172,7 @@ function errorText(cause: unknown): string {
  * notifications (desktop-rpc T2b) render in the same status surface for
  * the same reason: they are feedback chrome, never transcript entries.
  */
-export function ConversationContainer({ activeChat, activeHostId, onHostResolved, onWorktreeBranch, createdWorkspace, onWorkspaceClosed, footerTarget, onResumeChat, onCloseWorkspace, onWorkspacePath }: ConversationContainerProps) {
+export function ConversationContainer({ activeChat, activeHostId, onHostResolved, onWorktreeBranch, createdWorkspace, footerTarget, onResumeChat, onWorkspacePath }: ConversationContainerProps) {
   const bridge = useBridge();
   const [chatState, setChatState] = useState<ChatState>(emptyChatState());
   // The host id this container resolved for the current activeChat, kept
@@ -194,16 +190,6 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   const currentKey = chatKeyOf(activeChat);
   const candidateHostId = activeHostId ?? (resolved?.key === currentKey ? resolved.hostId : "");
   const hostId = closedHosts.has(candidateHostId) ? "" : candidateHostId;
-  // R3-002: the latest rendered addressing, readable from a promise that
-  // settles later. A close answered after the user moved on must not act on
-  // the chat they are now reading, so the handler compares against this.
-  const selectionRef = useRef({ key: currentKey, hostId });
-  selectionRef.current = { key: currentKey, hostId };
-  // R3-002: at most one close in flight. `closing` withdraws the control
-  // while it settles; `closingRef` is the synchronous guard a second click in
-  // the same tick would slip past the state update.
-  const [closing, setClosing] = useState(false);
-  const closingRef = useRef(false);
   const [bridgeError, setBridgeError] = useState<string | undefined>(undefined);
   const [draft, setDraft] = useState("");
   const [resumeSelection, setResumeSelection] = useState<{ key: string; directory: string }>();
@@ -264,7 +250,7 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
       setBridgeError(message);
     });
     // T5d: a close report (the chat.closed push for a host closed through
-    // bridge.closeChat — the header's close control is that caller, P2)
+    // the Workspaces panel's row control, via App's close path)
     // evicts that host's snapshot and chat→host mapping. When the closed
     // host is the one this pane is addressing, say so in the status line:
     // the pane keeps painting its last known state, but every request from
@@ -300,11 +286,6 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
     setPane(CONVERSATION_PANE.CHAT);
     setResumeSelection(undefined);
     setHelpersOpenedAt(new Date().toISOString());
-    // R3-002: a close belongs to the chat that asked for it, so a selection
-    // change ends that attempt — including the one that a successful close
-    // itself triggers by landing on a fresh chat.
-    closingRef.current = false;
-    setClosing(false);
   }, [activeChat]);
 
   useEffect(() => {
@@ -457,34 +438,6 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
     bridge.answerDialog(hostId, id, answer).catch((cause: unknown) => setBridgeError(errorText(cause)));
   };
 
-  // Directory removal joins pending starts and stops every same-directory
-  // host in main while preserving Pi history. Exact-host chat.close remains
-  // reserved for orphan cleanup elsewhere. A synchronous guard prevents
-  // duplicate header requests, and late answers cannot replace another pane.
-  const handleCloseWorkspace = (): void => {
-    const directory = workspacePath;
-    const close = onCloseWorkspace ?? bridge.removeWorkspace?.bind(bridge);
-    if (!directory || !close || closingRef.current) return;
-    const closingKey = currentKey;
-    closingRef.current = true;
-    setClosing(true);
-    close(directory)
-      .then(() => {
-        // Only the pane that asked may act on the answer: a success that
-        // arrives after the user selected another chat must not replace it.
-        if (selectionRef.current.key !== closingKey) return;
-        onWorkspaceClosed?.();
-      })
-      .catch((cause: unknown) => {
-        closingRef.current = false;
-        setClosing(false);
-        if (selectionRef.current.key !== closingKey) return;
-        // Main also pushes its own report naming the reason (P3). This keeps
-        // the rejection itself visible even for a bridge that does not.
-        setBridgeError(errorText(cause));
-      });
-  };
-
   // T11: the footer's path is the open workspace's directory. Preference
   // order: the app-validated directory the pane's host was created with
   // (workspace.create attached it to the state at the push boundary), then
@@ -532,9 +485,6 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
         pane={pane}
         runningHelpersCount={chatState.helpers.summary.running}
         onSelectPane={setPane}
-        // A known directory can close even while its initial host is pending.
-        canCloseWorkspace={Boolean(workspacePath) && (onCloseWorkspace !== undefined || bridge.removeWorkspace !== undefined) && !closing}
-        onCloseWorkspace={handleCloseWorkspace}
       />
       {pane === CONVERSATION_PANE.HELPERS && <StatusLine error={error} statuses={chatState.statuses} notifications={chatState.notifications} />}
       {pane === CONVERSATION_PANE.HELPERS ? (
@@ -561,11 +511,12 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
               // stack still renders after the thread.
               toolCalls={chatState.toolCalls}
               vocabulary={chatState.toolVocabulary}
-              // S3: the chat pane renders the error line only — no extension
-              // status entries and no child notifications, so the transient
-              // card that kept re-appearing here is gone. The Helpers pane
-              // above keeps its own status line.
-              activity={<StatusLine error={error} />}
+              // S12 (gui-design-alignment): the chat pane renders the same
+              // persistent status surfaces the Helpers pane shows — errors,
+              // keyed statuses and notifications — so nothing is lost on a
+              // timer. They live in the status surface, never as synthetic
+              // ChatMessages appended to the thread.
+              activity={<StatusLine error={error} statuses={chatState.statuses} notifications={chatState.notifications} />}
             />
             <Composer
               value={draft}

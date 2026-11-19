@@ -375,7 +375,6 @@ export function App() {
             onResumeChat={handleSelectChat}
             onWorktreeBranch={setActiveBranch}
             onWorkspacePath={setResolvedDirectory}
-            onCloseWorkspace={handleCloseWorkspace}
           />
         )}
       </div>

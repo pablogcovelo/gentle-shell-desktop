@@ -240,122 +240,10 @@ describe("ConversationContainer", () => {
     expect(screen.getByRole("heading", { name: "project" })).toBeInTheDocument();
   });
 
-  it("closes the directory through removeWorkspace and reports it up", async () => {
-    const removeWorkspace = vi.fn().mockResolvedValue({ directories: [], persisted: [] });
-    const onWorkspaceClosed = vi.fn();
-    const bridge = makeBridge({ removeWorkspace });
-    window.gentle = bridge;
-
-    render(
-      <ConversationContainer
-        activeChat={{ kind: "existing", chat: EXISTING_CHAT }}
-        activeHostId="host-7"
-        onWorkspaceClosed={onWorkspaceClosed}
-      />,
-    );
-    await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledWith("chat-1"));
-
-    fireEvent.click(screen.getByRole("button", { name: "Close this workspace" }));
-
-    // Addressed to THIS pane's host, never to "whichever chat is open".
-    await vi.waitFor(() => expect(bridge.removeWorkspace).toHaveBeenCalledWith("/tmp/project"));
-    expect(bridge.closeChat).not.toHaveBeenCalled();
-    await vi.waitFor(() => expect(onWorkspaceClosed).toHaveBeenCalledTimes(1));
-  });
-
-  it("surfaces a failed close instead of pretending the workspace closed (P3)", async () => {
-    const removeWorkspace = vi.fn().mockRejectedValue(new Error("stop failed"));
-    const onWorkspaceClosed = vi.fn();
-    window.gentle = makeBridge({ removeWorkspace });
-
-    render(
-      <ConversationContainer
-        activeChat={{ kind: "existing", chat: EXISTING_CHAT }}
-        activeHostId="host-7"
-        onWorkspaceClosed={onWorkspaceClosed}
-      />,
-    );
-    await vi.waitFor(() => expect(window.gentle?.openChat).toHaveBeenCalledWith("chat-1"));
-
-    fireEvent.click(screen.getByRole("button", { name: "Close this workspace" }));
-
-    expect(await screen.findByText(/stop failed/)).toBeInTheDocument();
-    // Still open, so the shell must not land on a fresh chat as if it closed.
-    expect(onWorkspaceClosed).not.toHaveBeenCalled();
-  });
-
-  it("allows directory closure while its initial host is still pending", async () => {
-    window.gentle = makeBridge({ openChat: vi.fn(() => new Promise<never>(() => {})) });
-
-    render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} />);
-
-    expect(screen.getByRole("button", { name: "Close this workspace" })).toBeInTheDocument();
-  });
-
-  it("draws no close control when the bridge cannot close a workspace (R3-003)", async () => {
-    const bridge = makeBridge();
-    // A bridge without the optional method cannot close anything.
-    delete (bridge as { removeWorkspace?: unknown }).removeWorkspace;
-    window.gentle = bridge;
-
-    render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} activeHostId="host-7" />);
-    await vi.waitFor(() => expect(bridge.openChat).toHaveBeenCalledWith("chat-1"));
-
-    expect(screen.queryByRole("button", { name: "Close this workspace" })).not.toBeInTheDocument();
-  });
-
-  it("offers no second close while the first one is pending (R3-002)", async () => {
-    let resolveClose!: () => void;
-    const removeWorkspace = vi.fn(() => new Promise<{ directories: string[]; persisted: string[] }>((resolve) => { resolveClose = () => resolve({ directories: [], persisted: [] }); }));
-    window.gentle = makeBridge({ removeWorkspace });
-
-    render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} activeHostId="host-7" />);
-    await vi.waitFor(() => expect(window.gentle?.openChat).toHaveBeenCalledWith("chat-1"));
-
-    fireEvent.click(screen.getByRole("button", { name: "Close this workspace" }));
-
-    // While the close is in flight there is no second request to make: the
-    // control is withdrawn instead of issuing another chat.close.
-    await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Close this workspace" })).not.toBeInTheDocument());
-    expect(removeWorkspace).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      resolveClose();
-    });
-  });
-
-  it("does not land on a fresh chat when the user moved on while the close was pending (R3-002)", async () => {
-    let resolveClose!: () => void;
-    const removeWorkspace = vi.fn(() => new Promise<{ directories: string[]; persisted: string[] }>((resolve) => { resolveClose = () => resolve({ directories: [], persisted: [] }); }));
-    const onWorkspaceClosed = vi.fn();
-    window.gentle = makeBridge({ removeWorkspace });
-
-    const { rerender } = render(
-      <ConversationContainer
-        activeChat={{ kind: "existing", chat: EXISTING_CHAT }}
-        activeHostId="host-7"
-        onWorkspaceClosed={onWorkspaceClosed}
-      />,
-    );
-    await vi.waitFor(() => expect(window.gentle?.openChat).toHaveBeenCalledWith("chat-1"));
-    fireEvent.click(screen.getByRole("button", { name: "Close this workspace" }));
-    await vi.waitFor(() => expect(removeWorkspace).toHaveBeenCalledTimes(1));
-
-    // The user selected another chat before the close settled. Its success
-    // must not replace the chat they are now reading.
-    rerender(
-      <ConversationContainer
-        activeChat={{ kind: "existing", chat: OTHER_CHAT }}
-        activeHostId="host-8"
-        onWorkspaceClosed={onWorkspaceClosed}
-      />,
-    );
-    await act(async () => {
-      resolveClose();
-    });
-
-    expect(onWorkspaceClosed).not.toHaveBeenCalled();
-  });
+  // S6 (gui-design-alignment): the conversation header renders no close
+  // control — the workspace close path moved to the Workspaces panel's row
+  // control (App owns it). The container's close-related coverage (P2/P3,
+  // R3-002/R3-003) lost its surface and is gone with it.
 
   it("re-opens when activeChat changes", async () => {
     const bridge = makeBridge();
@@ -708,7 +596,7 @@ describe("ConversationContainer", () => {
     expect(bridge.answerDialog).toHaveBeenCalledWith("host-1", "dlg-1", { confirmed: true });
   });
 
-  it("calls bridge.abort() on Escape while working", async () => {
+  it("calls bridge.abort() on a double Escape while working", async () => {
     let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({
       onState: vi.fn((callback: (state: ChatState) => void) => {
@@ -726,6 +614,8 @@ describe("ConversationContainer", () => {
 
     const textarea = screen.getByPlaceholderText("Tell Gentle what you need…");
     await vi.waitFor(() => expect(textarea).toHaveAttribute("readonly"));
+    // S2: a single Escape never stops the agent; two inside the window do.
+    fireEvent.keyDown(textarea, { key: "Escape" });
     fireEvent.keyDown(textarea, { key: "Escape" });
 
     expect(bridge.abort).toHaveBeenCalledWith("host-1");
@@ -1053,10 +943,10 @@ describe("ConversationContainer", () => {
     expect(screen.queryByRole("button", { name: "Back to chat" })).not.toBeInTheDocument();
   });
 
-  // S3: the chat pane shows no extension status entries and no child
-  // notifications — the transient card that kept re-appearing there. Real
-  // errors still render, and the Helpers pane keeps its own status line.
-  it("renders no keyed statuses in the chat pane, and never as messages", async () => {
+  // S12 (gui-design-alignment): keyed statuses are persistent entries in
+  // the chat flow too — the chat pane shows what the Helpers pane shows —
+  // but they are still never transcript messages.
+  it("renders a pushed keyed status in the chat pane, and never as a message", async () => {
     let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({
       onState: vi.fn((callback: (state: ChatState) => void) => {
@@ -1078,15 +968,17 @@ describe("ConversationContainer", () => {
       statuses: { "gentle-todo": "2 tasks open" },
     });
 
-    // Wait for the pushed state to land before asserting what it must NOT
-    // render — otherwise the absence assertion passes on an untouched pane.
+    // Wait for the pushed state to land before asserting what it renders —
+    // otherwise the presence assertion passes on a stale pane.
     await screen.findByText("Status probe");
-    expect(screen.queryByLabelText("Session status")).not.toBeInTheDocument();
-    expect(screen.queryByText("2 tasks open")).not.toBeInTheDocument();
+    const statusList = screen.getByLabelText("Session status");
+    expect(statusList).toHaveTextContent("gentle-todo");
+    expect(statusList).toHaveTextContent("2 tasks open");
+    // Persistent status chrome, still never a transcript entry.
     expect(screen.queryByText("2 tasks open", { selector: ".gc-message__text" })).not.toBeInTheDocument();
   });
 
-  it("renders no child notifications in the chat pane, and never as conversation messages", async () => {
+  it("renders pushed child notifications in the chat pane, and never as conversation messages", async () => {
     let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({
       onState: vi.fn((callback: (state: ChatState) => void) => {
@@ -1112,16 +1004,16 @@ describe("ConversationContainer", () => {
     });
 
     await screen.findByText("Notice probe");
-    expect(screen.queryByLabelText("Notifications")).not.toBeInTheDocument();
-    expect(screen.queryByText("Command blocked by user")).not.toBeInTheDocument();
-    expect(screen.queryByText("Disk full")).not.toBeInTheDocument();
+    const stack = screen.getByLabelText("Notifications");
+    expect(stack).toHaveTextContent("Command blocked by user");
+    expect(stack).toHaveTextContent("Disk full");
     // No bubble, no transcript entry, no placeholder in the message list.
     expect(screen.queryByText("Command blocked by user", { selector: ".gc-message__text" })).not.toBeInTheDocument();
     expect(screen.queryByText("Disk full", { selector: ".gc-message__text" })).not.toBeInTheDocument();
   });
 
-  // S3 removed the card from the CHAT pane only. The Helpers pane keeps its
-  // status surface, so this pins the half a later cleanup could silently drop.
+  // S12: the Helpers pane keeps its status surface alongside the chat pane's
+  // persistent entries — pinned here so a later cleanup cannot silently drop it.
   it("keeps the keyed status surface in the Helpers pane", async () => {
     let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({
@@ -1315,6 +1207,7 @@ describe("ConversationContainer", () => {
     pushState(stateForHost("host-1", { working: true }));
     const textarea = screen.getByPlaceholderText("Tell Gentle what you need…");
     await vi.waitFor(() => expect(textarea).toHaveAttribute("readonly"));
+    fireEvent.keyDown(textarea, { key: "Escape" });
     fireEvent.keyDown(textarea, { key: "Escape" });
     expect(bridge.abort).toHaveBeenCalledWith("host-1");
   });

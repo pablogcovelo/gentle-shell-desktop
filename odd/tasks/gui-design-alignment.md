@@ -1,0 +1,48 @@
+# GUI design ↔ implementation alignment
+
+Bring `design/slack-gentle/01-workspace.html` and `src/renderer` into agreement, resolving each
+discrepancy with an explicit decision from the maintainer (see `## Log`). The design board is
+updated wherever the implementation wins, and the implementation wherever the design wins.
+
+## Specs
+
+S1. Workspace row close control: `aria-label="Close workspace <name>"`, `title="Close this workspace — Pi sessions and files are kept"`.
+S2. Composer hint reads exactly `Enter to send · Shift+Enter for a new line · Esc Esc to stop the agent`. Two consecutive `Esc` presses inside the stop window (1500 ms) stop the agent while it is working; a single `Esc` keeps its current job (dismiss the command list, close a dialog) and never stops the agent.
+S3. The Todo section renders neither `A small plan. A clear next step.` nor the percentage progress bar. The section head meta (`2/4 · 50%`) stays.
+S4. Workspaces panel heading: `font-size: 19px`, `letter-spacing: -0.5px`, `font-weight: 400`.
+S5. The rail's workspaces button always carries the current-section highlight, independent of whether the workspaces panel is visible.
+S6. The conversation header renders no close control; `canCloseWorkspace`/`onCloseWorkspace` leave the component.
+S7. Dialogs keep the `div` + `role="dialog"` + `aria-modal` pattern; width `min(480px, ...)` and backdrop opacity `0.88`.
+S8. Each inspector Agents row is flat, one line: `<status glyph> <agent name> · <status word>`. No `<details>`, no label, no counters, no task id, no thread.
+S9. Status glyphs and words: `◐` Running, `✓` Done, `✕` Failed, `⊘` Cancelled, `○` Queued, `○` Waiting.
+S10. The Agents section head carries an eye button that opens the helpers view (`aria-label="Open helpers"`); it replaces the `Open helpers` text button.
+S11. The helpers view is kept as-is: list, thread, footer, Stop, `Earlier · N finished`, and the way back to the chat.
+S12. Errors, keyed statuses and notifications render as persistent entries in the chat flow, coloured by severity, and are never auto-hidden. Notifications stay bounded by the reducer cap.
+S13. Orphan action rows (tool calls bound to no turn) are kept and must be represented in the design board.
+S14. An expanded action row shows its vocabulary variants as chips, derived from the published vocabulary: one chip per distinct glyph in the row's category, the current one marked with `aria-current`. The label is `phases` when every entry of that category carries a `heading`, otherwise `also reports`. The row appears only when the category publishes two or more distinct glyphs.
+S15. The footer extensions counter stays `0` with its existing title explaining the bridge does not report it.
+S16. Unchanged by decision: no date grouping in the thread; no summary card; no composer preview line; empty-chat copy `Start a conversation with Gentle.`; two separate inspector empty notes; no per-task subtitle; send stays disabled with no draft; `+`/`−` chevron on expandable rows; the emoji picker is removed from the composer and attachments stay; the microphone stays disabled.
+S17. The command runner in the Ctrl/⌘+K dialog and the removal of `/` commands from the composer are the next task, not this one. The composer keeps its working command list until then.
+S18. Orphan code from earlier iterations is removed from the app and from the design board.
+
+## Tasks
+
+T1 — S1, S3, S4, S5, S6, S7 · copy and structure alignment in the renderer · commit `feat(gui): align copy and structure with the board`
+T2 — S10, S11 · eye button in Agents, helpers view kept · commit `feat(agents): open the helpers view from an eye control`
+T3 — S12 · persistent in-chat status, error and notification entries · commit `feat(chat): keep status entries visible in the thread`
+T4 — S8, S9 · flat subagent rows in the inspector · commit `feat(agents): flatten subagent rows to name and status`
+T5 — S14 · vocabulary variant chips in the action detail · commit `feat(chat): show vocabulary variants as chips`
+T6 — S2, S16 · composer hint, double-Esc stop, emoji removal · commit `feat(composer): advertise the double-Esc stop and drop the emoji picker`
+T7 — S13, S18 · design board: flat agents, eye, chips, orphan region, status entry, dead CSS · commit `docs(design): align the workspace board with the shipped GUI`
+
+## Log
+
+L1 (original request): "Dime que discrepancias hay entre el diseño y la implementación a nivel de GUI en este repositorio. Separalo entre aspectos presentes en el diseño que no están implementados, mal implementados y aspectos que están implementados pero no están presentes en el diseño"
+
+L2 (decisions, first round): 1.1 keep no date grouping · 1.2 discard the summary card · 1.3 add the chips to the implementation · 1.4 keep the current subagent detail · 1.5 keep the implemented model-absence report · 2.1 keep `Start a conversation with Gentle.` · 2.2 keep two separate notes · 2.3 `Remove workspace` → `Close workspace` · 2.6 discard intro and percentage bar · 2.7 no per-task subtitle · 2.9 send stays disabled · 2.11 follow the design heading · 2.12 keep zero · 2.13 align the implementation · 2.14 drop emoji, keep attachments · 3.1 remove the header Close · 3.7 keep
+
+L3 (decisions, second round): "2.4.1 Tienes razón no ponemos el texto y nos quedamos con lo dicho en 3.4" · "2.4.2 Cambiamos también el comportamiento" · "2.10 Que la implementación adopte el mismo comportamiento que el diseño" · "2.12 a) lo dejamos a cero" · "3.1 Ok, se quita"
+
+L4 (decisions, third round): "1.2 Descartamos" · "2.4 Confirmo" · "3.2 / 3.3 Vamos a cambiar el enfoque, entiendo que helpers vine siendo como un visor de subagentes. En lugar de tener un botón \"Helpers\" vamos a poner un \"ojo\" en el panel de Agents que lleve a esta vista ¿si?" · "3.5 Ok, pero en este caso los mantendría como mensajes persistentes en el propio chat, en rojo para indicar error o lo que sea necesario, si solo se muestran por un periodo de tiemp limitado es muy fácil que el usuario se pierda estos StatusLine" · "3.6 Lo mantenemos pero entonces es necesario representarlo en el diseño" · "1.4 Mostramos solo ◐ gentle-ai-explore · Running... / ✕ gentle-ai-explore · Error/Fail / ✓ gentle-ai-explore · Complete/Finish"
+
+L5 (scope): 3.4 (commands in ⌘K, `/` out of the composer) stays as the next task because the ⌘K dialog still needs its own design. The composer hint therefore drops `/` now and the command list keeps working until that task lands.

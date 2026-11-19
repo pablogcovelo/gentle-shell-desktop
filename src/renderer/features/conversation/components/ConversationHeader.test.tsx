@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import { render, screen } from "@testing-library/react";
 import { CONVERSATION_PANE, ConversationHeader } from "./ConversationHeader";
 
 describe("ConversationHeader", () => {
@@ -12,18 +12,15 @@ describe("ConversationHeader", () => {
     expect(screen.queryByText("Working…")).not.toBeInTheDocument();
   });
 
-  it("offers a close control for the workspace whose host this pane addresses (P2)", () => {
-    const onCloseWorkspace = vi.fn();
-    render(<ConversationHeader title="project" canCloseWorkspace onCloseWorkspace={onCloseWorkspace} />);
+  // S6 (gui-design-alignment): the header renders no close control —
+  // workspace close lives in the Workspaces panel's row control.
+  it("renders no close control, keeping the title and the phase label", () => {
+    render(<ConversationHeader title="project" oddPhase="implementing" />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Close this workspace" }));
-    expect(onCloseWorkspace).toHaveBeenCalledTimes(1);
-  });
-
-  it("renders no close control before the pane knows which host it addresses", () => {
-    render(<ConversationHeader title="project" canCloseWorkspace={false} onCloseWorkspace={() => {}} />);
-
+    expect(screen.getByRole("heading", { name: "project" })).toBeInTheDocument();
+    expect(screen.getByText("Implementing")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Close this workspace" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
   // T5 (desktop-pending-work S5): the phase indicator renders the app's own
@@ -43,15 +40,14 @@ describe("ConversationHeader", () => {
     expect(screen.queryByText("Exploring")).not.toBeInTheDocument();
   });
 
-  it("drops the indicator when the published phase is cleared by omission, keeping the close control", () => {
+  it("drops the indicator when the published phase is cleared by omission", () => {
     const view = render(
-      <ConversationHeader title="project" oddPhase="exploring" canCloseWorkspace onCloseWorkspace={() => {}} />,
+      <ConversationHeader title="project" oddPhase="exploring" />,
     );
     expect(screen.getByText("Exploring")).toBeInTheDocument();
 
-    view.rerender(<ConversationHeader title="project" canCloseWorkspace onCloseWorkspace={() => {}} />);
+    view.rerender(<ConversationHeader title="project" />);
 
     expect(screen.queryByText("Exploring")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Close this workspace" })).toBeInTheDocument();
   });
 });
