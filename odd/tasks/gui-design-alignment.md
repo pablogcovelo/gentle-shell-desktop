@@ -1,11 +1,7 @@
 # GUI design ↔ implementation alignment
 
 Bring `design/slack-gentle/01-workspace.html` and `src/renderer` into agreement, resolving each
-discrepancy with an explicit decision from the maintainer (see `S19. Ctrl/Cmd+K opens the command palette (artboard `design/command-palette/01-spotlight-overlay.html`, chosen by the maintainer): a centred modal over the dimmed workspace, an input prefixed with `/`, one list grouped `PROMPT` / `SKILL` / `EXTENSION` with a per-group count, real `name`/`description?`/`source` data and no invented argument hint, a selected row, `↑`/`↓`/`Enter`/`Esc`, an honest empty state, and a footer with those keys. Running a row sends the command to the active chat; the desktop's own `/resume` entry opens the resume dialog instead of sending text, and carries an `app` badge because the wire does not publish it.
-S20. The palette replaces the chat search entirely: Ctrl/Cmd+K no longer filters chats, and the app's search state, the sidebar's query filter and their copy are removed.
-S21. The composer no longer reads `/` as a command affordance: the command list, its keyboard handling and the `/resume` shortcut leave the composer, which keeps a quiet `Commands` button (shortcut label per platform) that opens the palette.
-
-## Log`). The design board is
+discrepancy with an explicit decision from the maintainer (see `## Log`). The design board is
 updated wherever the implementation wins, and the implementation wherever the design wins.
 
 ## Specs
@@ -29,6 +25,10 @@ S16. Unchanged by decision: no date grouping in the thread; no summary card; no 
 S17. The command runner in the Ctrl/⌘+K dialog and the removal of `/` commands from the composer are the next task, not this one. The composer keeps its working command list until then.
 S18. Orphan code from earlier iterations is removed from the app and from the design board.
 
+S19. Ctrl/Cmd+K opens the command palette (artboard `design/command-palette/01-spotlight-overlay.html`, chosen by the maintainer): a centred modal over the dimmed workspace, an input prefixed with `/`, one list grouped `PROMPT` / `SKILL` / `EXTENSION` with a per-group count, real `name`/`description?`/`source` data and no invented argument hint, a selected row, `↑`/`↓`/`Enter`/`Esc`, an honest empty state, and a footer with those keys. Running a row sends the command to the active chat; the desktop's own `/resume` entry opens the resume dialog instead of sending text, and carries an `app` badge because the wire does not publish it.
+S20. The palette replaces the chat search entirely: Ctrl/Cmd+K no longer filters chats, and the app's search state, the sidebar's query filter and their copy are removed.
+S21. The composer no longer reads `/` as a command affordance: the command list, its keyboard handling and the `/resume` shortcut leave the composer, which keeps a quiet `Commands` button (shortcut label per platform) that opens the palette.
+
 ## Tasks
 
 T1 — S1, S3, S4, S5, S6, S7 · copy and structure alignment in the renderer · `3014c52`
@@ -48,8 +48,6 @@ maintainer's decision.
 
 ## Log
 
-L8 (choice): the maintainer chose artboard 01 of `design/command-palette/` — "01 · Spotlight overlay (modal centrado)" — for implementation; 02 and 03 stay as alternatives.
-
 L1 (original request): "Dime que discrepancias hay entre el diseño y la implementación a nivel de GUI en este repositorio. Separalo entre aspectos presentes en el diseño que no están implementados, mal implementados y aspectos que están implementados pero no están presentes en el diseño"
 
 L2 (decisions, first round): 1.1 keep no date grouping · 1.2 discard the summary card · 1.3 add the chips to the implementation · 1.4 keep the current subagent detail · 1.5 keep the implemented model-absence report · 2.1 keep `Start a conversation with Gentle.` · 2.2 keep two separate notes · 2.3 `Remove workspace` → `Close workspace` · 2.6 discard intro and percentage bar · 2.7 no per-task subtitle · 2.9 send stays disabled · 2.11 follow the design heading · 2.12 keep zero · 2.13 align the implementation · 2.14 drop emoji, keep attachments · 3.1 remove the header Close · 3.7 keep
@@ -63,3 +61,5 @@ L5 (scope): 3.4 (commands in ⌘K, `/` out of the composer) stays as the next ta
 L6 (T8, revision of S12): "Estas tarjetas que son como informativas no deben aparecer en el chat" — the maintainer saw the running app and rejected the informational cards inside the conversation (`gentle:mode Permissions: NORMAL`, a keyed status, and the child's long notification). They are StatusLine entries, not messages. Errors stay persistent and red, as decided in L4. The helpers view keeps its complete status surface: it is a diagnostic pane, not the chat.
 
 L7 (3.4 design): `design/command-palette/` opened with three alternatives for the ⌘K command palette that will replace the chat-search dialog (S17): `01-spotlight-overlay.html` (centred spotlight over a dimmed workspace, flat list grouped by source), `02-composer-sheet.html` (sheet anchored above the composer, list left + detail column right), and `03-docked-panel.html` (panel docked in place of the inspector, no overlay). One will be chosen for implementation; the other two remain alternatives. The composer loses `/` typing in the same change, per L5.
+
+L8 (choice): the maintainer chose artboard 01 of `design/command-palette/` — "01 · Spotlight overlay (modal centrado)" — for implementation; 02 and 03 stay as alternatives.
