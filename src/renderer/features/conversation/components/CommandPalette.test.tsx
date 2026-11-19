@@ -162,6 +162,43 @@ describe("CommandPalette", () => {
     expect(onClose).toHaveBeenCalledExactlyOnceWith();
   });
 
+  it("closes on Escape from any element inside the dialog, including the Clear button", () => {
+    const { input, onClose } = renderPalette();
+
+    fireEvent.change(input, { target: { value: "zzz" } });
+    fireEvent.keyDown(screen.getByRole("button", { name: "Clear" }), { key: "Escape" });
+
+    expect(onClose).toHaveBeenCalledExactlyOnceWith();
+  });
+
+  it("keeps Tab inside the dialog: it cycles between the input and the Clear button", () => {
+    const { input } = renderPalette();
+
+    fireEvent.change(input, { target: { value: "zzz" } });
+    const clear = screen.getByRole("button", { name: "Clear" });
+
+    // From the input, Tab lands on the Clear button.
+    fireEvent.keyDown(input, { key: "Tab" });
+    expect(document.activeElement).toBe(clear);
+    // From the Clear button, Tab wraps back to the input.
+    fireEvent.keyDown(clear, { key: "Tab" });
+    expect(document.activeElement).toBe(input);
+    // Shift+Tab from the input wraps backwards to the Clear button.
+    fireEvent.keyDown(input, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(clear);
+  });
+
+  it("keeps focus on the single focusable element when Tab is pressed, never letting it escape the dialog", () => {
+    const { input } = renderPalette();
+
+    // The normal list state has exactly one focusable (the input): Tab must
+    // keep focus on it instead of moving behind the dimmed page.
+    fireEvent.keyDown(input, { key: "Tab" });
+    expect(document.activeElement).toBe(input);
+    fireEvent.keyDown(input, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(input);
+  });
+
   it("shows the honest empty-filter state with a Clear that empties the query", () => {
     const { input, dialog } = renderPalette();
 

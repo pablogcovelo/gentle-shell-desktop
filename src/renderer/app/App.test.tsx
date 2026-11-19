@@ -35,13 +35,15 @@ describe("App", () => {
     const listChats = vi.spyOn(mockBridge, "listChats");
     try {
       render(<App />);
-      const field = await screen.findByPlaceholderText("Tell Gentle what you need…");
+      await screen.findByPlaceholderText("Tell Gentle what you need…");
       await act(async () => {});
       expect(openChat).not.toHaveBeenCalled();
       const priorLists = listChats.mock.calls.length;
-      fireEvent.change(field, { target: { value: "/resume" } });
-      await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      // The app /resume entry is reachable only through the palette (T10/L9):
+      // a typed "/resume" draft is plain text now.
+      fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+      const palette = await screen.findByRole("dialog", { name: "Commands" });
+      fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
       const dialog = await screen.findByRole("dialog", { name: "Resume a session" });
       fireEvent.click(await within(dialog).findByRole("button", { name: /Write the README intro/ }));
       await waitFor(() => expect(openChat).toHaveBeenCalledExactlyOnceWith("chat-readme"));
@@ -67,11 +69,12 @@ describe("App", () => {
     const fresh = vi.spyOn(mockBridge, "newChat");
     try {
       render(<App />);
-      const field = await screen.findByPlaceholderText("Tell Gentle what you need…");
+      await screen.findByPlaceholderText("Tell Gentle what you need…");
       await act(async () => {});
-      fireEvent.change(field, { target: { value: "/resume" } });
-      fireEvent.click(screen.getByRole("button", { name: "Send" }));
-      fireEvent.click(await within(await screen.findByRole("dialog")).findByRole("button", { name: /Write the README intro/ }));
+      // Same palette-only way in here (T10/L9).
+      fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+      fireEvent.keyDown(within(screen.getByRole("dialog", { name: "Commands" })).getByRole("combobox"), { key: "Enter" });
+      fireEvent.click(await within(await screen.findByRole("dialog", { name: "Resume a session" })).findByRole("button", { name: /Write the README intro/ }));
       await act(async () => {});
       fireEvent.click(screen.getByRole("button", { name: "Close workspace gentle-shell-desktop" }));
       await screen.findByRole("heading", { name: "other-open" });
@@ -440,6 +443,30 @@ describe("App", () => {
     fireEvent.click(within(rail).getByRole("button", { name: "Add quick shortcut" }));
     const shortcuts = await screen.findByRole("dialog", { name: "Keyboard shortcuts" });
     expect(shortcuts).toHaveTextContent("Shift+Enter");
+  });
+
+  // T10 (R3-002/R4-001): App owns the dialog state and threads it down as
+  // modalOpen, so Ctrl/Cmd+K cannot stack a second aria-modal palette over
+  // the Settings dialog.
+  it("does not open the palette through Ctrl/Cmd+K while a modal dialog is open", async () => {
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Workspaces" });
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Application" })).getByRole("button", { name: "Application settings" }));
+    await screen.findByRole("dialog", { name: "Application settings" });
+
+    // Assert between the presses: without the guard the first press opens
+    // the palette and the second would merely toggle it closed again.
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    expect(screen.queryByRole("dialog", { name: "Commands" })).not.toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "k", metaKey: true });
+    expect(screen.queryByRole("dialog", { name: "Commands" })).not.toBeInTheDocument();
+
+    // With the dialog gone, the palette opens again.
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Application settings" })).not.toBeInTheDocument());
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    expect(await screen.findByRole("dialog", { name: "Commands" })).toBeInTheDocument();
   });
 
   it("collapses the chat directories and the plan/usage/agents panel from the top bar", async () => {

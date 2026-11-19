@@ -350,6 +350,10 @@ export function App() {
             onResumeChat={handleSelectChat}
             onWorktreeBranch={setActiveBranch}
             onWorkspacePath={setResolvedDirectory}
+            // T10 (R3-002/R4-001): App owns the dialog state, so it reports
+            // down when one of its own dialogs is open — the palette's
+            // Ctrl/Cmd+K refuses to stack a second modal over it.
+            modalOpen={dialog !== undefined}
           />
         )}
       </div>

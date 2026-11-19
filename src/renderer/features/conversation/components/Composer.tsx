@@ -176,8 +176,10 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
             </button>
           {onOpenPalette ? (
             // S21: the quiet way back into commands — opens the palette
-            // ConversationContainer owns. The shortcut glyph follows the
-            // platform; the accessible name stays "Commands".
+            // ConversationContainer owns. T10 (R2-006): the visible label
+            // names the FULL shortcut per platform (⌘K on macOS, Ctrl+K
+            // elsewhere), not only the modifier glyph; the accessible name
+            // stays "Commands".
             <button
               type="button"
               className="gc-composer__palette"
@@ -185,7 +187,7 @@ export function Composer({ value, working, onChange, onSend, onAbort, ready = tr
               title={`Open the command palette (${IS_MAC ? "⌘K" : "Ctrl+K"})`}
               onClick={onOpenPalette}
             >
-              <span aria-hidden="true">{IS_MAC ? "⌘" : "Ctrl"}</span>
+              <span aria-hidden="true">{IS_MAC ? "⌘K" : "Ctrl+K"}</span>
               Commands
             </button>
           ) : null}

@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { ChatCommand, ChatCommandSource } from "@shared/bridge-types";
 import "./CommandPalette.css";
@@ -102,6 +102,11 @@ export function CommandPalette({ commands, resumeAvailable, onRun, onClose }: Co
     document.getElementById(`${listId}-option-${selected}`)?.scrollIntoView?.({ block: "nearest" });
   }, [listId, selected, visible.length]);
 
+  // The list keys (S19): ↑/↓ move the selection with wraparound, Enter runs
+  // the selected row. Escape is handled one level up, on the panel (see
+  // handlePanelKeyDown), so it closes the palette from ANY element inside
+  // the dialog, not only from this field. Every other key is left alone:
+  // the field keeps typing.
   const handleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
     if (event.key === "ArrowDown") {
       event.preventDefault();
@@ -119,33 +124,39 @@ export function CommandPalette({ commands, resumeAvailable, onRun, onClose }: Co
       if (entry) onRun(entry);
       return;
     }
+  };
+
+  /** Focus containment inside the dialog (T10, R3-001/R4-002). Escape closes
+   * the palette from any element inside it — the keydown bubbles here from
+   * the input, the Clear button or any other child — and Tab / Shift+Tab
+   * cycle only among the palette's own focusables (the input and, when
+   * shown, the Clear button): with a single focusable element, focus stays
+   * on it. Focus never escapes to the dimmed page behind the modal. The
+   * list keys ↑/↓/Enter keep their S19 jobs on the input above, and S21
+   * makes the palette the only command surface, so focus lost behind the
+   * backdrop would strand the user with no way back to commands. */
+  const handlePanelKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
     if (event.key === "Escape") {
       // Stop before the app-wide Escape listeners: closing the palette must
       // not also collapse the narrow navigation or another pane.
       event.preventDefault();
       event.stopPropagation();
       onClose();
+      return;
     }
-    // Every other key is left alone: the field keeps typing.
-  };
-
-  /** Tab is trapped inside the dialog (S19): it cycles only among the
-   * palette's own focusables — the input and, when shown, the Clear button. */
-  const handlePanelKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
     if (event.key !== "Tab") return;
     const focusables = [
       ...(panelRef.current?.querySelectorAll<HTMLElement>("input, button:not(:disabled)") ?? []),
     ];
-    if (focusables.length < 2) return;
-    const first = focusables[0]!;
-    const last = focusables[focusables.length - 1]!;
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
+    if (focusables.length === 0) return;
+    // Tab is always claimed inside the dialog: it cycles (two or more
+    // focusables) or stays put (exactly one) — it never falls through to
+    // whatever sits behind the backdrop.
+    event.preventDefault();
+    const index = focusables.indexOf(document.activeElement as HTMLElement);
+    const offset = event.shiftKey ? -1 : 1;
+    const next = focusables[(index + offset + focusables.length) % focusables.length]!;
+    next.focus();
   };
 
   const clearQuery = (): void => {
@@ -155,6 +166,63 @@ export function CommandPalette({ commands, resumeAvailable, onRun, onClose }: Co
 
   const hasEntries = entries.length > 0;
   const hasMatches = visible.length > 0;
+
+  // The body between the input and the footer: the honest no-commands note,
+  // the grouped list, or the no-match note with its Clear button.
+  let body: ReactNode;
+  if (!hasEntries) {
+    body = <p className="gc-command-palette__empty" role="status">This conversation has not reported any commands yet.</p>;
+  } else if (hasMatches) {
+    body = (
+      <div className="gc-command-palette__list" id={listId} role="listbox" aria-label="Commands">
+        {GROUP_ORDER.map((group) => {
+          const groupEntries = visible.filter((entry) => entry.source === group.key);
+          if (groupEntries.length === 0) return null;
+          return (
+            <div key={group.key} className="gc-command-palette__group">
+              <div className="gc-command-palette__group-head">
+                <span className="gc-command-palette__group-name">{group.label}</span>
+                <span className="gc-command-palette__group-count">{groupEntries.length}</span>
+              </div>
+              {groupEntries.map((entry) => {
+                const index = visible.indexOf(entry);
+                const isSelected = index === selected;
+                return (
+                  <div
+                    key={`${group.key}-${entry.name}`}
+                    id={`${listId}-option-${index}`}
+                    role="option"
+                    aria-selected={isSelected}
+                    data-source={entry.source}
+                    className={isSelected ? "gc-command-palette__row is-selected" : "gc-command-palette__row"}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => onRun(entry)}
+                  >
+                    <span className="gc-command-palette__name">/{entry.name}</span>
+                    {entry.description ? (
+                      <span className="gc-command-palette__desc">{entry.description}</span>
+                    ) : null}
+                    <span className="gc-command-palette__badge">{entry.source}</span>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    );
+  } else {
+    body = (
+      <div className="gc-command-palette__empty">
+        <p>
+          No command matches &quot;{query.trim()}&quot;
+        </p>
+        <button type="button" onClick={clearQuery}>
+          Clear
+        </button>
+      </div>
+    );
+  }
 
   return createPortal(
     <div className="gc-dialog-backdrop">
@@ -185,61 +253,7 @@ export function CommandPalette({ commands, resumeAvailable, onRun, onClose }: Co
             aria-label="Filter commands"
           />
         </div>
-        {!hasEntries ? (
-          <p className="gc-command-palette__empty" role="status">
-            This conversation has not reported any commands yet.
-          </p>
-        ) : hasMatches ? (
-          <div className="gc-command-palette__list" id={listId} role="listbox" aria-label="Commands">
-            {GROUP_ORDER.map((group) => {
-              const groupEntries = visible.filter((entry) => entry.source === group.key);
-              if (groupEntries.length === 0) return null;
-              return (
-                <div key={group.key} className="gc-command-palette__group">
-                  <div className="gc-command-palette__group-head">
-                    <span className="gc-command-palette__group-name">{group.label}</span>
-                    <span className="gc-command-palette__group-count">{groupEntries.length}</span>
-                  </div>
-                  {groupEntries.map((entry) => {
-                    const index = visible.indexOf(entry);
-                    const isSelected = index === selected;
-                    return (
-                      <div
-                        key={`${group.key}-${entry.name}`}
-                        id={`${listId}-option-${index}`}
-                        role="option"
-                        aria-selected={isSelected}
-                        data-source={entry.source}
-                        className={
-                          isSelected
-                            ? "gc-command-palette__row is-selected"
-                            : "gc-command-palette__row"
-                        }
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => onRun(entry)}
-                      >
-                        <span className="gc-command-palette__name">/{entry.name}</span>
-                        {entry.description ? (
-                          <span className="gc-command-palette__desc">{entry.description}</span>
-                        ) : null}
-                        <span className="gc-command-palette__badge">{entry.source}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="gc-command-palette__empty">
-            <p>
-              No command matches &quot;{query.trim()}&quot;
-            </p>
-            <button type="button" onClick={clearQuery}>
-              Clear
-            </button>
-          </div>
-        )}
+        {body}
         <footer className="gc-command-palette__foot">
           <span className="gc-command-palette__hint">
             <kbd>↑</kbd>

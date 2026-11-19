@@ -66,6 +66,12 @@ export interface ConversationContainerProps {
    * workspace. The directory arrived validated in main; it reaches the
    * footer through ChatState.workspacePath. */
   readonly createdWorkspace?: { readonly chatKey: string; readonly result: OpenChatResult };
+  /** T10 (R3-002/R4-001): true while App has one of its own dialogs (Settings,
+   * Shortcuts) open. The Ctrl/Cmd+K listener refuses to open — and refuses to
+   * toggle — the palette while a modal owns the surface, so no second
+   * aria-modal dialog ever stacks. Optional with a safe default (false): bare
+   * callers without an app shell keep the shortcut working. */
+  readonly modalOpen?: boolean;
 }
 
 /**
@@ -174,7 +180,7 @@ function errorText(cause: unknown): string {
  * T2b) are diagnostics: they render only in the Helpers pane's status
  * surface and never enter the chat flow.
  */
-export function ConversationContainer({ activeChat, activeHostId, onHostResolved, onWorktreeBranch, createdWorkspace, footerTarget, onResumeChat, onWorkspacePath }: ConversationContainerProps) {
+export function ConversationContainer({ activeChat, activeHostId, onHostResolved, onWorktreeBranch, createdWorkspace, footerTarget, onResumeChat, onWorkspacePath, modalOpen = false }: ConversationContainerProps) {
   const bridge = useBridge();
   const [chatState, setChatState] = useState<ChatState>(emptyChatState());
   // The host id this container resolved for the current activeChat, kept
@@ -280,16 +286,21 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   // T9 (S19): Ctrl/Cmd+K toggles the palette. A document-level listener so
   // it works while the composer or the thread has focus; the container only
   // exists while a chat is open, so the shortcut does nothing without one.
+  // T10 (R3-002/R4-001): while App's own dialog state (Settings, Shortcuts)
+  // is open, reported here as modalOpen, the shortcut refuses to open and
+  // refuses to toggle — a second aria-modal palette must never stack over
+  // an open dialog.
   useEffect(() => {
     const keydown = (event: KeyboardEvent): void => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        if (modalOpen) return;
         event.preventDefault();
         setPaletteOpen((open) => !open);
       }
     };
     document.addEventListener("keydown", keydown);
     return () => document.removeEventListener("keydown", keydown);
-  }, []);
+  }, [modalOpen]);
 
   // Opens (or starts) the selected chat whenever the selection changes.
   // Guarded against stale resolutions: if the selection changes again
@@ -429,15 +440,9 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
     const text = draft.trim();
     if (text.length === 0 || chatState.working) return;
 
-    if (/^\/resume(?:\s|$)/.test(text)) {
-      setDraft("");
-      if (text !== "/resume") {
-        setBridgeError("Use /resume without arguments to choose a session in this directory.");
-      } else {
-        openResumePicker();
-      }
-      return;
-    }
+    // T10 (R3-003/R2-003, L9): a typed "/resume" — with or without arguments —
+    // is plain text sent to the child, exactly like any other draft. The
+    // resume dialog is reachable only from the palette's app entry (S21).
     setDraft("");
     bridge
       .sendMessage(hostId, text)
@@ -447,9 +452,10 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
       .catch((cause: unknown) => setBridgeError(errorText(cause)));
   };
 
-  /** The shared GUI /resume path: the palette's app entry (S19) and a typed
-   * "/resume" draft both land here. Gated by the workspace directory, exactly
-   * as the composer gated /resume before. */
+  /** The GUI /resume path. T10 (R2-003, L9): the palette's app entry (S19)
+   * is now its ONLY way in — a typed "/resume" draft is plain text for the
+   * child instead of opening this picker. Gated by the workspace directory,
+   * exactly as the composer gated /resume before. */
   const openResumePicker = (): void => {
     if (!workspacePath) {
       setBridgeError("Open a workspace directory before using /resume.");
@@ -464,6 +470,17 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
    * a `queued: false` answer surfaces its reason like the composer's send
    * path does. */
   const handleRunCommand = (entry: PaletteEntry): void => {
+    // T10 (R3-004): a wire command needs the same readiness the composer's
+    // Send already gates: an empty host id has nowhere to route "/name", and
+    // sending it would only produce the bridge's unknown-host refusal. The
+    // palette is a transient launcher, so it is dismissed instead of
+    // lingering open as a modal that silently ignores its input; nothing new
+    // is surfaced — a host-closed status is already on the pane's status
+    // line. The app entry keeps its own workspace gate (openResumePicker).
+    if (entry.source !== "app" && hostId === "") {
+      setPaletteOpen(false);
+      return;
+    }
     setPaletteOpen(false);
     if (entry.source === "app") {
       openResumePicker();
@@ -472,7 +489,11 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
     bridge
       .sendMessage(hostId, "/" + entry.name)
       .then((result) => {
-        if (!result.queued) setBridgeError(result.reason ?? "Gentle did not send the message");
+        // T10 (R4-003): an accepted command clears a previous refusal, the
+        // same way openResumePicker does — the refusal described a command
+        // that is no longer pending.
+        if (result.queued) setBridgeError(undefined);
+        else setBridgeError(result.reason ?? "Gentle did not send the message");
       })
       .catch((cause: unknown) => setBridgeError(errorText(cause)));
   };

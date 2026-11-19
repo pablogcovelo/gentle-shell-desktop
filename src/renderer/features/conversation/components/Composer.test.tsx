@@ -285,4 +285,35 @@ describe("Composer: command affordance removed, Commands button kept (S21)", () 
     render(<Harness />);
     expect(screen.queryByRole("button", { name: "Commands" })).not.toBeInTheDocument();
   });
+
+  // R2-006: the visible label must name the full shortcut, not only the
+  // modifier glyph. jsdom reports no mac platform, so the default is Ctrl+K.
+  it("labels the Commands button Ctrl+K outside macOS", () => {
+    render(<Harness onOpenPalette={() => {}} />);
+
+    const button = screen.getByRole("button", { name: "Commands" });
+    expect(button.textContent).toContain("Ctrl+K");
+    expect(button.getAttribute("title")).toContain("Ctrl+K");
+  });
+
+  it("labels the Commands button ⌘K on macOS", async () => {
+    // IS_MAC is read once at module load, so the platform is stubbed before
+    // a fresh import of the module under test.
+    vi.resetModules();
+    const original = Object.getOwnPropertyDescriptor(navigator, "platform");
+    Object.defineProperty(navigator, "platform", { value: "MacIntel", configurable: true });
+    try {
+      const { Composer } = await import("./Composer");
+      render(<Composer value="" working={false} onChange={vi.fn()} onSend={vi.fn()} onAbort={vi.fn()} onOpenPalette={() => {}} />);
+
+      const button = screen.getByRole("button", { name: "Commands" });
+      expect(button.textContent).toContain("⌘K");
+      expect(button.textContent).not.toContain("Ctrl+K");
+      expect(button.getAttribute("title")).toContain("⌘K");
+    } finally {
+      if (original) Object.defineProperty(navigator, "platform", original);
+      else delete (navigator as unknown as { platform?: string }).platform;
+      vi.resetModules();
+    }
+  });
 });

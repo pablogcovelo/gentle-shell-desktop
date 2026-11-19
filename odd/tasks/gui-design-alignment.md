@@ -40,6 +40,7 @@ T6 — S2, S16 · composer hint, double-Esc stop, emoji removal · `01a5b74`
 T7 — S13, S18 · design board: flat agents, eye, chips, orphan region, status entry, dead CSS · `fd5feb1` (amended)
 T8 — S12 · informational cards leave the chat · `afd5706`
 T9 — S19, S20, S21 · command palette, chat search removed, slash typing removed from the composer · `ae04f1c`
+T10 — S19, S20, S21 · palette hardening (nested modals, focus containment, stale error, empty host, label, typed slash commands) · commit pending
 
 Delivery slices on `feat/gui-design-alignment`, none pushed:
 `3014c52` shell structure, agents and status surfaces · `01a5b74` composer ·
@@ -63,3 +64,5 @@ L6 (T8, revision of S12): "Estas tarjetas que son como informativas no deben apa
 L7 (3.4 design): `design/command-palette/` opened with three alternatives for the ⌘K command palette that will replace the chat-search dialog (S17): `01-spotlight-overlay.html` (centred spotlight over a dimmed workspace, flat list grouped by source), `02-composer-sheet.html` (sheet anchored above the composer, list left + detail column right), and `03-docked-panel.html` (panel docked in place of the inspector, no overlay). One will be chosen for implementation; the other two remain alternatives. The composer loses `/` typing in the same change, per L5.
 
 L8 (choice): the maintainer chose artboard 01 of `design/command-palette/` — "01 · Spotlight overlay (modal centrado)" — for implementation; 02 and 03 stay as alternatives.
+
+L9 (T10): "Aplica la uniad de corrección que propones y /resume escrito a mano se va, los comandos quedan relegados a ctrl+k" — the maintainer authorized the T9 palette-hardening unit: no palette over an open app dialog, real focus containment, stale refusal cleared, no send to an empty host, the Commands label names ⌘K/Ctrl+K, and a typed "/resume" is plain text for the child — the resume dialog is reachable only from the palette's app entry, per S21.
