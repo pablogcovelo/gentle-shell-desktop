@@ -486,14 +486,15 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
       openResumePicker();
       return;
     }
+    // T10 (R4-001): the previous refusal described a command that is no longer
+    // pending, so it is cleared when THIS command is dispatched, never when a
+    // later settlement arrives. An acceptance that resolves after a newer
+    // refusal therefore cannot erase it: settlements only ever set the line.
+    setBridgeError(undefined);
     bridge
       .sendMessage(hostId, "/" + entry.name)
       .then((result) => {
-        // T10 (R4-003): an accepted command clears a previous refusal, the
-        // same way openResumePicker does — the refusal described a command
-        // that is no longer pending.
-        if (result.queued) setBridgeError(undefined);
-        else setBridgeError(result.reason ?? "Gentle did not send the message");
+        if (!result.queued) setBridgeError(result.reason ?? "Gentle did not send the message");
       })
       .catch((cause: unknown) => setBridgeError(errorText(cause)));
   };

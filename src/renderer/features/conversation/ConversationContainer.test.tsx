@@ -1782,7 +1782,7 @@ describe("ConversationContainer command palette (T9)", () => {
     expect(screen.queryByRole("dialog", { name: "Commands" })).not.toBeInTheDocument();
   });
 
-  it("clears a previous refusal when a later palette command is accepted (R4-003)", async () => {
+  it("clears a previous refusal when a later palette command is dispatched (R4-001)", async () => {
     const bridge = makeBridge({
       newChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: PALETTE_STATE }),
       sendMessage: vi.fn()
@@ -1798,10 +1798,37 @@ describe("ConversationContainer command palette (T9)", () => {
     fireEvent.keyDown(within(screen.getByRole("dialog", { name: "Commands" })).getByRole("combobox"), { key: "Enter" });
     expect(await screen.findByRole("status")).toHaveTextContent("The child refused the prompt");
 
-    // The next run is accepted: the stale refusal is cleared, not pinned.
+    // The next run is dispatched: the stale refusal is cleared at that moment, and
+    // its own settlement can only set the line, never clear it.
     fireEvent.keyDown(document, { key: "k", ctrlKey: true });
     fireEvent.keyDown(within(screen.getByRole("dialog", { name: "Commands" })).getByRole("combobox"), { key: "Enter" });
     await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+  });
+
+  // R4-001: the clearing belongs to the dispatch, not to a settlement. An
+  // acceptance that resolves after a NEWER refusal must leave that refusal on
+  // screen: it is the last thing the child said about the command catalog.
+  it("never lets a late acceptance erase a newer refusal (R4-001)", async () => {
+    let resolveFirst!: (value: { queued: boolean }) => void;
+    const bridge = makeBridge({
+      newChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: PALETTE_STATE }),
+      sendMessage: vi.fn()
+        .mockImplementationOnce(() => new Promise<{ queued: boolean }>((resolve) => { resolveFirst = resolve; }))
+        .mockResolvedValueOnce({ queued: false, reason: "The newer command was refused" }),
+    });
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    fireEvent.keyDown(within(screen.getByRole("dialog", { name: "Commands" })).getByRole("combobox"), { key: "Enter" });
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    fireEvent.keyDown(within(screen.getByRole("dialog", { name: "Commands" })).getByRole("combobox"), { key: "Enter" });
+    expect(await screen.findByRole("status")).toHaveTextContent("The newer command was refused");
+
+    await act(async () => { resolveFirst({ queued: true }); });
+
+    expect(screen.getByRole("status")).toHaveTextContent("The newer command was refused");
   });
 
   it("never sends a palette command to an empty host — it dismisses the palette instead (R3-004)", async () => {
