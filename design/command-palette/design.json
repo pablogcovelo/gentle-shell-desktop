@@ -1,0 +1,28 @@
+{
+  "title": "Command palette (⌘K)",
+  "brief": "The Ctrl/Cmd+K dialog stops searching chats and becomes the only place slash commands run; the composer loses `/` typing. Three structural directions over a quiet workspace context: centred spotlight, composer-anchored sheet, docked panel.",
+  "feature": "odd/tasks/gui-design-alignment.md",
+  "artboards": [
+    {
+      "file": "01-spotlight-overlay.html",
+      "title": "Spotlight overlay",
+      "tradeoff": "Maximum focus and speed; hides the conversation while it is open",
+      "width": 1440,
+      "height": 960
+    },
+    {
+      "file": "02-composer-sheet.html",
+      "title": "Composer sheet",
+      "tradeoff": "The conversation stays visible and the detail column has room; the sheet competes with the thread for vertical space",
+      "width": 1440,
+      "height": 960
+    },
+    {
+      "file": "03-docked-panel.html",
+      "title": "Docked panel",
+      "tradeoff": "Nothing covers the conversation and discovery is easy; it costs the inspector and is slower for a keyboard-only user",
+      "width": 1440,
+      "height": 960
+    }
+  ]
+}

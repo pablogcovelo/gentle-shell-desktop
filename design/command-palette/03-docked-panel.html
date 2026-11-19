@@ -1,0 +1,227 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>Gentle Shell Desktop · Command palette — 03 Docked panel</title><style>
+/* Tokens: design/system.md (src/renderer/shared/theme/tokens.css). No shadows, 1px borders. */
+:root{--bg:#060407;--panel:#100a0f;--raised:#180e15;--line:#2a1720;--line-strong:#563040;--text:#f6eff3;--text-2:#d2cbd0;--muted:#a78e9b;--accent:#f095c8;--accent-active:#ffb1dd;--blue:#a9c7ee;--green:#b4e7c7;--amber:#f2b86d;--red:#ff718f;--purple:#c96aa2;--champagne:#e0c27a;--display:"Space Grotesk","Segoe UI",system-ui,sans-serif;--sans:"Inter","Segoe UI",system-ui,sans-serif;--mono:"JetBrains Mono","SFMono-Regular",Consolas,monospace}
+*{box-sizing:border-box}html,body{height:100%}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 var(--sans)}button,input{font:inherit;color:inherit}button{cursor:pointer;border:1px solid transparent;background:none;border-radius:8px;min-height:32px}:focus-visible{outline:2px solid var(--accent-active);outline-offset:2px}h1,h2,h3,p{margin:0}small{font-size:11px}.muted{color:var(--muted)}.mono{font-family:var(--mono)}.eyebrow{font:10px var(--mono);letter-spacing:1.6px;color:var(--muted);text-transform:uppercase}.rose{color:var(--accent)}.row{display:flex;align-items:center;gap:8px}.demo-tag{font:9px var(--mono);letter-spacing:1px;border:1px solid var(--line-strong);border-radius:999px;padding:3px 9px;color:var(--muted);white-space:nowrap}
+/* App shell — same quiet chrome; no overlay at all in this direction. */
+.app{height:100dvh;min-height:960px;display:grid;grid-template-rows:36px minmax(0,1fr) 30px}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 14px;border-bottom:1px solid var(--line)}
+.wordmark{font-family:var(--display);font-weight:600;letter-spacing:.3px;font-size:12px;color:var(--muted)}
+.window-controls{display:flex;gap:2px}
+.window-controls span{display:inline-flex;width:26px;height:26px;align-items:center;justify-content:center;color:var(--muted);font-size:10px}
+.body{display:grid;grid-template-columns:56px 232px minmax(0,1fr) 300px;min-height:0}
+.rail{display:flex;flex-direction:column;align-items:center;gap:12px;border-right:1px solid var(--line);padding:14px 4px}
+.rail-brand{color:var(--accent);font-size:16px}
+.rail-item{font-size:9px;color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 2px;border-radius:8px;width:48px}
+.rail-item.active{background:var(--raised);color:var(--accent)}
+.rail-item svg{width:16px;height:16px}
+.sidebar{background:var(--panel);border-right:1px solid var(--line);padding:16px 10px;display:flex;flex-direction:column;min-height:0}
+.sidebar h2{font-family:var(--display);font-size:17px;letter-spacing:-.5px;font-weight:400}
+.ws-list{margin-top:12px;display:flex;flex-direction:column;gap:4px}
+.ws-row{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid transparent;border-radius:8px;color:var(--text-2);font-size:12px;text-align:left}
+.ws-row svg{width:15px;height:15px;color:var(--muted);flex-shrink:0}
+.ws-row.selected{background:var(--raised);border-color:var(--line-strong);color:var(--accent)}
+.ws-row small{display:block;color:var(--muted);font:10px var(--mono)}
+.main{min-width:0;display:flex;flex-direction:column;border-right:1px solid var(--line)}
+.contextbar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 20px;border-bottom:1px solid var(--line)}
+.contextbar h1{font-size:14px;font-weight:500}
+.thread{flex:1;min-height:0;overflow:auto;padding:20px 28px}
+.thread>*{max-width:640px;margin-left:auto;margin-right:auto}
+.message{margin-bottom:22px}
+.message header{display:flex;gap:8px;align-items:baseline;margin-bottom:5px}
+.message header strong{font-size:12px}
+.message header time{font:10px var(--mono);color:var(--muted)}
+.message p{font-size:13px;color:var(--text-2);line-height:1.7}
+.message.user{width:fit-content;max-width:85%;margin-left:auto;padding:10px 14px;border:1px solid var(--line-strong);border-radius:12px;background:var(--raised)}
+.composer-wrap{padding:10px 28px 14px}
+.composer{max-width:640px;margin:0 auto;border:1px solid var(--line-strong);border-radius:12px;background:var(--panel);padding:10px}
+.composer textarea{width:100%;background:none;border:0;resize:none;font:13px/1.6 var(--sans);color:var(--text);min-height:40px;outline-offset:2px}
+.composer textarea::placeholder{color:var(--muted)}
+.composer-foot{display:flex;align-items:center;gap:10px;margin-top:6px}
+.composer-hint{font-size:10px;color:var(--muted);flex:1}
+.kbd{font:10px var(--mono);border:1px solid var(--line-strong);border-radius:5px;padding:2px 6px;color:var(--text-2)}
+.palette-open{display:inline-flex;align-items:center;gap:7px;font-size:11px;color:var(--accent);padding:5px 10px;border:1px solid var(--line-strong);border-radius:8px}
+/* Direction 03 — the command panel docks where the inspector sits. The
+   Todo/Usage/Agents column is hidden while it is open; Esc restores it. */
+.docked{background:var(--panel);border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.docked-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px 10px}
+.docked-head h2{font-family:var(--display);font-size:15px;font-weight:400;letter-spacing:-.3px}
+.docked-head .kbd{color:var(--muted)}
+.docked-input{display:flex;align-items:center;gap:8px;margin:0 14px;padding:8px 10px;border:1px solid var(--line-strong);border-radius:10px;background:var(--bg)}
+.docked-input:focus-within{border-color:var(--accent)}
+.docked-input .slash{font:600 14px var(--mono);color:var(--accent)}
+.docked-input input{flex:1;background:none;border:0;font:12px var(--mono);color:var(--text);outline-offset:-2px;min-width:0}
+.docked-input input::placeholder{color:var(--muted)}
+.docked-count{padding:10px 16px 4px;font:9px var(--mono);letter-spacing:1px;color:var(--muted);text-transform:uppercase}
+.docked-list{flex:1;overflow-y:auto;overscroll-behavior:contain;padding:4px 10px;scrollbar-width:thin;scrollbar-color:var(--line-strong) transparent}
+.cmd-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 10px;align-items:center;width:100%;text-align:left;padding:10px 10px;border:1px solid transparent;border-radius:8px;margin-bottom:2px}
+.cmd-row .cmd-name{font:600 13px var(--mono);color:var(--text-2);grid-column:1}
+.cmd-row .cmd-desc{font-size:12px;color:var(--muted);line-height:1.5;grid-column:1 / -1;grid-row:2}
+.cmd-row .cmd-src{grid-column:2;grid-row:1;justify-self:end;font:9px var(--mono);letter-spacing:1px;text-transform:uppercase;border:1px solid var(--line-strong);border-radius:999px;padding:2px 8px;color:var(--muted);white-space:nowrap}
+.cmd-row[data-source="prompt"] .cmd-src{color:var(--blue)}
+.cmd-row[data-source="skill"] .cmd-src{color:var(--champagne)}
+.cmd-row[data-source="extension"] .cmd-src{color:var(--purple)}
+.cmd-row.selected{background:var(--raised);border-color:var(--line-strong)}
+.cmd-row.selected .cmd-name{color:var(--accent)}
+.cmd-row.selected .cmd-desc{color:var(--text-2)}
+/* A row without a description keeps its height and its source badge. */
+.cmd-row.no-desc .cmd-desc{display:none}
+.cmd-row.no-desc .cmd-name{grid-row:1}
+.docked-foot{border-top:1px solid var(--line);padding:9px 14px;display:flex;align-items:center;gap:8px;font-size:10px;color:var(--muted);flex-wrap:wrap}.docked-foot .proto-states{flex-basis:100%;margin-left:0}
+.docked-foot .hint{display:flex;gap:5px;align-items:center}
+.sent{display:none;align-items:center;gap:7px;font-size:11px;color:var(--green);padding:8px 16px 0;border-top:1px solid var(--line);margin-top:auto}
+.sent.show{display:flex}
+.docked-empty{padding:30px 18px;text-align:center}
+.docked-empty p{font-size:12px;color:var(--text-2)}
+.docked-empty .why{font-size:11px;color:var(--muted);margin-top:4px}
+.docked-empty button{margin-top:12px;font-size:11px;color:var(--accent);border-color:var(--line-strong);padding:5px 12px}
+.proto-states{display:flex;align-items:center;gap:4px;margin-left:auto}
+.proto-states .lbl{font:9px var(--mono);color:var(--muted);letter-spacing:1px}
+.proto-states button{font:9px var(--mono);color:var(--muted);border:1px dashed var(--line-strong);border-radius:999px;padding:2px 8px;min-height:20px}
+.proto-states button[aria-pressed="true"]{color:var(--accent);border-style:solid}
+/* The inspector returns when the panel is closed. */
+.inspector{background:var(--panel);border-left:1px solid var(--line);padding:14px 16px;overflow:auto;display:flex;flex-direction:column;gap:18px;min-height:0}
+body[data-palette="open"] .inspector{display:none}
+body[data-palette="closed"] .docked{display:none}
+.section-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.section-head h3{font:10px var(--mono);letter-spacing:1px;text-transform:uppercase;color:var(--muted);font-weight:400}
+.section-head .meta{font:10px var(--mono);color:var(--text-2)}
+.tasks{list-style:none;margin:0;padding:0}
+.tasks li{display:flex;gap:8px;padding:7px 0;border-bottom:1px solid var(--line);font-size:12px;align-items:flex-start}
+.tasks .mark{width:14px;flex-shrink:0;text-align:center}
+.tasks li.done{color:var(--muted)}
+.tasks li.current strong{color:var(--text);font-weight:500}
+.usage-row{display:flex;align-items:center;gap:7px;margin-bottom:7px;font-size:11px}
+.usage-label{width:52px;flex-shrink:0;font:10px var(--mono);color:var(--muted)}
+.usage-meter{flex:1;height:5px;border-radius:999px;background:var(--line-strong);overflow:hidden}
+.usage-meter span{display:block;height:100%;background:var(--accent)}
+.usage-value{font:10px var(--mono);color:var(--text-2)}
+.agent-rows{list-style:none;margin:0;padding:0}
+.agent-row{display:flex;gap:6px;align-items:center;font:11px var(--mono);min-height:24px}
+.agent-row .st{color:var(--amber)}
+.agent-rows .agent-row:last-child .st{color:var(--green)}
+.footer{display:flex;align-items:center;gap:16px;border-top:1px solid var(--line);padding:0 14px;font:10px var(--mono);color:var(--muted);white-space:nowrap;overflow:hidden}
+.footer .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.footer .cap{color:var(--text-2)}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style></head><body data-palette="open">
+<div class="app">
+<header class="topbar"><span class="wordmark">Gentle Shell <span class="rose">Desktop</span></span><span class="row"><span class="demo-tag">EXAMPLE DATA · LOCAL PROTOTYPE</span><span class="window-controls" aria-hidden="true"><span>—</span><span>▢</span><span>✕</span></span></span></header>
+<div class="body">
+<nav class="rail" aria-label="Application"><span class="rail-brand" aria-hidden="true">✿</span><span class="rail-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"/></svg>Workspaces</span></nav>
+<aside class="sidebar" aria-label="Workspaces"><h2>Workspaces<span class="rose">.</span></h2><div class="ws-list">
+<button class="ws-row selected" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"/></svg><span>gentle-shell-desktop<small>develop</small></span></button>
+<button class="ws-row" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"/></svg><span>gentle-shell<small>main</small></span></button>
+<button class="ws-row" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z"/></svg><span>gentle-ai<small>main</small></span></button>
+</div></aside>
+<main class="main" id="conversation" aria-label="Conversation">
+<div class="contextbar"><h1>gentle-shell-desktop</h1><span class="muted mono" style="font-size:10px">session 3f9a · example</span></div>
+<div class="thread" role="log" aria-label="Example messages">
+<article class="message user"><header><time>10:42</time></header><p>The Ctrl+K dialog still searches chats — move it to slash commands.</p></article>
+<article class="message agent"><header><strong>Gentle</strong><time>10:42</time></header><p>Agreed. I drafted three palette directions; the composer loses `/` in the same change, so ⌘K becomes the only place a command runs.</p></article>
+</div>
+<div class="composer-wrap">
+<div class="composer">
+<label for="composer-input" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Message Gentle</label>
+<textarea id="composer-input" rows="1" placeholder="Message Gentle…"></textarea>
+<div class="composer-foot"><span class="composer-hint">Enter to send · Shift+Enter for a new line · Esc Esc to stop the agent</span><button class="palette-open" type="button" id="reopen" aria-expanded="true"><span aria-hidden="true">⌘</span>Commands</button></div>
+</div>
+</div>
+</main>
+<!-- Direction 03: docked, non-modal panel in place of the inspector. Search
+     at the top, every command visible with its description. -->
+<aside class="docked" role="complementary" aria-label="Command palette" id="palette" aria-describedby="docked-hints">
+<div class="docked-head"><h2>Commands<span class="rose">.</span></h2><span class="kbd" title="Close and restore the inspector">esc</span></div>
+<div class="docked-input"><span class="slash" aria-hidden="true">/</span>
+<label for="cmd-filter" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Filter commands</label>
+<input id="cmd-filter" role="combobox" aria-expanded="true" aria-controls="cmd-list" aria-activedescendant="opt-resume" autocomplete="off" spellcheck="false" placeholder="Filter commands…" value="">
+</div>
+<div class="docked-count" id="docked-count" aria-live="polite">8 commands</div>
+<div class="docked-list" id="cmd-list" role="listbox" aria-label="Commands"></div>
+<div class="docked-empty" id="cmd-empty" hidden>
+<p>No command matches “<span id="empty-query"></span>”</p>
+<p class="why">Check the spelling, or browse the full list.</p>
+<button type="button" id="clear-filter">Clear filter</button>
+</div>
+<div class="sent" id="sent-line" aria-live="polite"></div>
+<div class="docked-foot" id="docked-hints"><span class="hint"><span class="kbd">↑</span><span class="kbd">↓</span> move</span><span class="hint"><span class="kbd">↵</span> run</span><span class="hint"><span class="kbd">esc</span> inspector</span><span class="proto-states" aria-label="Prototype-only state preview"><span class="lbl">PROTOTYPE</span><button type="button" data-state="list" aria-pressed="true">list</button><button type="button" data-state="empty" aria-pressed="false">empty</button></span></div>
+</aside>
+<!-- The inspector the panel temporarily replaces. -->
+<aside class="inspector" aria-label="Session information">
+<section><div class="section-head"><h3>Todo</h3><span class="meta">2/4 · 50%</span></div>
+<ul class="tasks"><li class="done"><span class="mark" aria-hidden="true">✓</span><span>Design the ⌘K palette</span></li><li class="current"><span class="mark" aria-hidden="true">◐</span><strong>Pick one direction</strong></li><li><span class="mark" aria-hidden="true">○</span><span>Remove `/` from the composer</span></li><li><span class="mark" aria-hidden="true">○</span><span>Wire the runner</span></li></ul></section>
+<section><div class="section-head"><h3>Usage</h3><span class="meta">$0.42 · example</span></div>
+<div class="usage-row"><span class="usage-label">model</span><span class="usage-meter"><span style="width:18%"></span></span><span class="usage-value">18%</span></div>
+<div class="usage-row"><span class="usage-label">context</span><span class="usage-meter"><span style="width:31%"></span></span><span class="usage-value">31%</span></div></section>
+<section><div class="section-head"><h3>Agents</h3></div>
+<ul class="agent-rows"><li class="agent-row"><span class="st" aria-hidden="true">◐</span>gentle-ai-explore · Running</li><li class="agent-row"><span class="st" aria-hidden="true">✓</span>gentle-review · Done</li></ul></section>
+</aside>
+</div>
+<footer class="footer"><span class="grow">~/Projects/GentlemanProgramming/gentle-shell-desktop</span><span class="cap">MCP 3 · Skills 12 · Extensions 0</span><span>model <span style="color:var(--text)">gpt-5.2</span> · example</span><span>⌘K commands</span></footer>
+</div>
+
+<script>
+const COMMANDS=[
+ {name:"resume",desc:"Choose a saved session and continue it.",source:"prompt"},
+ {name:"model",desc:"Switch the model this conversation runs on.",source:"prompt"},
+ {name:"login",desc:"Sign in to a provider.",source:"prompt"},
+ {name:"agents",desc:"List the agents delegated from this session.",source:"skill"},
+ {name:"review",desc:"Start a native review of the working tree.",source:"skill"},
+ {name:"compact",desc:"Compact the conversation context.",source:"prompt"},
+ {name:"clear",desc:"Clear the transcript.",source:"prompt"},
+ {name:"help",desc:"",source:"extension"}
+];
+const list=document.getElementById("cmd-list"),input=document.getElementById("cmd-filter"),
+empty=document.getElementById("cmd-empty"),emptyQuery=document.getElementById("empty-query"),
+sentLine=document.getElementById("sent-line"),countLine=document.getElementById("docked-count");
+let visible=[],index=0;
+function row(c){const b=document.createElement("button");b.type="button";b.className="cmd-row"+(c.desc?"":" no-desc");
+b.dataset.name=c.name;b.dataset.source=c.source;
+b.setAttribute("role","option");b.id="opt-"+c.name;
+const n=document.createElement("span");n.className="cmd-name";n.textContent="/"+c.name;
+const d=document.createElement("span");d.className="cmd-desc";d.textContent=c.desc;
+const s=document.createElement("span");s.className="cmd-src";s.textContent=c.source;
+b.append(n,d,s);
+b.addEventListener("click",()=>{select(visible.indexOf(b));run();});
+return b;}
+COMMANDS.forEach(c=>list.appendChild(row(c)));
+function render(){
+ const q=input.value.replace(/^\//,"").trim().toLowerCase();
+ visible=[];
+ list.querySelectorAll(".cmd-row").forEach(r=>{
+  const c=COMMANDS.find(x=>x.name===r.dataset.name);
+  const hay=(c.name+" "+c.desc+" "+c.source).toLowerCase();
+  const hit=!q||hay.includes(q);
+  r.hidden=!hit;
+  if(hit)visible.push(r);
+ });
+ index=Math.min(index,Math.max(0,visible.length-1));
+ visible.forEach((r,i)=>{r.classList.toggle("selected",i===index);r.setAttribute("aria-selected",i===index?"true":"false");});
+ if(visible[index])input.setAttribute("aria-activedescendant",visible[index].id);
+ empty.hidden=visible.length>0;list.hidden=visible.length===0;
+ countLine.textContent=visible.length===COMMANDS.length?COMMANDS.length+" commands":visible.length+" of "+COMMANDS.length+" commands";
+ if(visible.length===0)emptyQuery.textContent=input.value.trim();
+ if(visible[index])visible[index].scrollIntoView({block:"nearest"});}
+function select(i){index=i;visible.forEach((r,j)=>{r.classList.toggle("selected",j===i);r.setAttribute("aria-selected",j===i?"true":"false");});
+ if(visible[i]){input.setAttribute("aria-activedescendant",visible[i].id);visible[i].scrollIntoView({block:"nearest"});}}
+function run(){if(!visible[index])return;const c=visible[index].dataset.name;
+ const mark=document.createElement("span");mark.setAttribute("aria-hidden","true");mark.textContent="✓";
+ const name=document.createElement("span");name.className="mono";name.textContent="/"+c;
+ sentLine.replaceChildren(mark,document.createTextNode(" Sent "),name,document.createTextNode(" to the conversation."));
+ sentLine.classList.add("show");}
+input.addEventListener("input",()=>{index=0;sentLine.classList.remove("show");render();});
+input.addEventListener("keydown",e=>{
+ if(e.key==="ArrowDown"){e.preventDefault();if(visible.length)select((index+1)%visible.length);}
+ else if(e.key==="ArrowUp"){e.preventDefault();if(visible.length)select((index-1+visible.length)%visible.length);}
+ else if(e.key==="Enter"){e.preventDefault();run();}
+ else if(e.key==="Escape"){e.preventDefault();closePalette();}});
+document.getElementById("clear-filter").addEventListener("click",()=>{input.value="";index=0;input.focus();render();});
+function closePalette(){document.body.dataset.palette="closed";document.getElementById("reopen").setAttribute("aria-expanded","false");document.getElementById("reopen").focus();}
+document.getElementById("reopen").addEventListener("click",()=>{document.body.dataset.palette="open";document.getElementById("reopen").setAttribute("aria-expanded","true");input.focus();});
+document.querySelectorAll(".proto-states button").forEach(b=>b.addEventListener("click",()=>{
+ document.querySelectorAll(".proto-states button").forEach(x=>x.setAttribute("aria-pressed","false"));
+ b.setAttribute("aria-pressed","true");
+ if(b.dataset.state==="empty"){input.value="zz";index=0;}else{input.value="";index=0;}
+ sentLine.classList.remove("show");input.focus();render();}));
+render();input.focus();
+</script>
+</body></html>
