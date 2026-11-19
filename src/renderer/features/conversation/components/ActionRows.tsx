@@ -73,8 +73,48 @@ export function ToolActionRow({ call, vocabulary }: { call: ToolCallView; vocabu
         <div className="gc-action-row__detail">
           <Detail label="args" value={call.args} />
           <Detail label="result" value={call.result} />
+          <Variants vocabulary={vocabulary} entry={entry} ownGlyph={glyph} />
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * S14 (gui-design-alignment T5): the expanded detail also shows the other
+ * glyphs the row's published category renders, as quiet chips — the same
+ * variants the design board lists. Derived entirely from the child's
+ * vocabulary: distinct `glyph`s of every entry of the row's category, in
+ * vocabulary order, first occurrence kept (the published vocabulary repeats
+ * `✉` and `☰` for a second delegation tool each). The row only appears
+ * when the category publishes two or more distinct glyphs, so single-glyph
+ * categories (read, edit, write, list, bash, rdd) and the app-owned memory
+ * fallback (no published entries) stay silent.
+ */
+function Variants({ vocabulary, entry, ownGlyph }: { vocabulary?: ToolVocabulary; entry?: ToolVocabularyEntry; ownGlyph: string }) {
+  if (!vocabulary || !entry) return null;
+  const glyphs: string[] = [];
+  const entries = vocabulary.entries.filter((candidate) => candidate.category === entry.category);
+  for (const candidate of entries) {
+    if (!glyphs.includes(candidate.glyph)) glyphs.push(candidate.glyph);
+  }
+  if (glyphs.length < 2) return null;
+  // `phases` when every entry of the category carries a heading (delegation
+  // does); otherwise the glyphs are alternative reports, not phases.
+  const label = entries.every((candidate) => candidate.heading !== undefined) ? "phases" : "also reports";
+  return (
+    <div className="gc-action-row__variants" data-testid="gc-action-row__variants">
+      <span className="gc-action-row__variants-label">{label}</span>
+      {glyphs.map((glyph) => (
+        <span
+          key={glyph}
+          className="gc-action-row__chip"
+          aria-current={glyph === ownGlyph ? "true" : undefined}
+          aria-label={`${entry.category} glyph ${glyph}`}
+        >
+          {glyph}
+        </span>
+      ))}
     </div>
   );
 }

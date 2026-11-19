@@ -107,6 +107,40 @@
   color: var(--accent);
 }
 
+/* S14 (gui-design-alignment T5): the expanded detail also lists the other
+ * glyphs the row's category renders, as a quiet wrap row of chips. The
+ * current glyph is the accent; the rest stay muted. Never touches the
+ * summary line above. */
+.gc-action-row__variants {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.gc-action-row__variants-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.gc-action-row__chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-2);
+}
+
+.gc-action-row__chip[aria-current="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 /* Running and failed states earn colour; done stays quiet. */
 .gc-action-row[data-status="running"] .gc-action-row__state {
   color: var(--amber);
