@@ -8,3 +8,4 @@ export * from "./piSessionStore";
 export * from "./appConfigStore";
 export * from "./homeSettings";
 export * from "./setupService";
+export * from "./gitBranch";

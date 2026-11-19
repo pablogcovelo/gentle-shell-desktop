@@ -154,17 +154,34 @@ describe("ChatList workspace groups (T1)", () => {
   });
 });
 
-it("shows the branch under the selected workspace's name and nowhere else", () => {
+it("shows every workspace's branch from the registry, not only the selected one", () => {
   const chats = [
     { id: "a", title: "Project A", cwd: "/repos/alpha", updatedAt: "2026-09-21T09:00:00.000Z", messageCount: 1, state: "idle" },
     { id: "b", title: "Project B", cwd: "/repos/beta", updatedAt: "2026-09-21T09:00:00.000Z", messageCount: 1, state: "idle" },
   ] as unknown as readonly ChatSummary[];
 
-  render(<ChatList chats={chats} selectedId="a" onSelect={() => {}} activeBranch="develop" />);
+  render(
+    <ChatList
+      chats={chats}
+      selectedId="a"
+      onSelect={() => {}}
+      branches={{ "/repos/alpha": "develop", "/repos/beta": "main" }}
+    />,
+  );
 
-  // The branch is a fact about the OPEN workspace only; a row that is not
-  // open must not carry one.
+  // A branch is a fact about each workspace, not about the open one: every
+  // row the registry answered for carries its own.
   expect(screen.getByText("develop")).toBeInTheDocument();
-  expect(screen.getAllByText("develop")).toHaveLength(1);
+  expect(screen.getByText("main")).toBeInTheDocument();
+});
+
+it("shows no branch for a workspace the registry answered nothing for", () => {
+  const chats = [
+    { id: "a", title: "Project A", cwd: "/repos/alpha", updatedAt: "2026-09-21T09:00:00.000Z", messageCount: 1, state: "idle" },
+  ] as unknown as readonly ChatSummary[];
+
+  render(<ChatList chats={chats} selectedId="a" onSelect={() => {}} branches={{}} />);
+
+  expect(document.querySelector(".gc-chat-list-item__branch")).toBeNull();
 });
 });

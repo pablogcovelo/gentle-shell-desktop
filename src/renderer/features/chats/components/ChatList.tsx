@@ -30,14 +30,27 @@ export interface ChatListProps {
   /** T1: a persisted row's remove action was clicked — delete only the
    * persisted entry. */
   readonly onRemoveWorkspace?: (directory: string) => void;
-  /** The open workspace's branch, shown under that workspace's name only. */
+  /** The open workspace's branch, reported live by its child. It wins for the
+   * SELECTED chat's directory only. */
   readonly activeBranch?: string;
+  /** The branch each directory has checked out, keyed by directory. It is the
+   * per-workspace answer, so a row that is not open still carries its own. */
+  readonly branches?: Readonly<Record<string, string>>;
   /** Retained for callers; directory navigation has no day buckets. */
   readonly now?: Date;
 }
 
 /** Preserve bridge order and session identities; never merge equal directories. */
-export function ChatList({ chats, groups, selectedId, onSelect, onSelectWorkspace, onRemoveWorkspace, activeBranch }: ChatListProps) {
+export function ChatList({ chats, groups, selectedId, onSelect, onSelectWorkspace, onRemoveWorkspace, activeBranch, branches }: ChatListProps) {
+  // The selected chat names the selected workspace row (T2: one selected
+  // workspace, its chat the active pane).
+  const selectedDirectory = chats.find((chat) => chat.id === selectedId)?.cwd;
+  // A branch belongs to each workspace, never to the open one alone: the live
+  // child's report wins for the selected directory, the registry's map covers
+  // every other row.
+  const branchOf = (directory: string | undefined): string | undefined =>
+    (directory !== undefined && directory === selectedDirectory ? activeBranch : undefined) ??
+    (directory !== undefined ? branches?.[directory] : undefined);
   // Flat fallback: a caller without the workspace registry renders today's
   // list exactly as before.
   if (groups === undefined) {
@@ -49,7 +62,7 @@ export function ChatList({ chats, groups, selectedId, onSelect, onSelectWorkspac
               key={chat.id}
               chat={chat}
               selected={chat.id === selectedId}
-              branch={chat.id === selectedId ? activeBranch : undefined}
+              branch={branchOf(chat.cwd)}
               onSelect={onSelect}
             />
           ))}
@@ -60,7 +73,6 @@ export function ChatList({ chats, groups, selectedId, onSelect, onSelectWorkspac
 
   // The selected chat names the selected workspace row (T2: one selected
   // workspace, its chat the active pane).
-  const selectedDirectory = chats.find((chat) => chat.id === selectedId)?.cwd;
   return (
     <div className="gc-chat-list">
       <ul className="gc-chat-list__items" aria-label="Workspace directories">

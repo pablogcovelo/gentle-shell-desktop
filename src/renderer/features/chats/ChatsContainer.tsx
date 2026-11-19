@@ -18,6 +18,9 @@ export interface ChatsContainerProps {
   readonly workspaceRevision?: number;
   readonly selectedDirectory?: string;
   readonly selectedChatId?: string;
+  /** The open workspace's branch, reported live by its child. It wins for the
+   * SELECTED directory only; every other row answers from the registry's
+   * per-directory map (`workspaces.branches`). */
   readonly activeBranch?: string;
   readonly query?: string;
   readonly navigationTools?: ReactNode;
@@ -38,6 +41,14 @@ export function ChatsContainer({ onNewChat, onWorkspaceCreated, onSelectWorkspac
   const normalizedQuery = query?.trim();
   const needle = normalizedQuery?.toLowerCase();
   const directories = (workspaces?.directories ?? []).filter((directory) => !needle || directory.toLowerCase().includes(needle));
+
+  // A branch is a fact about each workspace, so every row answers one. The
+  // live child's report wins for the open workspace (it is the freshest: it
+  // re-reads on probe and on settle); the registry's map, read by main when
+  // the list was built, covers every other row — including at startup and
+  // right after an add, which no live child could answer for yet.
+  const branchOf = (directory: string): string | undefined =>
+    (directory === selectedDirectory ? activeBranch : undefined) ?? workspaces?.branches?.[directory];
 
   const handleNewChat = (): void => {
     paneActions.current += 1;
@@ -148,7 +159,7 @@ export function ChatsContainer({ onNewChat, onWorkspaceCreated, onSelectWorkspac
       {workspaceError ? <p role="alert" style={{ color: "var(--muted)" }}>Workspace action failed: {workspaceError}</p> : null}
       <div className="gc-chat-list">
         <ul className="gc-chat-list__items" aria-label="Workspace directories">
-          {directories.map((directory) => <WorkspaceRow key={directory} directory={directory} persisted selected={directory === selectedDirectory} branch={directory === selectedDirectory ? activeBranch : undefined} disabled={closingRows.has(directory)} onSelect={handleSelectWorkspace} onRemove={handleRemoveWorkspace} />)}
+          {directories.map((directory) => <WorkspaceRow key={directory} directory={directory} persisted selected={directory === selectedDirectory} branch={branchOf(directory)} disabled={closingRows.has(directory)} onSelect={handleSelectWorkspace} onRemove={handleRemoveWorkspace} />)}
         </ul>
       </div>
       {normalizedQuery && directories.length === 0 ? <p className="gc-chats__empty">No workspaces match &quot;{normalizedQuery}&quot;.</p> : null}

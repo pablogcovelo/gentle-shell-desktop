@@ -7,6 +7,7 @@ import {
   createLauncherLocator,
   createNodeProcessSpawner,
   createSetupService,
+  readGitBranch,
 } from "./adapters";
 import { createLocalPiDevelopment } from "./adapters/localPiDevelopment";
 import { boundedStop } from "./domain/lifecycle/boundedStop";
@@ -151,6 +152,7 @@ function createWindow(): void {
   const unregisterHandlers = registerHandlers(hostRouter, setupService, window.webContents, ipcMain, {
     appInfo: () => ({ version: app.getVersion() }),
     workspaces: workspaceRegistry,
+    readWorkspaceBranch: readGitBranch,
     windowControls: {
       minimize: () => window.minimize(),
       toggleMaximize: () => {

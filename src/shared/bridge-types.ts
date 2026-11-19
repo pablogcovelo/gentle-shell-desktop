@@ -787,6 +787,13 @@ export interface PiDetection {
 export interface WorkspaceList {
   readonly directories: readonly string[];
   readonly persisted: readonly string[];
+  /** The branch each listed directory has checked out, keyed by the exact
+   * directory string the list answers. Main reads it while the list is built
+   * (a HEAD file read, never a child round trip), so EVERY row — not only the
+   * open one — can show its own at startup and right after an add. A
+   * directory absent from the map has no branch to show: it is not a
+   * repository, or its HEAD is detached. */
+  readonly branches?: Readonly<Record<string, string>>;
 }
 
 /** GentleBridge.setupStatus()'s result: whether first-run should be shown

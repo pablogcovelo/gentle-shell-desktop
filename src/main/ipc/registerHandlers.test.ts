@@ -553,7 +553,11 @@ describe("workspace registry channels (T1)", () => {
     };
   }
 
-  function setup(persisted: string[], routerDeps: WorkspaceRouterDeps = { validateDirectory: vi.fn().mockResolvedValue(undefined) }): {
+  function setup(
+    persisted: string[],
+    routerDeps: WorkspaceRouterDeps = { validateDirectory: vi.fn().mockResolvedValue(undefined) },
+    readWorkspaceBranch?: (directory: string) => string | undefined,
+  ): {
     ipc: IpcMain;
     handles: FakeProcessHandle[];
     registry: ReturnType<typeof fakeWorkspaceRegistry>;
@@ -566,7 +570,7 @@ describe("workspace registry channels (T1)", () => {
       realHostSource(() => ({ spawner, locator: fakeLocator, sessionStore: store, env: {} })),
       routerDeps,
     );
-    registerHandlers(router, fakeSetup(), fakeWebContents().webContents, ipc, { workspaces: registry });
+    registerHandlers(router, fakeSetup(), fakeWebContents().webContents, ipc, { workspaces: registry, readWorkspaceBranch });
     return { ipc, handles, registry };
   }
 
@@ -604,6 +608,33 @@ describe("workspace registry channels (T1)", () => {
     await expect(registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_LIST)({})).resolves.toEqual({
       directories: ["/tmp/persisted-a", "/tmp/proj"],
       persisted: ["/tmp/persisted-a", "/tmp/proj"],
+    });
+  });
+
+  // S-branch: the list carries the branch each directory has checked out, so
+  // the panel can show it for EVERY workspace at startup and right after an
+  // add — not only for the one whose live child happens to have answered.
+  it("workspace.list answers each persisted directory's active branch", async () => {
+    const { ipc } = setup(["/tmp/persisted-a", "/tmp/proj"], undefined, (directory) =>
+      directory === "/tmp/proj" ? "develop" : undefined,
+    );
+
+    await expect(registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_LIST)({})).resolves.toEqual({
+      directories: ["/tmp/persisted-a", "/tmp/proj"],
+      persisted: ["/tmp/persisted-a", "/tmp/proj"],
+      branches: { "/tmp/proj": "develop" },
+    });
+  });
+
+  it("workspace.add answers the branch of the directory it just persisted", async () => {
+    const { ipc } = setup([], undefined, (directory) =>
+      directory === "/tmp/added" ? "feature/registry" : undefined,
+    );
+
+    await expect(registeredHandler(ipc, IPC_CHANNELS.WORKSPACE_ADD)({}, "/tmp/added")).resolves.toEqual({
+      directories: ["/tmp/added"],
+      persisted: ["/tmp/added"],
+      branches: { "/tmp/added": "feature/registry" },
     });
   });
 

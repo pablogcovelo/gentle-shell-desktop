@@ -32,6 +32,41 @@ function makeChat(overrides: Partial<ChatSummary> = {}): ChatSummary {
   };
 }
 
+// S-branch: every row in the panel shows the branch its workspace has
+// checked out — the registry answers one per directory, so a row that is not
+// the open one still carries its own.
+it("shows the active branch of every workspace in the list, not only the selected one", async () => {
+  window.gentle = makeBridge();
+  render(
+    <ChatsContainer
+      onSelectChat={vi.fn()}
+      onNewChat={vi.fn()}
+      workspaces={{
+        directories: ["/tmp/alpha", "/tmp/beta"],
+        persisted: ["/tmp/alpha", "/tmp/beta"],
+        branches: { "/tmp/alpha": "develop", "/tmp/beta": "main" },
+      }}
+    />,
+  );
+
+  expect(await screen.findByText("develop")).toBeInTheDocument();
+  expect(screen.getByText("main")).toBeInTheDocument();
+});
+
+it("shows no branch for a workspace the registry answered nothing for", async () => {
+  window.gentle = makeBridge();
+  render(
+    <ChatsContainer
+      onSelectChat={vi.fn()}
+      onNewChat={vi.fn()}
+      workspaces={{ directories: ["/tmp/alpha"], persisted: ["/tmp/alpha"], branches: {} }}
+    />,
+  );
+
+  const row = await screen.findByRole("button", { name: "alpha — workspace" });
+  expect(row.querySelector(".gc-chat-list-item__branch")).toBeNull();
+});
+
 // S8: the sidebar shows chats as workspaces, so the panel's heading is the
 // artboard's directory-panel heading — accessible name exactly "Workspaces"
 // (the accent dot stays aria-hidden).

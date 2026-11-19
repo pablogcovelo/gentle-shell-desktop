@@ -588,6 +588,11 @@ export interface ShellPorts {
    * the packaged app; absent in a build without one, where the registry
    * channels refuse clearly instead of pretending. */
   readonly workspaces?: WorkspaceRegistryPort;
+  /** The branch a directory has checked out, read by main while the workspace
+   * list is built. A file read (never a spawn, never a child round trip), so
+   * every listed workspace answers at startup and right after an add. Absent
+   * leaves the list without branches, exactly as before. */
+  readonly readWorkspaceBranch?: (directory: string) => string | undefined;
 }
 
 /**
@@ -608,9 +613,22 @@ export interface WorkspaceRegistryPort {
   remove(directory: string): readonly string[];
 }
 
-/** Opened navigation only: Pi history remains available through listChats. */
-function workspaceList(persisted: readonly string[]): WorkspaceList {
-  return { directories: [...persisted], persisted: [...persisted] };
+/** Opened navigation only: Pi history remains available through listChats.
+ * `branches` answers the checked-out branch of every persisted directory, so
+ * the panel never has to wait for one live child to describe the others. */
+function workspaceList(
+  persisted: readonly string[],
+  readBranch?: (directory: string) => string | undefined,
+): WorkspaceList {
+  const directories = [...persisted];
+  const list = { directories, persisted: [...persisted] };
+  if (!readBranch) return list;
+  const branches: Record<string, string> = {};
+  for (const directory of directories) {
+    const branch = readBranch(directory);
+    if (branch !== undefined) branches[directory] = branch;
+  }
+  return { ...list, branches };
 }
 
 function requireWorkspaceRegistry(ports: ShellPorts): WorkspaceRegistryPort {
@@ -667,19 +685,19 @@ export function registerHandlers(
   // duplicated host lifecycle logic.
   registerRequestHandler(ipc, IPC_CHANNELS.WORKSPACE_LIST, async () => {
     const registry = requireWorkspaceRegistry(ports);
-    return workspaceList(registry.list());
+    return workspaceList(registry.list(), ports.readWorkspaceBranch);
   });
   registerRequestHandler(ipc, IPC_CHANNELS.WORKSPACE_ADD, async (_event, directory: string) => {
     const registry = requireWorkspaceRegistry(ports);
     await router.validateWorkspace(directory);
     registry.add(directory);
-    return workspaceList(registry.list());
+    return workspaceList(registry.list(), ports.readWorkspaceBranch);
   });
   registerRequestHandler(ipc, IPC_CHANNELS.WORKSPACE_REMOVE, async (_event, directory: string) => {
     const registry = requireWorkspaceRegistry(ports);
     await router.closeWorkspace(directory);
     registry.remove(directory);
-    return workspaceList(registry.list());
+    return workspaceList(registry.list(), ports.readWorkspaceBranch);
   });
   registerRequestHandler(ipc, IPC_CHANNELS.WORKSPACE_OPEN, (_event, directory: string) => router.createWorkspace(directory));
   registerRequestHandler(ipc, IPC_CHANNELS.SETUP_STATUS, () => setup.status());
