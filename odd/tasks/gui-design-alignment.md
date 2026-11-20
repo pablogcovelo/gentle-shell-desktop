@@ -41,12 +41,12 @@ T7 — S13, S18 · design board: flat agents, eye, chips, orphan region, status 
 T8 — S12 · informational cards leave the chat · `afd5706`
 T9 — S19, S20, S21 · command palette, chat search removed, slash typing removed from the composer · `ae04f1c`
 T10 — S19, S20, S21 · palette hardening (nested modals, focus containment, stale error, empty host, label, typed slash commands) · `ef90fc2`
-T11 — S8, S12, S14 · close the review advisories (Variants API, label rule, memory test, reachable eye, stale refusal) · commit pending
+T11 — S8, S12, S14 · close the review advisories (Variants API, label rule, memory test, reachable eye, stale refusal) · `43d4c2c`
+T12 — S8, S10 · inspector accessibility (panels are not tab stops, redundant names and the cost aria-label removed) · `1c1c989`
 
-Delivery slices on `feat/gui-design-alignment`, none pushed:
-`3014c52` shell structure, agents and status surfaces · `01a5b74` composer ·
-`fa40d32` vocabulary chips · `fd5feb1` design board. Push, PR and merge stay the
-maintainer's decision.
+Delivery: the feature branch was merged into `develop` and pushed. `origin/develop`
+now carries the whole batch through `1c1c989`; `main` is untouched, so a PR remains
+the maintainer's decision.
 
 ## Log
 
@@ -69,3 +69,5 @@ L8 (choice): the maintainer chose artboard 01 of `design/command-palette/` — "
 L9 (T10): "Aplica la uniad de corrección que propones y /resume escrito a mano se va, los comandos quedan relegados a ctrl+k" — the maintainer authorized the T9 palette-hardening unit: no palette over an open app dialog, real focus containment, stale refusal cleared, no send to an empty host, the Commands label names ⌘K/Ctrl+K, and a typed "/resume" is plain text for the child — the resume dialog is reachable only from the palette's app entry, per S21.
 
 L10 (T11): "1. Déjalo morir 2. Adelante, hazlo en la unidad que propones" — the maintainer closed the T10 review advisories with this follow-up unit: the Variants API keeps one value (the resolved entry; the current chip follows `entry.glyph`), the `phases` label rule is named and pinned as deliberately data-driven, the memory-fallback test renders real vocabulary, the Agents eye is reachable with no agents (S12 diagnostics must never lose their only surface), and the stale-refusal coverage the frozen 21-line budget could not fit is restored, plus the S12 sentence on the reducer cap.
+
+L11 (T12): "1-3 que los paneles Todo, Usage y Agents no sean marcados como interactivo ni se conviertan en parada de tabulación. Solo son paneles operables con la rueda de scroll del mouse / 4 Arreglalo / 5-7 Decide si ignorarlo por ruido o arreglarlo con por la solución propuesta en 1-3" — the maintainer accepted the keyboard-scrolling trade-off on purpose: those panels stop taking focus and stop announcing a group name, the duplicate names go with them, and the session cost keeps its visible wording without an aria-label. The native review approved it and raised the lost keyboard scroll target as an acknowledged debt, not a defect to fix.
