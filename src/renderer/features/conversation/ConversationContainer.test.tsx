@@ -349,7 +349,7 @@ describe("ConversationContainer", () => {
     // Cost keeps its single home in the inspector's usage summary, so the
     // footer never repeats it.
     expect(footer).not.toHaveTextContent("$0.45");
-    expect(screen.getByLabelText("Plan, usage and delegated agents")).toHaveTextContent("$0.45");
+    expect(screen.getByRole("region", { name: "Usage" })).toHaveTextContent("$0.45");
     // Identity is chrome, never conversation content.
     expect(screen.queryByText("Claude Sonnet 4", { selector: ".gc-message__text" })).not.toBeInTheDocument();
   });
