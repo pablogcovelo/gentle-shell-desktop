@@ -1083,6 +1083,41 @@ describe("ConversationContainer", () => {
     expect(stack).toHaveTextContent("Command blocked by user");
   });
 
+  // R3-002 (gui-design-alignment): the eye renders with an EMPTY agents
+  // list too, because keyed statuses and child notifications are only
+  // visible in the helpers view — with no agents running they must still
+  // be reachable through it.
+  it("reaches a pushed keyed status and notification through the eye even with no agents (R3-002)", async () => {
+    let pushState: (state: ChatState) => void = () => {};
+    const bridge = makeBridge({
+      onState: vi.fn((callback: (state: ChatState) => void) => {
+        pushState = callback;
+        return () => {};
+      }),
+    });
+    window.gentle = bridge;
+
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await vi.waitFor(() => expect(bridge.newChat).toHaveBeenCalled());
+    pushState({
+      messages: [],
+      working: false,
+      pendingDialogs: [],
+      activity: 0,
+      helpers: EMPTY_HELPERS,
+      statuses: { "gentle-todo": "2 tasks open" },
+      notifications: [{ message: "Command blocked by user", severity: "warning" }],
+    });
+
+    // The eye is present even though no agent has ever run in this chat.
+    fireEvent.click(await screen.findByRole("button", { name: "Open helpers" }));
+    const statusList = await screen.findByLabelText("Session status");
+    expect(statusList).toHaveTextContent("gentle-todo");
+    expect(statusList).toHaveTextContent("2 tasks open");
+    const stack = screen.getByLabelText("Notifications");
+    expect(stack).toHaveTextContent("Command blocked by user");
+  });
+
   it("puts the task panel in the inspector beside the conversation, keeping the composer last", async () => {
     let pushState: (state: ChatState) => void = () => {};
     const bridge = makeBridge({
@@ -1829,6 +1864,34 @@ describe("ConversationContainer command palette (T9)", () => {
     await act(async () => { resolveFirst({ queued: true }); });
 
     expect(screen.getByRole("status")).toHaveTextContent("The newer command was refused");
+  });
+
+  // The mirror case: the OLDER run resolving refused after the newer one
+  // was accepted must leave the status line empty — a stale refusal is
+  // ignored, because only the newest run settles the line (R4-001).
+  it("never lets a stale refusal erase a newer acceptance (R4-001)", async () => {
+    let resolveFirst!: (value: { queued: boolean; reason?: string }) => void;
+    const bridge = makeBridge({
+      newChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: PALETTE_STATE }),
+      sendMessage: vi.fn()
+        .mockImplementationOnce(() => new Promise<{ queued: boolean; reason?: string }>((resolve) => { resolveFirst = resolve; }))
+        .mockResolvedValueOnce({ queued: true }),
+    });
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    fireEvent.keyDown(within(screen.getByRole("dialog", { name: "Commands" })).getByRole("combobox"), { key: "Enter" });
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    fireEvent.keyDown(within(screen.getByRole("dialog", { name: "Commands" })).getByRole("combobox"), { key: "Enter" });
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+
+    // The older run's refusal arrives late: it must not set the line the
+    // newer acceptance already cleared.
+    await act(async () => { resolveFirst({ queued: false, reason: "The stale command was refused" }); });
+
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("never sends a palette command to an empty host — it dismisses the palette instead (R3-004)", async () => {

@@ -264,11 +264,19 @@ describe("InspectorPanel", () => {
     expect(screen.queryByText("No usage reported yet.")).not.toBeInTheDocument();
   });
 
-  it("shows the agents empty note when no helpers have run in this chat", () => {
-    renderPanel({ helpers: helpersActivity([]) });
+  // R3-002 (gui-design-alignment): the eye renders UNCONDITIONALLY — keyed
+  // statuses and child notifications are only visible in the helpers view,
+  // so an empty agents list must not leave them unreachable.
+  it("keeps the eye in the Agents head even when no helpers have run in this chat (R3-002)", () => {
+    const onOpenHelpers = vi.fn();
+    renderPanel({ helpers: helpersActivity([]), onOpenHelpers });
 
     expect(screen.getByText("No delegated agents in this conversation yet.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /open helpers/i })).not.toBeInTheDocument();
+    const button = screen.getByRole("button", { name: "Open helpers" });
+    expect(button).toHaveClass("gc-inspector__eye");
+    expect(button.closest(".gc-inspector__head")).not.toBeNull();
+    fireEvent.click(button);
+    expect(onOpenHelpers).toHaveBeenCalledTimes(1);
   });
 
   it("renders one row per helper task and the summary meta straight from the wire (S5)", () => {

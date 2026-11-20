@@ -17,7 +17,7 @@ S8. Each inspector Agents row is flat, one line: `<status glyph> <agent name> ·
 S9. Status glyphs and words: `◐` Running, `✓` Done, `✕` Failed, `⊘` Cancelled, `○` Queued, `○` Waiting.
 S10. The Agents section head carries an eye button that opens the helpers view (`aria-label="Open helpers"`); it replaces the `Open helpers` text button.
 S11. The helpers view is kept as-is: list, thread, footer, Stop, `Earlier · N finished`, and the way back to the chat.
-S12. The chat keeps errors only: an error belongs to the conversation, renders in the chat pane and stays visible until the wire clears it — never auto-hidden. Keyed statuses and notifications are diagnostics that never enter the chat flow and stay in the helpers view, which keeps the complete status surface.
+S12. The chat keeps errors only: an error belongs to the conversation, renders in the chat pane and stays visible until the wire clears it — never auto-hidden. Keyed statuses and notifications are diagnostics that never enter the chat flow and stay in the helpers view, which keeps the complete status surface. Notifications stay bounded by the reducer cap, so the diagnostics pane can never be implemented as unbounded retention.
 S13. Orphan action rows (tool calls bound to no turn) are kept and must be represented in the design board.
 S14. An expanded action row shows its vocabulary variants as chips, derived from the published vocabulary: one chip per distinct glyph in the row's category, the current one marked with `aria-current`. The label is `phases` when every entry of that category carries a `heading`, otherwise `also reports`. The row appears only when the category publishes two or more distinct glyphs.
 S15. The footer extensions counter stays `0` with its existing title explaining the bridge does not report it.
@@ -41,6 +41,7 @@ T7 — S13, S18 · design board: flat agents, eye, chips, orphan region, status 
 T8 — S12 · informational cards leave the chat · `afd5706`
 T9 — S19, S20, S21 · command palette, chat search removed, slash typing removed from the composer · `ae04f1c`
 T10 — S19, S20, S21 · palette hardening (nested modals, focus containment, stale error, empty host, label, typed slash commands) · `ef90fc2`
+T11 — S8, S12, S14 · close the review advisories (Variants API, label rule, memory test, reachable eye, stale refusal) · commit pending
 
 Delivery slices on `feat/gui-design-alignment`, none pushed:
 `3014c52` shell structure, agents and status surfaces · `01a5b74` composer ·
@@ -66,3 +67,5 @@ L7 (3.4 design): `design/command-palette/` opened with three alternatives for th
 L8 (choice): the maintainer chose artboard 01 of `design/command-palette/` — "01 · Spotlight overlay (modal centrado)" — for implementation; 02 and 03 stay as alternatives.
 
 L9 (T10): "Aplica la uniad de corrección que propones y /resume escrito a mano se va, los comandos quedan relegados a ctrl+k" — the maintainer authorized the T9 palette-hardening unit: no palette over an open app dialog, real focus containment, stale refusal cleared, no send to an empty host, the Commands label names ⌘K/Ctrl+K, and a typed "/resume" is plain text for the child — the resume dialog is reachable only from the palette's app entry, per S21.
+
+L10 (T11): "1. Déjalo morir 2. Adelante, hazlo en la unidad que propones" — the maintainer closed the T10 review advisories with this follow-up unit: the Variants API keeps one value (the resolved entry; the current chip follows `entry.glyph`), the `phases` label rule is named and pinned as deliberately data-driven, the memory-fallback test renders real vocabulary, the Agents eye is reachable with no agents (S12 diagnostics must never lose their only surface), and the stale-refusal coverage the frozen 21-line budget could not fit is restored, plus the S12 sentence on the reducer cap.

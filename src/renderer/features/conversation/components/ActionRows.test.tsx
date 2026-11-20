@@ -70,11 +70,41 @@ describe("ActionRows — vocabulary variant chips (S14)", () => {
     expect(within(row).queryByTestId("gc-action-row__variants")).not.toBeInTheDocument();
   });
 
-  it("the app-owned memory fallback shows no variants row", () => {
-    render(<ActionRows toolCalls={[{ id: "c1", toolName: "mem_save", status: "done" }]} />);
+  it("the app-owned memory fallback shows no variants row (R3-001)", () => {
+    // A vocabulary that EXISTS but does not cover `mem_save` (no fixture
+    // entry lists a mem_* tool): the app-owned memory entry must resolve
+    // through the fallback, render the memory glyph, and stay silent —
+    // that category publishes a single glyph.
+    render(<ActionRows toolCalls={[{ id: "c1", toolName: "mem_save", status: "done" }]} vocabulary={VOCABULARY} />);
     const row = screen.getByTestId("gc-action-row");
     fireEvent.click(within(row).getByRole("button"));
 
+    expect(within(row).getByText("🧠")).toBeInTheDocument();
     expect(within(row).queryByTestId("gc-action-row__variants")).not.toBeInTheDocument();
+  });
+
+  // R2-002: the `phases` label rule is deliberately data-driven — a
+  // category whose published entries all carry a heading describes phases
+  // of one run, delegation or not. Pinned with a NON-delegation category
+  // so the rule cannot be mistaken for a delegation special case.
+  it("labels `phases` a non-delegation category whose entries all carry headings (R2-002)", () => {
+    const headed: ToolVocabulary = {
+      categories: ["search"],
+      entries: [
+        { category: "search", glyph: "⌕", tools: ["grep"], heading: "Search text" },
+        { category: "search", glyph: "⌖", tools: ["find"], heading: "Find files" },
+      ],
+    };
+    render(<ActionRows toolCalls={[{ id: "c1", toolName: "grep", status: "done" }]} vocabulary={headed} />);
+    const row = screen.getByTestId("gc-action-row");
+    fireEvent.click(within(row).getByRole("button"));
+
+    const variants = within(row).getByTestId("gc-action-row__variants");
+    expect(variants).toHaveTextContent("phases");
+    const chips = [...variants.querySelectorAll(".gc-action-row__chip")];
+    expect(chips.map((chip) => chip.textContent)).toEqual(["⌕", "⌖"]);
+    // The current chip still follows the resolved entry's glyph.
+    expect(chips[0]).toHaveAttribute("aria-current", "true");
+    expect(chips[1]).not.toHaveAttribute("aria-current");
   });
 });

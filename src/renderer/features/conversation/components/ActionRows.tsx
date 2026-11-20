@@ -73,7 +73,7 @@ export function ToolActionRow({ call, vocabulary }: { call: ToolCallView; vocabu
         <div className="gc-action-row__detail">
           <Detail label="args" value={call.args} />
           <Detail label="result" value={call.result} />
-          <Variants vocabulary={vocabulary} entry={entry} ownGlyph={glyph} />
+          <Variants vocabulary={vocabulary} entry={entry} />
         </div>
       ) : null}
     </div>
@@ -89,9 +89,12 @@ export function ToolActionRow({ call, vocabulary }: { call: ToolCallView; vocabu
  * `✉` and `☰` for a second delegation tool each). The row only appears
  * when the category publishes two or more distinct glyphs, so single-glyph
  * categories (read, edit, write, list, bash, rdd) and the app-owned memory
- * fallback (no published entries) stay silent.
+ * fallback (no published entries) stay silent. One value only (R2-001): the
+ * API takes the resolved entry, and the current chip is the chip whose glyph
+ * equals `entry.glyph` — the row's own glyph is read from the entry too, so
+ * a caller cannot pass a glyph that disagrees with the category.
  */
-function Variants({ vocabulary, entry, ownGlyph }: { vocabulary?: ToolVocabulary; entry?: ToolVocabularyEntry; ownGlyph: string }) {
+function Variants({ vocabulary, entry }: { vocabulary?: ToolVocabulary; entry?: ToolVocabularyEntry }) {
   if (!vocabulary || !entry) return null;
   const glyphs: string[] = [];
   const entries = vocabulary.entries.filter((candidate) => candidate.category === entry.category);
@@ -99,9 +102,7 @@ function Variants({ vocabulary, entry, ownGlyph }: { vocabulary?: ToolVocabulary
     if (!glyphs.includes(candidate.glyph)) glyphs.push(candidate.glyph);
   }
   if (glyphs.length < 2) return null;
-  // `phases` when every entry of the category carries a heading (delegation
-  // does); otherwise the glyphs are alternative reports, not phases.
-  const label = entries.every((candidate) => candidate.heading !== undefined) ? "phases" : "also reports";
+  const label = variantsLabel(entries);
   return (
     <div className="gc-action-row__variants" data-testid="gc-action-row__variants">
       <span className="gc-action-row__variants-label">{label}</span>
@@ -109,7 +110,7 @@ function Variants({ vocabulary, entry, ownGlyph }: { vocabulary?: ToolVocabulary
         <span
           key={glyph}
           className="gc-action-row__chip"
-          aria-current={glyph === ownGlyph ? "true" : undefined}
+          aria-current={glyph === entry.glyph ? "true" : undefined}
           aria-label={`${entry.category} glyph ${glyph}`}
         >
           {glyph}
@@ -117,6 +118,18 @@ function Variants({ vocabulary, entry, ownGlyph }: { vocabulary?: ToolVocabulary
       ))}
     </div>
   );
+}
+
+/**
+ * The variants label rule (R2-002), deliberately data-driven: a category
+ * whose published entries all carry a `heading` describes phases of ONE run
+ * (today only delegation does), so its chips are labelled `phases`;
+ * anything else merely reports alternative glyphs of the same work —
+ * `also reports`. The rule reads the published entries, never the tool
+ * name or a hard-coded category list.
+ */
+function variantsLabel(entries: ToolVocabularyEntry[]): string {
+  return entries.every((candidate) => candidate.heading !== undefined) ? "phases" : "also reports";
 }
 
 /**

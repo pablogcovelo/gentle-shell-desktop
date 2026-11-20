@@ -108,14 +108,15 @@ export function InspectorPanel({ todo, usage, usageChannelUnavailable, helpers, 
           <span className="gc-inspector__meta">
             {helpers.summary.running} active · {helpers.summary.finished} finished
           </span>
-          {hasAgents ? (
-            <button type="button" className="gc-inspector__eye" aria-label="Open helpers" title="Open helpers" onClick={onOpenHelpers}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
-            </button>
-          ) : null}
+          {/* R3-002 (gui-design-alignment): rendered unconditionally — keyed
+          statuses and child notifications are only visible in the helpers
+          view, so an empty agents list must never make them unreachable. */}
+          <button type="button" className="gc-inspector__eye" aria-label="Open helpers" title="Open helpers" onClick={onOpenHelpers}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          </button>
         </div>
         <div className="gc-inspector__scroll" tabIndex={0} role="group" aria-label="Delegated agents in this conversation">
           {hasAgents ? (
