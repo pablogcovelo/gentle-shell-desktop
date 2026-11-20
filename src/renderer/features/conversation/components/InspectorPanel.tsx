@@ -68,7 +68,7 @@ export function InspectorPanel({ todo, usage, usageChannelUnavailable, helpers, 
             </span>
           ) : null}
         </div>
-        <div className="gc-inspector__scroll" tabIndex={0} role="group" aria-label="Tasks in this conversation">
+        <div className="gc-inspector__scroll">
           {todo && tasks.length > 0 ? (
             <TodoCard todo={todo} variant="panel" />
           ) : (
@@ -82,14 +82,14 @@ export function InspectorPanel({ todo, usage, usageChannelUnavailable, helpers, 
           <h2 id="gc-inspector-usage">Usage</h2>
           <span className="gc-inspector__meta">this session</span>
         </div>
-        <div className="gc-inspector__scroll" tabIndex={0} role="group" aria-label="Usage in this conversation">
+        <div className="gc-inspector__scroll">
           {/* The cost opens the section (design/slack-gentle, clq1vtao): one
           tight row above the meters, so the value the reader checks first is
           not buried under every window. */}
           {session?.sessionCost != null && (
             <div className="gc-inspector__cost">
               <span>session cost</span>
-              <strong aria-label="Total session cost in US dollars" title="Total session cost in USD">${session.sessionCost.toFixed(2)}</strong>
+              <strong>${session.sessionCost.toFixed(2)}</strong>
             </div>
           )}
           {/* Rendered unconditionally: the meters already render nothing when
@@ -118,7 +118,7 @@ export function InspectorPanel({ todo, usage, usageChannelUnavailable, helpers, 
             </svg>
           </button>
         </div>
-        <div className="gc-inspector__scroll" tabIndex={0} role="group" aria-label="Delegated agents in this conversation">
+        <div className="gc-inspector__scroll">
           {hasAgents ? (
             <>
               <p className="gc-inspector__agent-caption"><code>/gentle:agents</code></p>

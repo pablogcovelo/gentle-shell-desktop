@@ -91,10 +91,11 @@ describe("InspectorPanel", () => {
     });
 
     // One row, lowercase label and value together, in the inspector's own
-    // wording — not a footer line.
-    const cost = screen.getByLabelText("Total session cost in US dollars");
-    expect(cost).toHaveTextContent("$0.45");
-    expect(cost.closest(".gc-inspector__cost")).toHaveTextContent(/session cost\s*\$0\.45/);
+    // wording — not a footer line. No aria-label: the visible text already says
+    // what the number is (T12).
+    const cost = screen.getByText(/session cost/).closest(".gc-inspector__cost") as HTMLElement;
+    expect(cost).toHaveTextContent(/session cost\s*\$0\.45/);
+    expect(screen.queryByLabelText("Total session cost in US dollars")).not.toBeInTheDocument();
 
     // First element of the section: the cost precedes every meter.
     const meter = screen.getByRole("progressbar", { name: /week usage/i });

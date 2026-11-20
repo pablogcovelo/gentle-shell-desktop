@@ -72,12 +72,6 @@
   border-radius: 999px;
 }
 
-.gc-inspector__scroll:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-  border-radius: 4px;
-}
-
 /* Empty-state notes (S5): the section says what the wire did not send. */
 .gc-inspector__note {
   margin: 0;
