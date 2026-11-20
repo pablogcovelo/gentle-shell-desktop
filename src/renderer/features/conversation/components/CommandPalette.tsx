@@ -1,46 +1,7 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { ChatCommand, ChatCommandSource } from "@shared/bridge-types";
+import type { ChatCommand } from "@shared/bridge-types";
 import "./CommandPalette.css";
-
-/**
- * One row of the palette. Wire commands keep the ChatCommand the child
- * answered for `get_commands` unchanged; the desktop's own /resume entry is
- * source "app" because the wire never publishes it (S19).
- */
-export interface PaletteEntry {
-  readonly name: string;
-  readonly description?: string;
-  readonly source: ChatCommandSource | "app";
-}
-
-export interface CommandPaletteProps {
-  /** The child's command catalog for the active chat, in the order it sent. */
-  readonly commands: readonly ChatCommand[];
-  /** Gates the desktop's own /resume entry, exactly as the composer gated
-   * /resume before (S19). */
-  readonly resumeAvailable: boolean;
-  /** A row was run: ConversationContainer decides between the local resume
-   * flow and sending "/name" to the active host. */
-  readonly onRun: (entry: PaletteEntry) => void;
-  readonly onClose: () => void;
-}
-
-/** Group order (S19): the desktop's own entry first, then the wire's
- * prompt / skill / extension groups. Empty groups are not rendered. */
-const GROUP_ORDER: readonly { readonly key: PaletteEntry["source"]; readonly label: string }[] = [
-  { key: "app", label: "App" },
-  { key: "prompt", label: "Prompt" },
-  { key: "skill", label: "Skill" },
-  { key: "extension", label: "Extension" },
-];
-
-/** The desktop's own entry — never a claimed child RPC capability. */
-const APP_RESUME: PaletteEntry = {
-  name: "resume",
-  description: "Choose a saved Pi session in this directory",
-  source: "app",
-};
 
 /**
  * The command palette (S19, artboard design/command-palette/01-spotlight-overlay.html):
@@ -48,30 +9,54 @@ const APP_RESUME: PaletteEntry = {
  * list grouped by source, a selected row driven by ↑/↓/Enter/Esc and an
  * honest empty state. Rendered through a portal so the backdrop covers the
  * whole window; opens focused and returns focus on close.
+ *
+ * The palette owns NOTHING (palette-host-catalog S3/S5): every row is the
+ * host's own catalog (`ChatState.commands`, pi's builtins included), and a
+ * row's execution is decided by the container from the wire's `runnable`
+ * verdict and `source` — never by a client-side name list. The palette
+ * only reports the entry the user ran.
  */
-export function CommandPalette({ commands, resumeAvailable, onRun, onClose }: CommandPaletteProps) {
+export interface CommandPaletteProps {
+  /** The chat's command catalog for the active chat, in the order the
+   * host published it. */
+  readonly commands: readonly ChatCommand[];
+  /** A row was run: ConversationContainer decides between the host's
+   * `run_command`, the proven `/name` prompt path and the terminal-only
+   * notice, and owns the one `/resume` special case (the session picker). */
+  readonly onRun: (entry: ChatCommand) => void;
+  readonly onClose: () => void;
+}
+
+/** Group order (S19, S3): the wire's prompt / skill / extension groups,
+ * then the builtin group AFTER extension. Empty groups are not rendered. */
+const GROUP_ORDER: readonly { readonly key: ChatCommand["source"]; readonly label: string }[] = [
+  { key: "prompt", label: "Prompt" },
+  { key: "skill", label: "Skill" },
+  { key: "extension", label: "Extension" },
+  { key: "builtin", label: "Builtin" },
+];
+
+export function CommandPalette({ commands, onRun, onClose }: CommandPaletteProps) {
   const listId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  const entries: readonly PaletteEntry[] = [
-    ...(resumeAvailable ? [APP_RESUME] : []),
-    ...commands,
-  ];
   // A leading "/" is ignored, so typing "/re" and "re" match the same rows.
+  // The query matches the NAME only (owner decision, L6 of palette-host-catalog):
+  // searching descriptions made every command whose prose happened to contain
+  // the word win a slot — typing "new" returned skills whose description says
+  // "new skill" and buried /new itself — so a command is found by what it is
+  // called, never by what its prose mentions.
   const needle = query.replace(/^\//, "").trim().toLowerCase();
-  const matched = entries.filter(
-    (entry) =>
-      needle.length === 0 ||
-      entry.name.toLowerCase().includes(needle) ||
-      (entry.description?.toLowerCase().includes(needle) ?? false),
+  const matched = commands.filter(
+    (entry) => needle.length === 0 || entry.name.toLowerCase().includes(needle),
   );
-  // The flat list FOLLOWS THE VISUAL ORDER (groups in GROUP_ORDER, wire order
+  // The flat list FOLLOWS THE VISUAL ORDER (groups in GROUP_ORDER, host order
   // inside each group): the single selection index must move down the rows
   // exactly as they are painted, never skip across a group boundary.
-  const visible: PaletteEntry[] = [];
+  const visible: ChatCommand[] = [];
   for (const group of GROUP_ORDER) {
     for (const entry of matched) {
       if (entry.source === group.key) visible.push(entry);
@@ -84,7 +69,7 @@ export function CommandPalette({ commands, resumeAvailable, onRun, onClose }: Co
   // Every filter change selects the first row again (S19).
   useEffect(() => {
     setSelectedIndex(0);
-  }, [query, resumeAvailable, commands]);
+  }, [query, commands]);
 
   useEffect(() => {
     // On close, focus returns to the element that had it before opening.
@@ -164,14 +149,20 @@ export function CommandPalette({ commands, resumeAvailable, onRun, onClose }: Co
     inputRef.current?.focus();
   };
 
-  const hasEntries = entries.length > 0;
+  const hasEntries = commands.length > 0;
   const hasMatches = visible.length > 0;
 
   // The body between the input and the footer: the honest no-commands note,
   // the grouped list, or the no-match note with its Clear button.
   let body: ReactNode;
   if (!hasEntries) {
-    body = <p className="gc-command-palette__empty" role="status">This conversation has not reported any commands yet.</p>;
+    body = (
+      <p className="gc-command-palette__empty" role="status">
+        This conversation has not reported any commands yet. The palette lists the catalog the
+        pi host publishes — its builtin commands (such as /new and /resume) alongside extension,
+        prompt and skill commands.
+      </p>
+    );
   } else if (hasMatches) {
     body = (
       <div className="gc-command-palette__list" id={listId} role="listbox" aria-label="Commands">

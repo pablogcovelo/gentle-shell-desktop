@@ -442,19 +442,39 @@ it("keeps the rest of the workspace facts when a chat's worktree could not be me
   expect(opened.state.workspace?.mcp).toBeDefined();
 });
 
-// desktop-pending-work T6 (S6): the preview's composer popup is exercisable
-// without a child — a couple of demo commands in the wire's shape, one of
-// them without a description, exactly like `get_commands` answers.
-it("seeds the demo state with demo commands so the composer's slash list is exercisable without a child", async () => {
+// palette-host-catalog (T1/S1, T2/S3): the preview's palette is exercisable
+// without a child — a demo catalog in the host's `get_snapshot` commands
+// shape, pi's builtins included, each with its own `runnable` verdict.
+it("seeds the demo state with a host-shaped command catalog so the palette is exercisable without a child", async () => {
   const { state } = await mockBridge.newChat();
 
-  expect(state.commands).toHaveLength(3);
+  expect(state.commands).toHaveLength(7);
   for (const command of state.commands ?? []) {
     expect(command.name.length).toBeGreaterThan(0);
-    expect(["extension", "prompt", "skill"]).toContain(command.source);
+    expect(["builtin", "extension", "prompt", "skill"]).toContain(command.source);
+    expect(typeof command.runnable).toBe("boolean");
   }
   // The demo mirrors the wire honestly: one entry without a description.
   expect(state.commands?.filter((command) => command.description === undefined)).toHaveLength(1);
+  // The runnable rows are the builtins the host's own table marks runnable.
+  expect(state.commands?.filter((command) => command.runnable).map((command) => command.name)).toEqual(["new", "resume", "compact"]);
+});
+
+// palette-host-catalog S4: the mock's run_command mirrors the host's closed
+// answer set — `new` replaces the session in-child (same host id keeps
+// answering), a known resume path switches to it, and everything else is
+// the terminal_only refusal.
+it("runs runnable catalog rows through the mocked run_command with the host's answer set", async () => {
+  const { hostId } = await mockBridge.newChat();
+
+  await expect(mockBridge.runCommand!(hostId, "new")).resolves.toEqual({ kind: "executed" });
+  await expect(mockBridge.runCommand!(hostId, "resume", "/Users/dev/.pi/agent/sessions/chat-readme.jsonl")).resolves.toEqual({ kind: "executed" });
+  // An unknown session path is the host's refusal, never a throw.
+  await expect(mockBridge.runCommand!(hostId, "resume", "/gone/session.jsonl")).resolves.toEqual({ kind: "refused", reason: "terminal_only" });
+  // The remaining builtins live in pi's TUI.
+  await expect(mockBridge.runCommand!(hostId, "fork")).resolves.toEqual({ kind: "refused", reason: "terminal_only" });
+  // An unknown or stopped host is refused like every other request (U6a).
+  await expect(mockBridge.runCommand!("mock-host-999", "new")).rejects.toThrow(/no live workspace host/i);
 });
 
 // desktop-pending-work T5 (S5): the demo state carries a published ODD

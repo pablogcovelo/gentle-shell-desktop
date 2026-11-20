@@ -1,5 +1,6 @@
 import type {
   AppInfo,
+  ChatCommandRunResult,
   ChatState,
   ChatSummary,
   DialogAnswer,
@@ -45,6 +46,14 @@ export function createBridge(ipc: RendererIpc): GentleBridge {
     answerDialog: (hostId: string, id: string, answer: DialogAnswer) =>
       ipc.invoke(IPC_CHANNELS.ANSWER_DIALOG, hostId, id, answer) as Promise<void>,
     stopHelper: (hostId: string, id: string) => ipc.invoke(IPC_CHANNELS.STOP_HELPER, hostId, id) as Promise<StopHelperOutcome>,
+    // palette-host-catalog T3 (S4): the ONE named method for running a
+    // catalog row. The answer is a ChatCommandRunResult — a refusal is a
+    // resolved answer, never a rejection; args is omitted, never passed as
+    // an explicit undefined, so the wire sees exactly the documented keys.
+    runCommand: (hostId: string, name: string, args?: string) =>
+      args === undefined
+        ? (ipc.invoke(IPC_CHANNELS.COMMAND_RUN, hostId, name) as Promise<ChatCommandRunResult>)
+        : (ipc.invoke(IPC_CHANNELS.COMMAND_RUN, hostId, name, args) as Promise<ChatCommandRunResult>),
     // T5c: asks the addressed host for its current state (no child
     // round-trip, no restart); the answer is the ChatState the renderer
     // reconciles its focus-painted snapshot against.

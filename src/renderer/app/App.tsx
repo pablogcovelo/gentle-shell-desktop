@@ -347,7 +347,12 @@ export function App() {
             activeHostId={activeHostId}
             createdWorkspace={createdWorkspace}
             onHostResolved={setActiveHostId}
-            onResumeChat={handleSelectChat}
+            // palette-host-catalog S5: /new and /resume arrive from the
+            // host's catalog now — /new runs the host's own run_command and
+            // /resume is the picker + run_command flow the container owns,
+            // so the container takes no new-chat/resume-route props from
+            // App any more. The sidebar's own New-chat action (below) is
+            // unchanged.
             onWorktreeBranch={setActiveBranch}
             onWorkspacePath={setResolvedDirectory}
             // T10 (R3-002/R4-001): App owns the dialog state, so it reports

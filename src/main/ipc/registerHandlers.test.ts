@@ -23,6 +23,7 @@ function fakeHost(overrides: Partial<ChatHost> = {}): ChatHost {
     abort: vi.fn(),
     answerDialog: vi.fn(),
     stopHelper: vi.fn(),
+    runCommand: vi.fn(),
     onState: vi.fn().mockReturnValue(() => {}),
     onError: vi.fn().mockReturnValue(() => {}),
     ...overrides,
@@ -854,6 +855,36 @@ describe("registerHandlers", () => {
     const stopHandler = registeredHandler(ipc, "helpers.stop");
     await expect(stopHandler({} as never, "host-1", "m3a1-worker")).resolves.toBe("requested");
     expect(host.stopHelper).toHaveBeenCalledWith("m3a1-worker");
+  });
+
+  // palette-host-catalog T3 (S4): the ONE execution channel for runnable
+  // catalog rows, addressed by host id like every other chat.* request and
+  // resolving refusals instead of rejecting them.
+  it("registers chat.runCommand, routing (host id, name, args?) to that host's runCommand, refusals resolving", async () => {
+    const ipc = fakeIpcMain();
+    const host = fakeHost({
+      runCommand: vi.fn()
+        .mockResolvedValueOnce({ kind: "executed" })
+        .mockResolvedValueOnce({ kind: "refused", reason: "terminal_only" }),
+    });
+
+    registerHandlers(new WorkspaceHostRouter(fakeHostSource(host)), fakeSetup(), fakeWebContents().webContents, ipc);
+
+    const runHandler = registeredHandler(ipc, "chat.runCommand");
+    await expect(runHandler({} as never, "host-1", "compact")).resolves.toEqual({ kind: "executed" });
+    expect(host.runCommand).toHaveBeenCalledWith("compact", undefined);
+    await expect(runHandler({} as never, "host-1", "fork", undefined)).resolves.toEqual({ kind: "refused", reason: "terminal_only" });
+  });
+
+  it("passes the /resume picker's session path through chat.runCommand as args (S5)", async () => {
+    const ipc = fakeIpcMain();
+    const host = fakeHost({ runCommand: vi.fn().mockResolvedValue({ kind: "executed" }) });
+
+    registerHandlers(new WorkspaceHostRouter(fakeHostSource(host)), fakeSetup(), fakeWebContents().webContents, ipc);
+
+    const runHandler = registeredHandler(ipc, "chat.runCommand");
+    await expect(runHandler({} as never, "host-1", "resume", "/tmp/sess-1.jsonl")).resolves.toEqual({ kind: "executed" });
+    expect(host.runCommand).toHaveBeenCalledWith("resume", "/tmp/sess-1.jsonl");
   });
 
   // registerRequestHandler is a thin pass-through (ipc.handle(channel,

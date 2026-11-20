@@ -76,6 +76,10 @@ function makeBridge(overrides: Partial<GentleBridge> = {}): GentleBridge {
     refreshChat: vi.fn().mockResolvedValue(emptyState()),
     setupStatus: vi.fn().mockResolvedValue({ needsChoice: false, detection: { found: false, dir: "", hasAuth: false, hasModels: false } }),
     chooseHome: vi.fn().mockResolvedValue(undefined),
+    // palette-host-catalog S4: the host's run_command path; the default
+    // spy answers executed so "never called" assertions have something to
+    // read, and tests override it for each refusal shape.
+    runCommand: vi.fn().mockResolvedValue({ kind: "executed" }),
     ...overrides,
   };
 }
@@ -129,10 +133,18 @@ describe("ConversationContainer", () => {
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
   });
   it("sends a typed /resume draft as plain text instead of opening the resume dialog (T10/L9)", async () => {
-    const bridge = makeBridge({ listChats: vi.fn().mockResolvedValue([EXISTING_CHAT, OTHER_CHAT]) });
+    // The pane's catalog carries the host's runnable resume row: the typed
+    // draft is still plain text for the child — the picker is the palette
+    // row's only route — and the pane says where the command really runs.
+    const bridge = makeBridge({
+      listChats: vi.fn().mockResolvedValue([EXISTING_CHAT, OTHER_CHAT]),
+      openChat: vi.fn().mockResolvedValue({
+        hostId: "host-1",
+        state: { ...emptyState(), commands: [{ name: "resume", description: "Resume another session", runnable: true, source: "builtin" }] },
+      }),
+    });
     window.gentle = bridge;
-    const onResumeChat = vi.fn();
-    render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} {...{ onResumeChat }} />);
+    render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} />);
     await act(async () => {});
     // Even a padded draft is no longer intercepted: a typed slash command is
     // just a message for the child, exactly like any other draft.
@@ -140,51 +152,108 @@ describe("ConversationContainer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     expect(bridge.sendMessage).toHaveBeenCalledExactlyOnceWith("host-1", "/resume");
     expect(bridge.listChats).not.toHaveBeenCalled();
-    expect(onResumeChat).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog", { name: "Resume a session" })).not.toBeInTheDocument();
+    // Plain text, but NOT a silent outcome any more: the pane says where the
+    // host command really runs instead of letting /resume look like it ran.
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "/resume is a host command — run it from the command palette. It was sent to Pi as plain text.",
+    );
+  });
+
+  it("says out loud that a slash name the catalog does not publish went out as a plain message", async () => {
+    const bridge = makeBridge({ sendMessage: vi.fn().mockResolvedValue({ queued: true }) });
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    // The child's catalog for this pane lists /plan only (makeBridge default).
+    fireEvent.change(screen.getByPlaceholderText("Tell Gentle what you need…"), { target: { value: "/gentle:profiles" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    // The send itself is untouched — pi keeps deciding what /text means.
+    expect(bridge.sendMessage).toHaveBeenCalledExactlyOnceWith("host-1", "/gentle:profiles");
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Pi reports no /gentle:profiles command for this chat — it was sent as a normal message.",
+    );
+
+    // The notice belongs to the draft that produced it: the next ordinary
+    // send settles the line again, the same rule the palette's dispatches
+    // already follow.
+    fireEvent.change(screen.getByPlaceholderText("Tell Gentle what you need…"), { target: { value: "what changed today?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+  });
+
+  it("says nothing about a draft whose name the catalog publishes, or about a pasted path", async () => {
+    const bridge = makeBridge({ sendMessage: vi.fn().mockResolvedValue({ queued: true }) });
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+
+    // A published command, with arguments: the catalog knows the name.
+    fireEvent.change(screen.getByPlaceholderText("Tell Gentle what you need…"), { target: { value: "/plan make it so" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(bridge.sendMessage).toHaveBeenCalledWith("host-1", "/plan make it so");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    // A pasted absolute path is not a command name: the lookahead stops at the
+    // second slash, so no notice ever accuses the user of a typo.
+    fireEvent.change(screen.getByPlaceholderText("Tell Gentle what you need…"), { target: { value: "/home/pablo/notes.md" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(bridge.sendMessage).toHaveBeenCalledWith("host-1", "/home/pablo/notes.md");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("discards an open resume picker when the workspace changes, including late history", async () => {
     let resolveList!: (chats: ChatSummary[]) => void;
-    const bridge = makeBridge({ listChats: vi.fn(() => new Promise<ChatSummary[]>((done) => { resolveList = done; })) });
+    const bridge = makeBridge({
+      openChat: vi.fn().mockResolvedValue({
+        hostId: "host-1",
+        state: { ...emptyState(), commands: [{ name: "resume", description: "Resume another session", runnable: true, source: "builtin" }] },
+      }),
+      listChats: vi.fn(() => new Promise<ChatSummary[]>((done) => { resolveList = done; })),
+    });
     window.gentle = bridge;
-    const onResumeChat = vi.fn();
-    const view = render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} {...{ onResumeChat }} />);
+    const view = render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} />);
     await act(async () => {});
-    // The picker opens through the palette's app entry now (T10/L9): a typed
-    // "/resume" draft is plain text, so the dialog is no longer reachable
-    // from the composer.
+    // The picker opens through the catalog's runnable resume row: type its
+    // name in the palette and run it.
     fireEvent.keyDown(document, { key: "k", ctrlKey: true });
-    fireEvent.keyDown(within(screen.getByRole("dialog", { name: "Commands" })).getByRole("combobox"), { key: "Enter" });
+    const palette = screen.getByRole("dialog", { name: "Commands" });
+    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "resume" } });
+    fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
     expect(screen.getByRole("dialog", { name: "Resume a session" })).toBeInTheDocument();
-    view.rerender(<ConversationContainer activeChat={{ kind: "existing", chat: OTHER_CHAT }} {...{ onResumeChat }} />);
+    view.rerender(<ConversationContainer activeChat={{ kind: "existing", chat: OTHER_CHAT }} />);
     await act(async () => { resolveList([EXISTING_CHAT]); });
     expect(screen.queryByRole("dialog", { name: "Resume a session" })).not.toBeInTheDocument();
-    expect(onResumeChat).not.toHaveBeenCalled();
     expect(bridge.sendMessage).not.toHaveBeenCalled();
+    expect(bridge.runCommand).not.toHaveBeenCalled();
   });
 
   it("discards a pending resume list when the current host closes before history answers", async () => {
     let closed!: (id: string) => void;
     let release!: (chats: ChatSummary[]) => void;
     const bridge = makeBridge({
+      openChat: vi.fn().mockResolvedValue({
+        hostId: "host-1",
+        state: { ...emptyState(), commands: [{ name: "resume", description: "Resume another session", runnable: true, source: "builtin" }] },
+      }),
       onClosed: vi.fn((sink) => { closed = sink; return () => {}; }),
       listChats: vi.fn(() => new Promise<ChatSummary[]>((done) => { release = done; })),
     });
     window.gentle = bridge;
-    const onResumeChat = vi.fn();
-    render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} onResumeChat={onResumeChat} />);
+    render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} />);
     await act(async () => {});
-    // Same palette-only way in here (T10/L9): Ctrl+K, then Enter on the
-    // selected app entry.
+    // Same palette-only way in here: Ctrl+K, the resume row, Enter.
     fireEvent.keyDown(document, { key: "k", ctrlKey: true });
-    fireEvent.keyDown(within(screen.getByRole("dialog", { name: "Commands" })).getByRole("combobox"), { key: "Enter" });
+    const palette = screen.getByRole("dialog", { name: "Commands" });
+    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "resume" } });
+    fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
     expect(screen.getByRole("dialog", { name: "Resume a session" })).toBeInTheDocument();
     await act(async () => { closed("host-1"); release([EXISTING_CHAT]); });
     expect(screen.queryByRole("dialog", { name: "Resume a session" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
-    expect(onResumeChat).not.toHaveBeenCalled();
     expect(bridge.sendMessage).not.toHaveBeenCalled();
+    expect(bridge.runCommand).not.toHaveBeenCalled();
   });
 
   it("sends a typed /resume with arguments as plain text too — the local refusal is gone (T10/L9)", async () => {
@@ -1758,12 +1827,15 @@ describe("ConversationContainer workspace pane (T2)", () => {
 // resume dialog; the old chat-search dialog is gone.
 // ---------------------------------------------------------------------------
 
-describe("ConversationContainer command palette (T9)", () => {
+describe("ConversationContainer command palette (T9, palette-host-catalog T2)", () => {
   const PALETTE_STATE = {
     ...emptyState(),
     commands: [
-      { name: "plan", description: "Make a plan", source: "prompt" as const },
-      { name: "skill:review", source: "skill" as const },
+      { name: "plan", description: "Make a plan", runnable: false, source: "prompt" as const },
+      { name: "skill:review", runnable: false, source: "skill" as const },
+      { name: "new", description: "Start a new session", runnable: true, source: "builtin" as const },
+      { name: "resume", description: "Resume another session", runnable: true, source: "builtin" as const },
+      { name: "fork", description: "Fork from a previous message", runnable: false, source: "builtin" as const },
     ],
   };
 
@@ -1913,11 +1985,68 @@ describe("ConversationContainer command palette (T9)", () => {
 
     expect(bridge.sendMessage).not.toHaveBeenCalled();
     // The launcher goes away rather than lingering as a modal that silently
-    // ignores its input; any host-closed status is already on the pane.
+    // ignores its input — and the reason is named, so the click never looks
+    // like it ran something against a host that is gone.
+    expect(screen.queryByRole("dialog", { name: "Commands" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("status")).toHaveTextContent("Open a chat before running /plan.");
+  });
+
+  // palette-host-catalog S3: the row's execution is decided by the wire's
+  // `runnable` verdict and `source` — never by a client-side name list.
+  it("runs the catalog's runnable /new row through bridge.runCommand instead of sending text (S4)", async () => {
+    const bridge = makeBridge({
+      newChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: PALETTE_STATE }),
+      sendMessage: vi.fn().mockResolvedValue({ queued: true }),
+    });
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const palette = screen.getByRole("dialog", { name: "Commands" });
+    // The builtin row comes from the host catalog (no app group any more);
+    // filter to it and run it.
+    expect(within(palette).getByRole("option", { name: /^\/new/ })).toBeInTheDocument();
+    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "new" } });
+    fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
+
+    expect(bridge.runCommand).toHaveBeenCalledExactlyOnceWith("host-1", "new");
+    expect(bridge.sendMessage).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog", { name: "Commands" })).not.toBeInTheDocument();
   });
 
-  it("runs a wire command from the palette as '/name' to the active host", async () => {
+  it("offers only what the host catalog carries — nothing invented for an empty catalog (S3)", async () => {
+    window.gentle = makeBridge({
+      newChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: { ...emptyState(), commands: [] } }),
+    });
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+
+    expect(within(screen.getByRole("dialog", { name: "Commands" })).queryByRole("option", { name: /^\/new/ })).not.toBeInTheDocument();
+  });
+
+  it("shows a terminal-only builtin row, dispatches nothing, and says why in the status line (S3)", async () => {
+    const bridge = makeBridge({
+      newChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: PALETTE_STATE }),
+      sendMessage: vi.fn().mockResolvedValue({ queued: true }),
+      runCommand: vi.fn().mockResolvedValue({ kind: "executed" }),
+    });
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const palette = screen.getByRole("dialog", { name: "Commands" });
+    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "fork" } });
+    fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
+
+    expect(bridge.runCommand).not.toHaveBeenCalled();
+    expect(bridge.sendMessage).not.toHaveBeenCalled();
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "/fork runs only in pi's terminal UI — the desktop cannot dispatch it.",
+    );
+  });
+
+  it("runs a non-runnable extension row as '/name' to the active host — the proven prompt path (S3)", async () => {
     const bridge = makeBridge({
       newChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: PALETTE_STATE }),
       sendMessage: vi.fn().mockResolvedValue({ queued: true }),
@@ -1928,46 +2057,155 @@ describe("ConversationContainer command palette (T9)", () => {
     fireEvent.keyDown(document, { key: "k", ctrlKey: true });
     const palette = screen.getByRole("dialog", { name: "Commands" });
 
+    // The prompt group leads, so /plan is the row selected on open.
     fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
 
     expect(bridge.sendMessage).toHaveBeenCalledExactlyOnceWith("host-1", "/plan");
+    expect(bridge.runCommand).not.toHaveBeenCalled();
     // Running the command closes the palette again.
     expect(screen.queryByRole("dialog", { name: "Commands" })).not.toBeInTheDocument();
   });
 
-  it("surfaces the refusal reason when the run answers queued: false", async () => {
+  it("maps the host's refusal reasons into the status line (S4)", async () => {
     const bridge = makeBridge({
       newChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: PALETTE_STATE }),
-      sendMessage: vi.fn().mockResolvedValue({ queued: false, reason: "The child refused the prompt" }),
+      runCommand: vi.fn()
+        .mockResolvedValueOnce({ kind: "refused", reason: "terminal_only" })
+        .mockResolvedValueOnce({ kind: "refused", reason: "unknown_command" }),
+    });
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const palette = screen.getByRole("dialog", { name: "Commands" });
+    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "new" } });
+    fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "The host runs /new only in its terminal UI.",
+    );
+
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const palette2 = screen.getByRole("dialog", { name: "Commands" });
+    fireEvent.change(within(palette2).getByRole("combobox"), { target: { value: "new" } });
+    fireEvent.keyDown(within(palette2).getByRole("combobox"), { key: "Enter" });
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "The host reports no /new command.",
+    );
+  });
+
+  it("reports session_switching as retryable and never as executed (S4)", async () => {
+    const bridge = makeBridge({
+      newChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: PALETTE_STATE }),
+      runCommand: vi.fn().mockResolvedValue({ kind: "session_switching" }),
+    });
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+
+    // A prior refusal is on the line; the switching answer must REPLACE it,
+    // not be swallowed by it, and must not clear the line as if it ran.
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const palette = screen.getByRole("dialog", { name: "Commands" });
+    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "new" } });
+    fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
+    expect(await screen.findByRole("status")).toHaveTextContent(/switching sessions/);
+    expect(screen.getByRole("status")).toHaveTextContent(/retry/i);
+    expect(screen.getByRole("status")).not.toHaveTextContent("executed");
+  });
+
+  it("surfaces a transport failure's message instead of throwing or dropping it (S4)", async () => {
+    const bridge = makeBridge({
+      newChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: PALETTE_STATE }),
+      runCommand: vi.fn().mockResolvedValue({ kind: "transport", message: "The child exited before answering" }),
     });
     window.gentle = bridge;
     render(<ConversationContainer activeChat={NEW_CHAT} />);
     await act(async () => {});
     fireEvent.keyDown(document, { key: "k", ctrlKey: true });
-    fireEvent.keyDown(within(screen.getByRole("dialog", { name: "Commands" })).getByRole("combobox"), { key: "Enter" });
+    const palette = screen.getByRole("dialog", { name: "Commands" });
+    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "new" } });
+    fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
 
-    expect(await screen.findByRole("status")).toHaveTextContent("The child refused the prompt");
+    expect(await screen.findByRole("status")).toHaveTextContent("The child exited before answering");
   });
 
-  it("opens the resume dialog from the app /resume entry instead of sending text", async () => {
+  it("an executed answer clears the status line (S4)", async () => {
+    // The prior line is a refusal from an earlier run (a bridgeError, the
+    // line the container owns): the executed answer clears exactly that.
     const bridge = makeBridge({
-      listChats: vi.fn().mockResolvedValue([EXISTING_CHAT]),
-      sendMessage: vi.fn().mockResolvedValue({ queued: true }),
+      newChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: PALETTE_STATE }),
+      runCommand: vi.fn()
+        .mockResolvedValueOnce({ kind: "refused", reason: "unknown_command" })
+        .mockResolvedValueOnce({ kind: "executed" }),
+    });
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const palette = screen.getByRole("dialog", { name: "Commands" });
+    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "new" } });
+    fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
+    expect(await screen.findByRole("status")).toHaveTextContent("The host reports no /new command.");
+
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const palette2 = screen.getByRole("dialog", { name: "Commands" });
+    fireEvent.change(within(palette2).getByRole("combobox"), { target: { value: "new" } });
+    fireEvent.keyDown(within(palette2).getByRole("combobox"), { key: "Enter" });
+
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+  });
+
+  it("opens the resume picker from the catalog's runnable resume row and hands the chosen path to run_command (S5)", async () => {
+    const bridge = makeBridge({
+      openChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: PALETTE_STATE }),
+      listChats: vi.fn().mockResolvedValue([{ ...EXISTING_CHAT, path: "/tmp/project/sess-1.jsonl" }]),
     });
     window.gentle = bridge;
     render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} />);
     await act(async () => {});
     fireEvent.keyDown(document, { key: "k", ctrlKey: true });
     const palette = screen.getByRole("dialog", { name: "Commands" });
-    // The app entry comes first: it is selected on open, so Enter runs it.
     expect(within(palette).getByRole("option", { name: /^\/resume/ })).toBeInTheDocument();
-
+    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "resume" } });
     fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
 
     const resumeDialog = await screen.findByRole("dialog", { name: "Resume a session" });
     expect(resumeDialog).toHaveTextContent("/tmp/project");
     expect(bridge.sendMessage).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog", { name: "Commands" })).not.toBeInTheDocument();
+
+    // The picker's choice goes to the host as run_command args — the session
+    // FILE path, never the chat id — and the legacy openChat route is gone
+    // (openChat's one call is the pane's own open, before the picker).
+    const openCalls = vi.mocked(bridge.openChat).mock.calls.length;
+    fireEvent.click(await within(resumeDialog).findByRole("button", { name: /Refactor the store/ }));
+    expect(bridge.runCommand).toHaveBeenCalledExactlyOnceWith("host-1", "resume", "/tmp/project/sess-1.jsonl");
+    expect(vi.mocked(bridge.openChat).mock.calls.length).toBe(openCalls);
+  });
+
+  it("a selected session with no host-reported path refuses run_command and says the path is unknown (S5)", async () => {
+    const bridge = makeBridge({
+      openChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: PALETTE_STATE }),
+      listChats: vi.fn().mockResolvedValue([{ ...EXISTING_CHAT, path: undefined }]),
+    });
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} />);
+    await act(async () => {});
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const palette = screen.getByRole("dialog", { name: "Commands" });
+    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "resume" } });
+    fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
+
+    const resumeDialog = await screen.findByRole("dialog", { name: "Resume a session" });
+    fireEvent.click(await within(resumeDialog).findByRole("button", { name: /Refactor the store/ }));
+
+    // The id is never sent as if it were a path: the refusal is the answer
+    // (openChat's one call is the pane's own open, before the picker).
+    expect(bridge.runCommand).not.toHaveBeenCalled();
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      /The selected session's path is unknown — the host did not report it, so \/resume cannot run\./,
+    );
   });
 
   it("leaves the removed Search chats dialog gone when Ctrl+K opens the palette", async () => {

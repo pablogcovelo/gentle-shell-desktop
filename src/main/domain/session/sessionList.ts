@@ -30,6 +30,11 @@ function toChatSummary(session: SessionInfoLike): ChatSummary {
     id: session.id,
     title: resolveTitle(session),
     cwd: session.cwd,
+    // palette-host-catalog T3 (S5): the session's own file path, carried
+    // ONLY from the host's own answer — a missing or empty one stays
+    // absent, never invented — so the /resume picker can hand the path to
+    // run_command as args and must refuse when the host reported none.
+    ...(session.path ? { path: session.path } : {}),
     updatedAt: session.modified.toISOString(),
     messageCount: session.messageCount,
     state: CHAT_STATE.IDLE,

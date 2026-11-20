@@ -1,4 +1,4 @@
-import type { ChatState, ChatSummary, DialogAnswer, PromptResult, StopHelperOutcome } from "@shared/bridge-types";
+import type { ChatCommandRunResult, ChatState, ChatSummary, DialogAnswer, PromptResult, StopHelperOutcome } from "@shared/bridge-types";
 import { boundedStop } from "../lifecycle/boundedStop";
 import type { RpcEvent } from "../rpc/types";
 import type { HomeSettings, LauncherLocator, ProcessSpawner, SessionStore } from "../../ports";
@@ -192,6 +192,16 @@ export class ChatHost {
    * real transition arrives later as an `agents_update` state push. */
   async stopHelper(id: string): Promise<StopHelperOutcome> {
     return this.requireCurrent().cancelHelper(id);
+  }
+
+  /** Runs one catalog command through the current session's desktop-rpc
+   * `run_command` path (palette-host-catalog T3, S4) — the same named
+   * passthrough shape as stopHelper. The answer classification (executed,
+   * a refusal reason, the retryable session_switching, a transport
+   * failure) is PiSession's; `new`/`resume` replace the session in-child
+   * and the state keeps arriving on this host's pushes. */
+  async runCommand(name: string, args?: string): Promise<ChatCommandRunResult> {
+    return this.requireCurrent().runCommand(name, args);
   }
 
   async answerDialog(id: string, answer: DialogAnswer): Promise<void> {

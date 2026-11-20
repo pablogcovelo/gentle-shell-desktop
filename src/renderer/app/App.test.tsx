@@ -28,8 +28,19 @@ describe("App", () => {
     (Element.prototype as unknown as { getAnimations?: unknown }).getAnimations = undefined;
   });
 
-  it("opens a selected saved Pi session through the existing App route only after GUI /resume", async () => {
+  /** Reaches the app /resume entry through the palette. The palette leads with
+   * /new, so /resume is selected by filtering to it instead of relying on
+   * being the first row. */
+  async function runResumeFromPalette(): Promise<void> {
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const palette = await screen.findByRole("dialog", { name: "Commands" });
+    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "/resume" } });
+    fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
+  }
+
+  it("runs the picked /resume session through the host's run_command with the session path (S5)", async () => {
     await mockBridge.addWorkspace?.("/Users/dev/gentle-shell-desktop");
+    const runCommand = vi.spyOn(mockBridge, "runCommand");
     const openChat = vi.spyOn(mockBridge, "openChat");
     const sendMessage = vi.spyOn(mockBridge, "sendMessage");
     const listChats = vi.spyOn(mockBridge, "listChats");
@@ -37,24 +48,58 @@ describe("App", () => {
       render(<App />);
       await screen.findByPlaceholderText("Tell Gentle what you need…");
       await act(async () => {});
-      expect(openChat).not.toHaveBeenCalled();
       const priorLists = listChats.mock.calls.length;
-      // The app /resume entry is reachable only through the palette (T10/L9):
-      // a typed "/resume" draft is plain text now.
-      fireEvent.keyDown(document, { key: "k", ctrlKey: true });
-      const palette = await screen.findByRole("dialog", { name: "Commands" });
-      fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
+      // The catalog's resume row is reachable only through the palette
+      // (T10/L9): a typed "/resume" draft is plain text for the child.
+      await runResumeFromPalette();
       const dialog = await screen.findByRole("dialog", { name: "Resume a session" });
       fireEvent.click(await within(dialog).findByRole("button", { name: /Write the README intro/ }));
-      await waitFor(() => expect(openChat).toHaveBeenCalledExactlyOnceWith("chat-readme"));
+      // The chosen session's file path goes to the host as run_command args
+      // — the id never travels as if it were a path, and the legacy openChat
+      // route is gone.
+      await waitFor(() => expect(runCommand).toHaveBeenCalledExactlyOnceWith(expect.any(String), "resume", "/Users/dev/.pi/agent/sessions/chat-readme.jsonl"));
+      expect(openChat).not.toHaveBeenCalled();
       expect(listChats).toHaveBeenCalledTimes(priorLists + 1);
       expect(sendMessage).not.toHaveBeenCalled();
       expect(screen.queryByRole("dialog", { name: "Resume a session" })).not.toBeInTheDocument();
     } finally {
+      runCommand.mockRestore();
       openChat.mockRestore();
       sendMessage.mockRestore();
       listChats.mockRestore();
       await mockBridge.removeWorkspace?.("/Users/dev/gentle-shell-desktop");
+    }
+  });
+
+  it("starts a new chat from the catalog's runnable /new row through run_command instead of sending a message (S4/S5)", async () => {
+    await mockBridge.addWorkspace?.("/Users/dev/gentle-shell-desktop");
+    const fresh = vi.spyOn(mockBridge, "newChat");
+    const runCommand = vi.spyOn(mockBridge, "runCommand");
+    const sendMessage = vi.spyOn(mockBridge, "sendMessage");
+    try {
+      render(<App />);
+      await screen.findByPlaceholderText("Tell Gentle what you need…");
+      await act(async () => {});
+      const priorChats = fresh.mock.calls.length;
+
+      fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+      const palette = await screen.findByRole("dialog", { name: "Commands" });
+      // The row comes from the host's catalog now — no app group, no client
+      // side name list (S5).
+      expect(within(palette).getByRole("option", { name: /^\/new/ })).toBeInTheDocument();
+      fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "new" } });
+      fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
+
+      await waitFor(() => expect(runCommand).toHaveBeenCalledExactlyOnceWith(expect.any(String), "new"));
+      // The session replacement is the host's own run_command: App's pane
+      // identity is not touched and no message is sent to the model.
+      expect(fresh.mock.calls.length).toBe(priorChats);
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(screen.queryByRole("dialog", { name: "Commands" })).not.toBeInTheDocument();
+    } finally {
+      fresh.mockRestore();
+      runCommand.mockRestore();
+      sendMessage.mockRestore();
     }
   });
 
@@ -72,8 +117,7 @@ describe("App", () => {
       await screen.findByPlaceholderText("Tell Gentle what you need…");
       await act(async () => {});
       // Same palette-only way in here (T10/L9).
-      fireEvent.keyDown(document, { key: "k", ctrlKey: true });
-      fireEvent.keyDown(within(screen.getByRole("dialog", { name: "Commands" })).getByRole("combobox"), { key: "Enter" });
+      await runResumeFromPalette();
       fireEvent.click(await within(await screen.findByRole("dialog", { name: "Resume a session" })).findByRole("button", { name: /Write the README intro/ }));
       await act(async () => {});
       fireEvent.click(screen.getByRole("button", { name: "Close workspace gentle-shell-desktop" }));

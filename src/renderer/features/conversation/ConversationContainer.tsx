@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { ChatState, ChatSummary, DialogAnswer, OpenChatResult } from "@shared/bridge-types";
+import type { ChatCommand, ChatCommandRunResult, ChatState, ChatSummary, DialogAnswer, OpenChatResult } from "@shared/bridge-types";
 import { useBridge } from "@renderer/shared/bridge/useBridge";
 import { HelpersContainer } from "@renderer/features/helpers/HelpersContainer";
 import { directoryOf } from "@renderer/features/chats/components/ChatListItem";
 import { Composer } from "./components/Composer";
-import { CommandPalette, type PaletteEntry } from "./components/CommandPalette";
+import { CommandPalette } from "./components/CommandPalette";
 import { ResumeSessionDialog } from "./components/ResumeSessionDialog";
 import { Footer } from "./components/Footer";
 import { CONVERSATION_PANE, ConversationHeader, type ConversationPane } from "./components/ConversationHeader";
@@ -36,8 +36,7 @@ export type ActiveChat =
 export interface ConversationContainerProps {
   readonly activeChat: ActiveChat;
   readonly footerTarget?: HTMLDivElement | null;
-  /** Renderer-owned GUI picker selection; App uses the existing openChat route. */
-  readonly onResumeChat?: (chat: ChatSummary) => void;
+
   /** T5b: the active chat's workspace host id, OWNED BY App — set from
    * the open/new resolution (see onHostResolved) and reset on every
    * selection change. Every request the container sends is addressed to
@@ -170,6 +169,63 @@ function errorText(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
+/** What a slash-command draft actually does, when it needs saying (S21,
+ * palette-host-catalog S6).
+ *
+ * A draft is plain text for the child — that contract does not change here,
+ * so this never blocks or rewrites the send. What it removes is the SILENT
+ * outcome: pi treats a slash name it does not recognise as an ordinary
+ * prompt (its own fallthrough), so the user sees their message go out and a
+ * perfectly normal answer come back, with no sign that the command they
+ * believed in never existed. Returns the one line the status surface shows,
+ * or undefined when the draft is not a command name or pi really dispatches
+ * it from a prompt (extension, prompt and skill commands — S3's proven
+ * path).
+ *
+ * The catalog decides, never a name list (S3): a builtin row is NEVER
+ * dispatched by a prompt — a runnable one runs only through the palette's
+ * `run_command` dispatch, a non-runnable one only in pi's terminal UI — so
+ * a typed builtin name is said out loud either way. Only a bare leading
+ * name counts: `/plan make a plan` and a pasted path like
+ * `/home/pablo/notes` keep their names, while `/home/pablo` is not a
+ * command (the lookahead requires whitespace or the end of the text after
+ * the name, and a further slash fails it). */
+function unlistedSlashNotice(
+  text: string,
+  commands: readonly ChatCommand[],
+): string | undefined {
+  const match = /^\/([A-Za-z][A-Za-z0-9:_-]*)(?=\s|$)/.exec(text);
+  if (!match) return undefined;
+  const name = match[1];
+  const command = commands.find((entry) => entry.name === name);
+  if (!command) {
+    return `Pi reports no /${name} command for this chat — it was sent as a normal message.`;
+  }
+  if (command.source !== "builtin") return undefined;
+  if (!command.runnable) {
+    return `pi runs /${name} in its terminal UI only — it was sent as a normal message.`;
+  }
+  return `/${name} is a host command — run it from the command palette. It was sent to Pi as plain text.`;
+}
+
+/** What the host's `run_command` answer says on the status line (S4): an
+ * executed answer clears the line, every other shape names its reason —
+ * nothing throws, nothing is silently dropped. */
+function commandResultNotice(entry: ChatCommand, result: ChatCommandRunResult): string | undefined {
+  switch (result.kind) {
+    case "executed":
+      return undefined;
+    case "refused":
+      return result.reason === "terminal_only"
+        ? `The host runs /${entry.name} only in its terminal UI.`
+        : `The host reports no /${entry.name} command.`;
+    case "session_switching":
+      return `gentle-shell is switching sessions right now — retry /${entry.name} in a moment.`;
+    case "transport":
+      return result.message;
+  }
+}
+
 /**
  * Conversation container: ONE source of truth for the thread is the pushed
  * `ChatState` (messages, working, pendingDialogs, lastError) — nothing is
@@ -180,7 +236,7 @@ function errorText(cause: unknown): string {
  * T2b) are diagnostics: they render only in the Helpers pane's status
  * surface and never enter the chat flow.
  */
-export function ConversationContainer({ activeChat, activeHostId, onHostResolved, onWorktreeBranch, createdWorkspace, footerTarget, onResumeChat, onWorkspacePath, modalOpen = false }: ConversationContainerProps) {
+export function ConversationContainer({ activeChat, activeHostId, onHostResolved, onWorktreeBranch, createdWorkspace, footerTarget, onWorkspacePath, modalOpen = false }: ConversationContainerProps) {
   const bridge = useBridge();
   const [chatState, setChatState] = useState<ChatState>(emptyChatState());
   // The host id this container resolved for the current activeChat, kept
@@ -443,20 +499,29 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
 
     // T10 (R3-003/R2-003, L9): a typed "/resume" — with or without arguments —
     // is plain text sent to the child, exactly like any other draft. The
-    // resume dialog is reachable only from the palette's app entry (S21).
+    // resume dialog is reachable only from the palette's catalog row (S21,
+    // S5). The SENDING contract is unchanged; what is new is that a name the
+    // catalog does not publish — or a builtin one, which a prompt never
+    // dispatches — is said out loud instead of looking like a command that
+    // ran and did nothing (see unlistedSlashNotice, S6).
+    const notice = unlistedSlashNotice(text, chatState.commands ?? []);
     setDraft("");
     bridge
       .sendMessage(hostId, text)
       .then((result) => {
-        if (!result.queued) setBridgeError(result.reason ?? "Gentle did not send the message");
+        if (!result.queued) {
+          setBridgeError(result.reason ?? "Gentle did not send the message");
+          return;
+        }
+        setBridgeError(notice);
       })
       .catch((cause: unknown) => setBridgeError(errorText(cause)));
   };
 
-  /** The GUI /resume path. T10 (R2-003, L9): the palette's app entry (S19)
-   * is now its ONLY way in — a typed "/resume" draft is plain text for the
-   * child instead of opening this picker. Gated by the workspace directory,
-   * exactly as the composer gated /resume before. */
+  /** The GUI /resume path (palette-host-catalog S5): the catalog's runnable
+   * resume row is its ONLY way in — a typed "/resume" draft is plain text
+   * for the child instead of opening this picker. Gated by the workspace
+   * directory, exactly as the composer gated /resume before. */
   const openResumePicker = (): void => {
     if (!workspacePath) {
       setBridgeError("Open a workspace directory before using /resume.");
@@ -466,25 +531,68 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
     setResumeSelection({ key: currentKey, directory: workspacePath });
   };
 
-  /** T9 (S19): a palette row was run. The desktop's own entry opens the
-   * resume dialog; a wire command is sent as "/name" to the active host, and
-   * a `queued: false` answer surfaces its reason like the composer's send
-   * path does. */
-  const handleRunCommand = (entry: PaletteEntry): void => {
-    // T10 (R3-004): a wire command needs the same readiness the composer's
-    // Send already gates: an empty host id has nowhere to route "/name", and
-    // sending it would only produce the bridge's unknown-host refusal. The
-    // palette is a transient launcher, so it is dismissed instead of
-    // lingering open as a modal that silently ignores its input; nothing new
-    // is surfaced — a host-closed status is already on the pane's status
-    // line. The app entry keeps its own workspace gate (openResumePicker).
-    if (entry.source !== "app" && hostId === "") {
-      setPaletteOpen(false);
+  /** Runs one dispatch through the host's `run_command` path (S4): the
+   * result shapes the status line (executed clears it; a refusal names its
+   * reason; `session_switching` is retryable and never "executed"; a
+   * transport failure surfaces its message), only the newest run settles
+   * the line (R4-001), and an expectable failure never throws. */
+  const dispatchRunCommand = (name: string, args?: string): void => {
+    const runId = ++commandRunRef.current;
+    // args is omitted, never passed as an explicit undefined: the wire
+    // validates its keys, and an absent arg is the absence the contract
+    // documents.
+    const pending = args === undefined ? bridge.runCommand?.(hostId, name) : bridge.runCommand?.(hostId, name, args);
+    pending
+      ?.then((result) => {
+        if (runId !== commandRunRef.current) return;
+        setBridgeError(result ? commandResultNotice({ name, runnable: true, source: "builtin" }, result) : "This bridge cannot run a catalog command.");
+      })
+      .catch((cause: unknown) => {
+        if (runId !== commandRunRef.current) return;
+        setBridgeError(errorText(cause));
+      });
+  };
+
+  /** T9 (S19), palette-host-catalog S3/S5: a palette row was run. The
+   * execution matrix is the CONTRACT, never a name list — the one permitted
+   * by-name special case is the catalog's runnable /resume, whose session
+   * choice is the desktop's own picker flow:
+   *
+   *   - `runnable: true` → the host's `run_command` (S4), args supplied
+   *     only by the /resume picker (the catalog's own args are a display
+   *     hint, never a value to send);
+   *   - extension / prompt / skill with `runnable: false` → `/name` sent as
+   *     a prompt, the path pi already dispatches from prompts (S3);
+   *   - builtin with `runnable: false` → shown, never dispatched, and the
+   *     status line says why (S3).
+   */
+  const handleRunCommand = (entry: ChatCommand): void => {
+    setPaletteOpen(false);
+    if (entry.runnable) {
+      if (entry.source === "builtin" && entry.name === "resume") {
+        openResumePicker();
+        return;
+      }
+      // T10 (R3-004): a dispatch needs the same readiness the composer's
+      // Send already gates: an empty host id has nowhere to route the
+      // request. The palette is a transient launcher, so it is dismissed
+      // instead of lingering open as a modal that silently ignores its
+      // input — but the dismissal is never SILENT: the reason is named on
+      // the status line so the click never looks like it ran something.
+      if (hostId === "") {
+        setBridgeError(`Open a chat before running /${entry.name}.`);
+        return;
+      }
+      dispatchRunCommand(entry.name);
       return;
     }
-    setPaletteOpen(false);
-    if (entry.source === "app") {
-      openResumePicker();
+    if (entry.source === "builtin") {
+      setBridgeError(`/${entry.name} runs only in pi's terminal UI — the desktop cannot dispatch it.`);
+      return;
+    }
+    // T10 (R3-004): the same empty-host readiness gate as above.
+    if (hostId === "") {
+      setBridgeError(`Open a chat before running /${entry.name}.`);
       return;
     }
     // T10 (R4-001, R3-001): only the newest run settles the line.
@@ -629,7 +737,6 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
       {paletteOpen ? (
         <CommandPalette
           commands={chatState.commands ?? []}
-          resumeAvailable={Boolean(workspacePath)}
           onRun={handleRunCommand}
           onClose={() => setPaletteOpen(false)}
         />
@@ -640,7 +747,19 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
           onCancel={() => setResumeSelection(undefined)}
           onSelect={(chat) => {
             setResumeSelection(undefined);
-            onResumeChat?.(chat);
+            // palette-host-catalog S5: the picked session's file path goes
+            // to the host as `run_command` args — the ONE own flow left. A
+            // chat the host reported without a path must not send its id
+            // as if it were a path: the refusal is the honest answer.
+            if (!chat.path) {
+              setBridgeError("The selected session's path is unknown — the host did not report it, so /resume cannot run.");
+              return;
+            }
+            if (hostId === "") {
+              setBridgeError("Open a chat before running /resume.");
+              return;
+            }
+            dispatchRunCommand("resume", chat.path);
           }}
         />
       ) : null}

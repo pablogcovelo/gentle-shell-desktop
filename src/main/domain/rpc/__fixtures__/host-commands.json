@@ -1,0 +1,12 @@
+{
+  "items": [
+    { "name": "new", "description": "Start a new session", "args": null, "terminal": false, "runnable": true, "source": "builtin" },
+    { "name": "resume", "description": "Resume another session", "args": null, "terminal": true, "runnable": true, "source": "builtin" },
+    { "name": "fork", "description": "Create a new fork from a previous user message", "args": null, "terminal": true, "runnable": false, "source": "builtin" },
+    { "name": "name", "description": "Set session display name", "args": "<name>", "terminal": false, "runnable": true, "source": "builtin" },
+    { "name": "gentle:desktop", "description": "Open the desktop control channel", "args": null, "terminal": false, "runnable": false, "source": "extension" },
+    { "name": "review", "description": "Run the rdd review flow", "args": null, "terminal": false, "runnable": false, "source": "prompt" },
+    { "name": "skill:commit", "description": null, "args": null, "terminal": false, "runnable": false, "source": "skill" }
+  ],
+  "truncated": false
+}

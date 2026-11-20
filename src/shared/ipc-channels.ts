@@ -25,6 +25,13 @@ export const IPC_CHANNELS = {
    * host's child only; an unknown id is rejected. */
   SEND_MESSAGE: "chat.send",
   ABORT: "chat.abort",
+  /** Runs one command from the addressed host's catalog through the
+   * host's desktop-rpc `run_command` (palette-host-catalog T3, S4): the
+   * request carries (hostId, name, args?) and answers a
+   * ChatCommandRunResult — executed, a refusal reason, the retryable
+   * `session_switching`, or a transport failure. A refusal is a SUCCESS
+   * answer here, never a rejection. */
+  COMMAND_RUN: "chat.runCommand",
   ANSWER_DIALOG: "dialog.answer",
   /** Asks the host addressed by the leading host id (T5b) to stop one
    * helper (desktop-rpc T6): resolve with a StopHelperOutcome; the real

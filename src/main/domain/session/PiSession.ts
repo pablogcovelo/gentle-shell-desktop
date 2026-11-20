@@ -2,6 +2,7 @@ import { MESSAGE_ROLE, type ChatMessage } from "@shared/bridge-types";
 import {
   STOP_HELPER_OUTCOME,
   type ChatCommand,
+  type ChatCommandRunResult,
   type ChatCommandSource,
   type ChatState,
   type DialogAnswer,
@@ -14,6 +15,7 @@ import {
 import { INITIAL_CHAT_STATE, reduceChat } from "../rpc/chatReducer";
 import { decodeLine, encodeCommand } from "../rpc/codec";
 import { applyAgentState, mergeAgentEntry, parseAgentEntry, parseAgentList } from "../rpc/agents";
+import { CATALOG_SOURCES, parseCommandCatalog } from "../rpc/commandCatalog";
 import { DESKTOP_RPC_WIDGET_KEY, DesktopRpcClient, parseDesktopRpcWidget } from "../rpc/desktopRpc";
 import { parseSessionState, parseSessionStats } from "../rpc/sessionStats";
 import { parseToolVocabulary } from "../rpc/toolVocabulary";
@@ -178,9 +180,16 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
    * (desktop-pending-work T6, S6). The composer's slash list is whatever
    * the child answered for this pi-level command — correlated by `id` like
    * the identity reads, with its own counter and its own pending id so a
-   * late or mismatched answer can never fold. */
+   * late or mismatched answer can never fold. Only the DEGRADED catalog
+   * path (no `get_snapshot` advertised) writes through this pair. */
   private commandsRequestCounter = 0;
   private pendingCommandsRequestId: string | undefined;
+  /** Counts the host-catalog (`get_snapshot`) requests this session has
+   * sent (palette-host-catalog T1, S1). The answer folds only while it is
+   * BOTH the newest request's answer (epoch) AND still this session's
+   * client — the same binding rule the usage/worktree reads apply, so a
+   * late answer for a replaced read never overwrites the current catalog. */
+  private catalogRequestEpoch = 0;
 
   constructor(options: PiSessionOptions) {
     super();
@@ -366,7 +375,7 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
         // is read once, right behind the identity (it is an ordinary RPC
         // command, so it must also stay ahead of that last widget write).
         this.requestIdentity();
-        this.requestCommands();
+        this.requestCatalog();
         this.requestVocabulary();
         this.requestWorkspace();
         this.requestWorktree();
@@ -410,15 +419,62 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
   }
 
   /**
+   * Reads the chat's command catalog ONCE, right after the capabilities
+   * probe adopts the channel (palette-host-catalog T1, S1) — the same
+   * place the identity/vocabulary/workspace facts are read. Exactly one
+   * of two sources is used, never both and never one completing the
+   * other:
+   *
+   *   - the host advertises `get_snapshot` → ONE desktop-rpc request
+   *     with `{ sections: ["commands"] }`; the answer's
+   *     `state.session.commands` (`{ items, truncated }`) folds through
+   *     the fail-closed parser (pi's builtins included), or
+   *   - otherwise → pi's own `get_commands` (see `requestCommands`), the
+   *     explicit degradation, whose entries are carried with
+   *     `runnable: false` because pi's wire publishes no execution
+   *     verdict (S1: never mix the two catalogs).
+   *
+   * The desktop-rpc answer binds on its request epoch and on this
+   * session's client: a `session_unavailable`/failed/unusable answer
+   * keeps whatever catalog the chat already had — never invents entries —
+   * and a late answer for a replaced read never overwrites the current
+   * one.
+   */
+  private requestCatalog(): void {
+    const rpc = this.rpcClient;
+    if (!rpc || this.probeState !== "ok") return;
+    if (!this.advertisedMethods?.has("get_snapshot")) {
+      this.requestCommands();
+      return;
+    }
+    const epoch = ++this.catalogRequestEpoch;
+    void rpc.request("get_snapshot", { sections: ["commands"] }).then((reply) => {
+      if (this.rpcClient !== rpc || epoch !== this.catalogRequestEpoch) return;
+      // A failed answer (session_unavailable among them) is still an
+      // answer about the catalog, but a failed one is never a catalog:
+      // keep whatever the chat already had, never an invented entry.
+      if (!reply.ok) return;
+      const session = isRecord(reply.data) ? reply.data.state : undefined;
+      const sessionState = isRecord(session) ? session.session : undefined;
+      const payload = isRecord(sessionState) ? sessionState.commands : undefined;
+      const commands = parseCommandCatalog(payload);
+      if (!commands) return;
+      this.state = { ...this.state, commands };
+      this.emit("state", this.state);
+    });
+  }
+
+  /**
    * Asks the child for its slash commands ONCE (`get_commands`, desktop-
-   * pending-work T6, S6) right after the capabilities probe adopts the
-   * channel — the same place the identity/vocabulary/workspace facts are
-   * read. This is a pi-level RPC command, NOT a desktop-rpc method: it
-   * goes through the same raw command writer and the same id/correlation
-   * pattern as `get_session_stats`/`get_state`, with its own counter and
-   * its own pending id. Gated on the adopted channel like every other
-   * control write; a failed or malformed answer leaves the list absent
-   * (the composer then offers nothing — never an invented entry).
+   * pending-work T6, S6) — the DEGRADED catalog source, used only while
+   * the child does not advertise the host's `get_snapshot` (palette-
+   * host-catalog S1). This is a pi-level RPC command, NOT a desktop-rpc
+   * method: it goes through the same raw command writer and the same
+   * id/correlation pattern as `get_session_stats`/`get_state`, with its
+   * own counter and its own pending id. Gated on the adopted channel like
+   * every other control write; a failed or malformed answer leaves the
+   * list absent (the palette then offers nothing — never an invented
+   * entry).
    */
   private requestCommands(): void {
     if (this.probeState !== "ok") return;
@@ -428,12 +484,17 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
   }
 
   /**
-   * Folds a `get_commands` reply, once, and only when its `id` matches the
-   * request it answers (a late or mismatched answer changes nothing). The
-   * parse is fail-closed (S6): a malformed frame, a non-array `commands`,
-   * or an entry without a non-empty string `name` contributes nothing, and
-   * an unknown `source` is dropped rather than coerced — the stored list is
-   * only ever what the child answered, never repaired or extended.
+   * Folds a `get_commands` reply — the DEGRADED catalog source (palette-
+   * host-catalog S1) — once, and only when its `id` matches the request it
+   * answers (a late or mismatched answer changes nothing). The parse is
+   * fail-closed (S6): a malformed frame, a non-array `commands`, or an
+   * entry without a non-empty string `name` contributes nothing, and an
+   * unknown `source` is dropped rather than coerced — the stored list is
+   * only ever what the child answered, never repaired or extended. Every
+   * carried entry gets `runnable: false`: pi's own wire publishes no
+   * execution verdict, and the palette must not guess one (S1: the two
+   * catalogs are never mixed, so a fallback entry is never dispatched
+   * through `run_command`).
    */
   private applyCommandsResponse(state: ChatState, response: RpcResponse): ChatState {
     // A reply that lands after the child exited belongs to a session nobody
@@ -808,6 +869,48 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
     return STOP_HELPER_OUTCOME.REQUESTED;
   }
 
+  /**
+   * Runs one command from the chat's catalog through the host's desktop-rpc
+   * `run_command` (palette-host-catalog T3, S4) — the ONE execution path for
+   * a runnable row. Gated like every other control write: no adopted
+   * channel or no `run_command` advertisement answers an honest transport
+   * result instead of writing to the child. The wire's answer set is closed
+   * and a refusal is a SUCCESS response; the retryable
+   * `session_switching` error and any other failure map into the result
+   * type without ever throwing.
+   */
+  async runCommand(name: string, args?: string): Promise<ChatCommandRunResult> {
+    const rpc = this.rpcClient;
+    if (!rpc || this.probeState !== "ok") {
+      return { kind: "transport", message: "The desktop control channel is unavailable — this child has no adopted control channel." };
+    }
+    if (!this.advertisedMethods?.has("run_command")) {
+      return { kind: "transport", message: "gentle-shell does not advertise run_command on this child's control channel, so catalog commands cannot run from here." };
+    }
+    const reply = await rpc.request("run_command", args === undefined ? { name } : { name, args });
+    // A session replaced mid-flight (stop/exit disposes and clears the
+    // client): nobody is using this answer any more.
+    if (this.rpcClient !== rpc) {
+      return { kind: "transport", message: "The chat was replaced while the command was in flight." };
+    }
+    if (!reply.ok) {
+      if (reply.error.kind === "server_error" && reply.error.code === "session_switching") {
+        return { kind: "session_switching" };
+      }
+      const detail = reply.error.kind === "server_error" ? reply.error.message : reply.error.detail;
+      return { kind: "transport", message: detail ?? `The host did not answer run_command (${reply.error.kind}).` };
+    }
+    if (isRecord(reply.data) && reply.data.executed === true) return { kind: "executed" };
+    if (
+      isRecord(reply.data) &&
+      reply.data.executed === false &&
+      (reply.data.reason === "terminal_only" || reply.data.reason === "unknown_command")
+    ) {
+      return { kind: "refused", reason: reply.data.reason };
+    }
+    return { kind: "transport", message: "The host answered run_command with an unusable payload." };
+  }
+
   getState(): ChatState {
     return this.state;
   }
@@ -1074,18 +1177,18 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
   }
 }
 
-/** The source values the wire documents for a slash command (desktop-
- * pending-work T6): anything else is dropped, never coerced. */
-const COMMAND_SOURCES: ReadonlySet<string> = new Set<string>(["extension", "prompt", "skill"] satisfies readonly ChatCommandSource[]);
-
 /**
- * Folds a `get_commands` answer's command list, fail-closed (desktop-
- * pending-work T6, S6): a non-record payload or a non-array `commands`
- * yields `undefined` (nothing folds), and an entry without a non-empty
- * string `name`, with an unknown `source`, or with a non-string
- * `description` contributes nothing. The order is the child's and is kept;
- * `sourceInfo` and any argument hint on the wire are NOT carried (there is
- * no argument hint on the wire, and none may be invented).
+ * Folds a `get_commands` answer's command list — the DEGRADED catalog
+ * source (palette-host-catalog S1) — fail-closed (desktop-pending-work
+ * T6, S6): a non-record payload or a non-array `commands` yields
+ * `undefined` (nothing folds), and an entry without a non-empty string
+ * `name`, with an unknown `source`, or with a non-string `description`
+ * contributes nothing, folding through the SAME closed source allow-list
+ * the host catalog parser owns (`CATALOG_SOURCES`). The order is the
+ * child's and is kept; `sourceInfo` and any argument hint on the wire are
+ * NOT carried (there is no argument hint on this wire, and none may be
+ * invented). Every carried entry gets `runnable: false`: this wire
+ * publishes no execution verdict, so the palette must not guess one (S1).
  */
 function parseCommandList(data: unknown): readonly ChatCommand[] | undefined {
   if (typeof data !== "object" || data === null) return undefined;
@@ -1097,11 +1200,11 @@ function parseCommandList(data: unknown): readonly ChatCommand[] | undefined {
     const { name, description, source } = entry as Record<string, unknown>;
     if (typeof name !== "string" || name.length === 0) continue;
     if (typeof description !== "undefined" && typeof description !== "string") continue;
-    if (typeof source !== "string" || !COMMAND_SOURCES.has(source)) continue;
+    if (typeof source !== "string" || !CATALOG_SOURCES.has(source)) continue;
     commands.push(
       description === undefined
-        ? { name, source: source as ChatCommandSource }
-        : { name, description, source: source as ChatCommandSource },
+        ? { name, runnable: false, source: source as ChatCommandSource }
+        : { name, description, runnable: false, source: source as ChatCommandSource },
     );
   }
   return commands;

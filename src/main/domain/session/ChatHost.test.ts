@@ -602,3 +602,83 @@ it("stopHelper routes through the current session's cancel path (desktop-rpc T6)
     }
   });
 });
+
+// palette-host-catalog T3 (S4): the host's `run_command` is the ONE
+// execution path for a runnable catalog row. ChatHost adds one named
+// passthrough — the exact shape of its stopHelper route — so the IPC
+// layer never reaches around it, and the answer classification (executed,
+// refusal, retryable session_switching, transport) is PiSession's.
+it("runCommand routes through the current session's run_command path (palette-host-catalog S4)", async () => {
+  vi.useFakeTimers();
+  try {
+    const { spawner, handles } = createFakeSpawner();
+    const store = fakeSessionStore([session({ id: "sess-1", path: "/home/sessions/proj/sess-1.jsonl" })]);
+    const host = new ChatHost({ spawner, locator: fakeLocator, sessionStore: store, env: {} });
+
+    // No chat open yet: the refusal is the bridge's own error, like every
+    // other requireCurrent() call.
+    await expect(host.runCommand("compact")).rejects.toThrow(/no chat is open/i);
+
+    const openPromise = host.openChat("sess-1");
+    await respondToHistoryRequest(handles, 0);
+    await openPromise;
+
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+    const probeWrite = handle.writes.find((write) => write.includes("capabilities"));
+    if (!probeWrite) throw new Error("expected a capabilities probe write");
+    const probeRequest = JSON.parse((JSON.parse(probeWrite) as { message: string }).message.slice("/gentle:desktop ".length)) as { requestId: string };
+    handle.emitStdout(
+      JSON.stringify({
+        type: "extension_ui_request",
+        id: "ui-capabilities",
+        method: "setWidget",
+        widgetKey: "gentle-desktop-rpc",
+        widgetLines: [
+          JSON.stringify({
+            schema: "gentle-shell.desktop-rpc/v1",
+            kind: "response",
+            requestId: probeRequest.requestId,
+            ok: true,
+            data: {
+              schema: "gentle-shell.desktop-rpc/v1",
+              command: "gentle:desktop",
+              widget: "gentle-desktop-rpc",
+              methods: ["capabilities", "run_command"],
+              events: [],
+            },
+          }),
+        ],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+
+    const pending = host.runCommand("compact");
+    await vi.advanceTimersByTimeAsync(0);
+    const commandWrite = handle.writes.find((write) => write.includes("run_command"));
+    if (!commandWrite) throw new Error("expected a run_command write");
+    const commandRequest = JSON.parse((JSON.parse(commandWrite) as { message: string }).message.slice("/gentle:desktop ".length)) as { requestId: string; params: { name: string } };
+    expect(commandRequest.params.name).toBe("compact");
+    handle.emitStdout(
+      JSON.stringify({
+        type: "extension_ui_request",
+        id: "ui-run",
+        method: "setWidget",
+        widgetKey: "gentle-desktop-rpc",
+        widgetLines: [
+          JSON.stringify({
+            schema: "gentle-shell.desktop-rpc/v1",
+            kind: "response",
+            requestId: commandRequest.requestId,
+            ok: true,
+            data: { executed: true },
+          }),
+        ],
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(pending).resolves.toEqual({ kind: "executed" });
+  } finally {
+    vi.useRealTimers();
+  }
+});

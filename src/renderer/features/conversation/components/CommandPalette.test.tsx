@@ -2,32 +2,29 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { ChatCommand } from "@shared/bridge-types";
-import { CommandPalette, type PaletteEntry } from "./CommandPalette";
+import { CommandPalette } from "./CommandPalette";
 
-/** Demo commands in the exact shape `get_commands` answers: every source
- * group, one entry with no description, no argument hint anywhere. */
+/** Demo commands in the exact shape the host's `get_snapshot` commands
+ * section answers (palette-host-catalog T2, S3): every source group —
+ * builtins included — with the host's own `runnable` verdict per row. */
 const DEMO_COMMANDS: readonly ChatCommand[] = [
-  { name: "plan", description: "Turn the request into an ODD plan", source: "prompt" },
-  { name: "skill:review", description: "Run the native review flow", source: "skill" },
-  { name: "gentle:mode", source: "extension" },
-  { name: "compact", description: "Compact the conversation context", source: "prompt" },
+  { name: "plan", description: "Turn the request into an ODD plan", runnable: false, source: "prompt" },
+  { name: "skill:review", description: "Run the native review flow", runnable: false, source: "skill" },
+  { name: "gentle:mode", runnable: false, source: "extension" },
+  { name: "compact", description: "Compact the conversation context", runnable: true, source: "builtin" },
+  { name: "fork", description: "Create a new fork from a previous user message", runnable: false, source: "builtin" },
+  { name: "resume", description: "Resume another session", runnable: true, source: "builtin" },
 ];
 
 type RenderOptions = {
   readonly commands?: readonly ChatCommand[];
-  readonly resumeAvailable?: boolean;
 };
 
 function renderPalette(options: RenderOptions = {}) {
   const onRun = vi.fn();
   const onClose = vi.fn();
   const view = render(
-    <CommandPalette
-      commands={options.commands ?? DEMO_COMMANDS}
-      resumeAvailable={options.resumeAvailable ?? false}
-      onRun={onRun}
-      onClose={onClose}
-    />,
+    <CommandPalette commands={options.commands ?? DEMO_COMMANDS} onRun={onRun} onClose={onClose} />,
   );
   const dialog = screen.getByRole("dialog", { name: "Commands" });
   const input = within(dialog).getByRole("combobox");
@@ -52,90 +49,119 @@ function groupHeads(dialog: HTMLElement): [string, string][] {
 }
 
 describe("CommandPalette", () => {
-  it("groups app first, then prompt, skill and extension, with a live count per group", () => {
-    const { dialog } = renderPalette({ resumeAvailable: true });
+  it("groups the host catalog prompt, skill, extension, builtin — builtin after extension (S3)", () => {
+    const { dialog } = renderPalette();
 
     expect(groupHeads(dialog)).toEqual([
-      ["App", "1"],
-      ["Prompt", "2"],
+      ["Prompt", "1"],
       ["Skill", "1"],
       ["Extension", "1"],
+      ["Builtin", "3"],
     ]);
   });
 
-  it("does not render an empty group — no resume entry, no extension commands, no headers for them", () => {
+  it("does not render an empty group — no builtin entries, no builtin header for them", () => {
     const { dialog } = renderPalette({
-      commands: [{ name: "plan", description: "Make a plan", source: "prompt" }],
-      resumeAvailable: false,
+      commands: [{ name: "plan", description: "Make a plan", runnable: false, source: "prompt" }],
     });
 
     expect(groupHeads(dialog)).toEqual([["Prompt", "1"]]);
   });
 
   it("lists the visible rows in group order with mono names, descriptions and a source badge", () => {
-    const { rows, onRun } = renderPalette({ resumeAvailable: true });
+    const { rows, onRun } = renderPalette();
 
     expect(rows().map((row) => row.textContent)).toEqual([
-      "/resumeChoose a saved Pi session in this directoryapp",
       "/planTurn the request into an ODD planprompt",
-      "/compactCompact the conversation contextprompt",
       "/skill:reviewRun the native review flowskill",
       "/gentle:modeextension",
+      "/compactCompact the conversation contextbuiltin",
+      "/forkCreate a new fork from a previous user messagebuiltin",
+      "/resumeResume another sessionbuiltin",
     ]);
     // The first row is selected as soon as the palette opens.
     expect(rows()[0]).toHaveAttribute("aria-selected", "true");
     expect(rows()[1]!).toHaveAttribute("aria-selected", "false");
-    // Clicking a row runs it, like Enter does.
-    fireEvent.click(rows()[2]!);
+    // Clicking a row runs it, like Enter does — the WHOLE entry is handed
+    // up, runnable verdict included (S3: the row decides nothing locally).
+    fireEvent.click(rows()[5]!);
     expect(onRun).toHaveBeenCalledExactlyOnceWith({
-      name: "compact",
-      description: "Compact the conversation context",
-      source: "prompt",
+      name: "resume",
+      description: "Resume another session",
+      runnable: true,
+      source: "builtin",
     });
   });
 
-  it("filters case-insensitively over name and description and ignores a leading / in the query", () => {
+  it("matches the command NAME only, case-insensitively, and ignores a leading / in the query", () => {
     const { input, rows } = renderPalette();
 
     fireEvent.change(input, { target: { value: "/RE" } });
-    // "re" matches "review" (name) and "plan"'s description ("the request");
-    // the leading-slash prefix changes nothing.
+    // "re" matches "review" and "resume" by NAME. It used to also pull in
+    // "plan" ("the request") and "fork" ("a previous") through their
+    // descriptions; prose is not a name any more (owner decision).
     expect(rows().map((row) => row.textContent)).toEqual([
-      "/planTurn the request into an ODD planprompt",
       "/skill:reviewRun the native review flowskill",
+      "/resumeResume another sessionbuiltin",
     ]);
 
     // The same rows without the slash: the two queries are equivalent.
     fireEvent.change(input, { target: { value: "RE" } });
     expect(rows().map((row) => row.textContent)).toEqual([
-      "/planTurn the request into an ODD planprompt",
       "/skill:reviewRun the native review flowskill",
+      "/resumeResume another sessionbuiltin",
     ]);
+  });
+
+  it("never lets a word in a description win a slot — the reported 'new' regression", () => {
+    const { input, rows, dialog } = renderPalette({
+      commands: [
+        {
+          name: "skill:skill-creator",
+          description: "Create new skills with valid frontmatter",
+          runnable: false,
+          source: "skill",
+        },
+        { name: "new", description: "Start a new session", runnable: true, source: "builtin" },
+      ],
+    });
+
+    fireEvent.change(input, { target: { value: "new" } });
+    // Before this rule, typing "new" returned the skill whose prose says
+    // "new skills" and pushed /new to the bottom of the list.
+    expect(rows().map((row) => row.textContent)).toEqual(["/newStart a new sessionbuiltin"]);
+
+    // A word that only exists in a description matches nothing at all, and
+    // the palette says so instead of guessing.
+    fireEvent.change(input, { target: { value: "frontmatter" } });
+    expect(within(dialog).queryByRole("option")).not.toBeInTheDocument();
+    expect(dialog).toHaveTextContent('No command matches "frontmatter"');
   });
 
   it("selects the first row on open and on every filter change, and moves with wraparound", () => {
     const { input, rows } = renderPalette();
     const selection = () => rows().map((row) => row.getAttribute("aria-selected"));
 
-    expect(selection()).toEqual(["true", "false", "false", "false"]);
+    expect(selection()).toEqual(["true", "false", "false", "false", "false", "false"]);
     fireEvent.keyDown(input, { key: "ArrowDown" });
-    expect(selection()).toEqual(["false", "true", "false", "false"]);
-    fireEvent.keyDown(input, { key: "ArrowDown" });
-    fireEvent.keyDown(input, { key: "ArrowDown" });
-    expect(selection()).toEqual(["false", "false", "false", "true"]);
+    expect(selection()).toEqual(["false", "true", "false", "false", "false", "false"]);
+    for (let i = 0; i < 4; i += 1) fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(selection()).toEqual(["false", "false", "false", "false", "false", "true"]);
     // Wrap: down from the last lands on the first…
     fireEvent.keyDown(input, { key: "ArrowDown" });
-    expect(selection()).toEqual(["true", "false", "false", "false"]);
+    expect(selection()).toEqual(["true", "false", "false", "false", "false", "false"]);
     // …and up from the first lands on the last.
     fireEvent.keyDown(input, { key: "ArrowUp" });
-    expect(selection()).toEqual(["false", "false", "false", "true"]);
+    expect(selection()).toEqual(["false", "false", "false", "false", "false", "true"]);
 
-    // A filter change selects the first visible row again.
+    // A filter change selects the first visible row again. "rev" matches
+    // skill:review by name — and nothing else, now that "previous" in fork's
+    // description no longer counts.
     fireEvent.change(input, { target: { value: "rev" } });
     expect(selection()).toEqual(["true"]);
   });
 
-  it("runs the selected entry through onRun with its name, description and source", () => {
+  it("runs the selected entry through onRun with its name, description, runnable verdict and source", () => {
     const { input, onRun } = renderPalette();
 
     fireEvent.keyDown(input, { key: "ArrowDown" });
@@ -143,9 +169,9 @@ describe("CommandPalette", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     expect(onRun).toHaveBeenCalledExactlyOnceWith({
-      name: "skill:review",
-      description: "Run the native review flow",
-      source: "skill",
+      name: "gentle:mode",
+      runnable: false,
+      source: "extension",
     });
   });
 
@@ -208,26 +234,24 @@ describe("CommandPalette", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Clear" }));
     expect(input).toHaveValue("");
-    expect(within(dialog).getAllByRole("option")).toHaveLength(4);
+    expect(within(dialog).getAllByRole("option")).toHaveLength(6);
   });
 
-  it("reports that the conversation has reported no commands when both lists are empty", () => {
-    renderPalette({ commands: [], resumeAvailable: false });
+  it("describes the host catalog — builtins included — when the chat's catalog is empty (S7)", () => {
+    renderPalette({ commands: [] });
 
-    expect(screen.getByText("This conversation has not reported any commands yet.")).toBeInTheDocument();
+    expect(screen.getByText(/This conversation has not reported any commands yet\./)).toBeInTheDocument();
+    // The empty state names the real source and stops claiming that pi's
+    // builtins live only in its terminal UI (S7).
+    expect(screen.getByText(/pi host publishes — its builtin commands/)).toBeInTheDocument();
+    expect(screen.getByText(/such as \/new and \/resume/)).toBeInTheDocument();
+    expect(screen.queryByText(/never reach the desktop/i)).not.toBeInTheDocument();
+  });
+
+  it("renders nothing at all when the catalog is empty — no listbox", () => {
+    renderPalette({ commands: [] });
+
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
-  });
-
-  it("shows the app resume entry only while resume is available, always badged app", () => {
-    const withResume = renderPalette({ resumeAvailable: true });
-    const resume = within(withResume.list()).getByRole("option", { name: /^\/resume/ });
-    expect(resume.textContent).toContain("app");
-
-    withResume.unmount();
-    const withoutResume = renderPalette({ resumeAvailable: false });
-    expect(
-      within(withoutResume.list()).queryByRole("option", { name: /^\/resume/ }),
-    ).not.toBeInTheDocument();
   });
 
   it("keeps the dialog's a11y wiring: combobox controls the list and names the selected option", () => {
@@ -240,7 +264,7 @@ describe("CommandPalette", () => {
 
     fireEvent.keyDown(input, { key: "ArrowDown" });
     expect(input).toHaveAttribute("aria-activedescendant", selectedRow().id);
-    expect(rows()).toHaveLength(4);
+    expect(rows()).toHaveLength(6);
   });
 
   it("shows the footer's key hints", () => {
@@ -257,19 +281,12 @@ describe("CommandPalette", () => {
     trigger.focus();
 
     const view = render(
-      <CommandPalette commands={DEMO_COMMANDS} resumeAvailable={false} onRun={vi.fn()} onClose={vi.fn()} />,
+      <CommandPalette commands={DEMO_COMMANDS} onRun={vi.fn()} onClose={vi.fn()} />,
     );
     expect(document.activeElement).toBe(screen.getByRole("combobox"));
 
     view.unmount();
     expect(document.activeElement).toBe(trigger);
     trigger.remove();
-  });
-});
-
-describe("PaletteEntry", () => {
-  it("keeps the app entry a distinct local type the wire never publishes", () => {
-    const entry: PaletteEntry = { name: "resume", source: "app" };
-    expect(entry.source).toBe("app");
   });
 });

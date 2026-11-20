@@ -3,6 +3,7 @@ import { isAbsolute } from "node:path";
 import type { IpcMain, WebContents } from "electron";
 import type {
   AppInfo,
+  ChatCommandRunResult,
   ChatState,
   ChatSummary,
   DialogAnswer,
@@ -502,6 +503,13 @@ export class WorkspaceHostRouter {
     return this.requireHost(hostId).stopHelper(helperId);
   }
 
+  /** Runs one catalog command on the addressed host (palette-host-catalog
+   * T3, S4): the answer is a ChatCommandRunResult — a refusal is a SUCCESS
+   * answer, never a rejection — and only the addressed host is touched. */
+  async runCommand(hostId: string, name: string, args?: string): Promise<ChatCommandRunResult> {
+    return this.requireHost(hostId).runCommand(name, args);
+  }
+
   /** Mints a host through the registry and wires its pushes into this
    * router, so hosts created after construction are still fanned out.
    * T11: `cwd` is the workspace directory for workspace.create hosts;
@@ -668,6 +676,13 @@ export function registerHandlers(
     router.answerDialog(hostId, dialogId, answer),
   );
   registerRequestHandler(ipc, IPC_CHANNELS.STOP_HELPER, (_event, hostId: string, helperId: string) => router.stopHelper(hostId, helperId));
+  // palette-host-catalog T3 (S4): the ONE execution channel for runnable
+  // catalog rows. Same chat.* surface style as the channels above — the
+  // host id first, the catalog name, then the optional args (the /resume
+  // picker's session path among them); a refusal resolves, never rejects.
+  registerRequestHandler(ipc, IPC_CHANNELS.COMMAND_RUN, (_event, hostId: string, name: string, args?: string) =>
+    router.runCommand(hostId, name, args),
+  );
   // T11: the native directory picker runs in main (injected adapter); a
   // null answer is a cancellation, and the create request does the actual
   // work — validation first, then the host whose child runs in the

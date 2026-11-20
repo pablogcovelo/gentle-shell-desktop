@@ -25,6 +25,12 @@ export interface ChatSummary {
   readonly title: string;
   /** Working directory the session was started in (pi SessionInfo.cwd). */
   readonly cwd: string;
+  /** The session's own jsonl file path, as the host's session store
+   * reports it (palette-host-catalog T3, S5): the `/resume` picker hands
+   * it to `run_command` as `args`. Optional: absent means the host
+   * reported no path, and a resume must then say so instead of sending
+   * something invented. */
+  readonly path?: string;
   readonly updatedAt: string;
   readonly messageCount: number;
   readonly state: ChatStatus;
@@ -483,12 +489,15 @@ export interface ChatState {
    * one half never clobbers the other. Last-known (S12): refreshed at
    * the named lifecycle boundaries, never a live push. */
   readonly session?: SessionIdentityView;
-  /** The slash commands the child answered for pi's own `get_commands`
-   * command (desktop-pending-work T6, S6), in the order the child sent them.
-   * This is ONLY ever what the child answered — no hardcoded `/gentle:*`
-   * replica, no invented entry, no argument hint (S11). Optional: absent
-   * means the child did not answer (or the answer failed or was malformed
-   * and folded nothing), so the composer simply does not offer the list. */
+  /** The chat's command catalog (palette-host-catalog T1, S1): what the
+   * host publishes for `get_snapshot`'s `commands` section when it
+   * advertises the method — pi's builtins included — and, as the explicit
+   * degradation, what the child answered for pi's own `get_commands`
+   * command (desktop-pending-work T6, S6). ONLY ever what the host
+   * answered, in the order it sent it — no hardcoded `/gentle:*` replica,
+   * no invented entry. Optional: absent means the host did not answer (or
+   * the answer failed or was malformed and folded nothing), so the palette
+   * simply does not offer the list. */
   readonly commands?: readonly ChatCommand[];
   /** The ODD phase the child last published through desktop-rpc's
    * `session_state_changed` event (desktop-pending-work T5, S5), as a
@@ -500,21 +509,37 @@ export interface ChatState {
   readonly oddPhase?: OddPhase;
 }
 
-/** Where a slash command the child answers for `get_commands` came from
- * (pi's `RpcSlashCommand.source`; unknown values are dropped, never
- * coerced). */
-export type ChatCommandSource = "extension" | "prompt" | "skill";
+/** Where a command in the chat's catalog came from (palette-host-catalog
+ * S2; pi's own builtins arrive on the host's `get_snapshot` catalog as
+ * `"builtin"`). Unknown values are dropped, never coerced. */
+export type ChatCommandSource = "builtin" | "extension" | "prompt" | "skill";
 
-/** One slash command the child answered for (the wire's `RpcSlashCommand`:
- * `name` is required, `description` can genuinely be absent for extension
- * commands, and there is NO argument hint on the wire — none is ever
- * invented here). Lives here because main decodes it and the renderer's
- * composer renders it (the Scope Rule). */
+/** One command in the chat's catalog (palette-host-catalog S2): the
+ * wire's `get_snapshot` item — `name` required, `description` genuinely
+ * null-able on the wire, `runnable` the host's own execution verdict (S4:
+ * the palette dispatches by this flag, never by a client-side name list)
+ * and `args` an optional argument hint the wire may carry ("<name>"),
+ * kept only when it is a string and never invented. Lives here because
+ * main decodes it and the renderer's palette renders it (the Scope Rule). */
 export interface ChatCommand {
   readonly name: string;
   readonly description?: string;
+  readonly runnable: boolean;
+  readonly args?: string;
   readonly source: ChatCommandSource;
 }
+
+/** What the host's desktop-rpc `run_command` did with a catalog name
+ * (palette-host-catalog S4). A refusal is a SUCCESS response on the wire
+ * (never an error); `session_switching` is the retryable error a
+ * `new`/`resume` session replacement in flight answers with — reported,
+ * never treated as executed; a transport failure carries its own message.
+ * Nothing throws. */
+export type ChatCommandRunResult =
+  | { readonly kind: "executed" }
+  | { readonly kind: "refused"; readonly reason: "terminal_only" | "unknown_command" }
+  | { readonly kind: "session_switching" }
+  | { readonly kind: "transport"; readonly message: string };
 
 /**
  * One task in the chat's own ODD task list, as gentle-shell's todo tool
@@ -902,6 +927,14 @@ export interface GentleBridge {
    * (src/preload/bridge.ts, the mock bridge), and the Helpers tab treats a
    * bridge without it as the `unavailable` outcome. */
   stopHelper?(hostId: string, id: string): Promise<StopHelperOutcome>;
+  /** Runs one command from the chat's host catalog through the host's
+   * desktop-rpc `run_command` (palette-host-catalog T3, S4): the answer is
+   * a ChatCommandRunResult — executed, a refusal reason, the retryable
+   * `session_switching`, or a transport failure — never a throw for an
+   * expectable case. Optional: both real bridges implement it (src/preload/
+   * bridge.ts, the mock bridge); a bridge without it leaves runnable rows
+   * reporting their transport failure instead of dispatching. */
+  runCommand?(hostId: string, name: string, args?: string): Promise<ChatCommandRunResult>;
   /** Opens Electron's native directory picker in the main process (T11)
    * and answers the chosen absolute directory path, or null when the user
    * cancelled. A null answer MUST change nothing: no chat, no host, no

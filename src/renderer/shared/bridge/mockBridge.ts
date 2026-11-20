@@ -4,6 +4,7 @@ import {
   MESSAGE_ROLE,
   NOTIFICATION_SEVERITY,
   type AppInfo,
+  type ChatCommandRunResult,
   type ChatMessage,
   type ChatNotification,
   type ChatState,
@@ -52,6 +53,9 @@ const EXAMPLE_CHATS: ChatSummary[] = [
     id: "chat-readme",
     title: "Write the README intro",
     cwd: "/Users/dev/gentle-shell-desktop",
+    // palette-host-catalog T3 (S5): the session file path the /resume
+    // picker hands to run_command as args.
+    path: "/Users/dev/.pi/agent/sessions/chat-readme.jsonl",
     updatedAt: "2026-09-21T09:15:00.000Z",
     messageCount: 4,
     state: CHAT_STATE.IDLE,
@@ -60,6 +64,7 @@ const EXAMPLE_CHATS: ChatSummary[] = [
     id: "chat-refactor",
     title: "Refactor the session store",
     cwd: "/Users/dev/pi",
+    path: "/Users/dev/.pi/agent/sessions/chat-refactor.jsonl",
     updatedAt: "2026-09-21T10:40:00.000Z",
     messageCount: 12,
     state: CHAT_STATE.NEEDS_YOU,
@@ -68,6 +73,7 @@ const EXAMPLE_CHATS: ChatSummary[] = [
     id: "chat-migration",
     title: "Migrate the config schema",
     cwd: "/Users/dev/pi",
+    path: "/Users/dev/.pi/agent/sessions/chat-migration.jsonl",
     updatedAt: "2026-09-21T11:05:00.000Z",
     messageCount: 7,
     state: CHAT_STATE.WORKING,
@@ -197,15 +203,20 @@ function emptyState(): ChatState {
         { category: "rdd", glyph: "🌹", patterns: ["gentle_review*"], heading: "rdd" },
       ],
     },
-    // desktop-pending-work T6 (S6) demo: a couple of commands in the shape
-    // `get_commands` answers, so the composer's slash list is exercisable
-    // under `pnpm dev:web` without a child. The skill entry has no
-    // description, exactly like the wire's entries without one — and there
-    // is no argument hint on the wire, so none is invented here.
+    // palette-host-catalog (T1/S1, T2/S3) demo: a catalog in the shape the
+    // host's `get_snapshot` commands section answers — pi's builtins
+    // included, each with the host's own `runnable` verdict — so the palette
+    // and the run_command path are exercisable under `pnpm dev:web` without
+    // a child. Non-runnable extension/prompt/skill rows are the proven
+    // /name prompt path; non-runnable builtins are the terminal-only rows.
     commands: [
-      { name: "review", description: "Run the rdd review flow", source: "extension" },
-      { name: "plan", description: "Turn the request into an ODD plan", source: "prompt" },
-      { name: "skill:commit", source: "skill" },
+      { name: "review", description: "Run the rdd review flow", runnable: false, source: "extension" },
+      { name: "plan", description: "Turn the request into an ODD plan", runnable: false, source: "prompt" },
+      { name: "skill:commit", runnable: false, source: "skill" },
+      { name: "new", description: "Start a new session", runnable: true, source: "builtin" },
+      { name: "resume", description: "Resume another session", runnable: true, source: "builtin" },
+      { name: "fork", description: "Create a new fork from a previous user message", runnable: false, source: "builtin" },
+      { name: "compact", description: "Manually compact the session context", runnable: true, source: "builtin" },
     ],
     // desktop-rpc T8 demo workspace facts: a session-effective profile label,
     // an MCP inventory, and — T8b — a plausible worktree so the footer's
@@ -927,6 +938,34 @@ export const mockBridge: GentleBridge = {
   },
 
   async closeWindow(): Promise<void> {},
+
+  // palette-host-catalog S4: the host's `run_command` path, mocked with the
+  // same closed answer set — executed, a refusal, or (never here) the
+  // retryable session_switching. `new` and `resume` replace the session
+  // IN-CHILD (the same host id keeps answering — how the real switch
+  // behaves), so the pane's requests keep being addressed correctly.
+  async runCommand(hostId: string, name: string, args?: string): Promise<ChatCommandRunResult> {
+    requireHost(hostId);
+    if (name === "new") {
+      helpersScenarioToken += 1;
+      setState({ ...emptyState(), hostId });
+      return { kind: "executed" };
+    }
+    if (name === "resume") {
+      // args is the session FILE path (S5); an unknown one answers the
+      // host's refusal, never a throw.
+      const chat = args === undefined ? undefined : exampleChats.find((entry) => entry.path === args);
+      if (!chat) return { kind: "refused", reason: "terminal_only" };
+      helpersScenarioToken += 1;
+      hostIdByChat.set(chat.id, hostId);
+      setState({ ...(statesByHostId.get(hostId) ?? emptyState()), hostId, workspacePath: chat.cwd });
+      if (chat.id === "chat-migration") startHelpersScenario();
+      return { kind: "executed" };
+    }
+    // Every other catalog name — the remaining builtins included — lives in
+    // pi's TUI, exactly like the host's own answer set.
+    return { kind: "refused", reason: "terminal_only" };
+  },
 
   async chooseFile(): Promise<string | null> {
     return filePick === undefined ? DEMO_ATTACHMENT_PATH : filePick;

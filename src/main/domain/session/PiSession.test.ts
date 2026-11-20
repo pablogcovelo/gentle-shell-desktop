@@ -2744,11 +2744,13 @@ describe("command discovery (desktop-pending-work T6, S6)", () => {
     await flushReplies();
 
     // The order is the child's; sourceInfo is not carried; the prompt entry
-    // genuinely has no description and none is invented.
+    // genuinely has no description and none is invented. Every entry is
+    // carried with `runnable: false`: this wire publishes no execution
+    // verdict, so the palette must not guess one (palette-host-catalog S1).
     expect(session.getState().commands).toEqual([
-      { name: "gentle:desktop", description: "Open the desktop control channel", source: "extension" },
-      { name: "review", description: "Run the rdd review flow", source: "prompt" },
-      { name: "skill:commit", source: "skill" },
+      { name: "gentle:desktop", description: "Open the desktop control channel", runnable: false, source: "extension" },
+      { name: "review", description: "Run the rdd review flow", runnable: false, source: "prompt" },
+      { name: "skill:commit", runnable: false, source: "skill" },
     ]);
     expect(session.getState().commands?.[2]).not.toHaveProperty("description");
     // Command chrome never becomes transcript traffic.
@@ -2809,8 +2811,8 @@ describe("command discovery (desktop-pending-work T6, S6)", () => {
 
     // Fail closed: the broken entries contribute nothing, in neither state.
     expect(session.getState().commands).toEqual([
-      { name: "review", description: "Run the rdd review flow", source: "prompt" },
-      { name: "skill:commit", source: "skill" },
+      { name: "review", description: "Run the rdd review flow", runnable: false, source: "prompt" },
+      { name: "skill:commit", runnable: false, source: "skill" },
     ]);
 
     handle.resolveExited({ code: 0, signal: null });
@@ -2866,6 +2868,341 @@ describe("command discovery (desktop-pending-work T6, S6)", () => {
 
     handle.resolveExited({ code: 0, signal: null });
   });
+});
+
+// -----------------------------------------------------------------------
+// The host command catalog (palette-host-catalog T1, S1/S2): when the
+// child advertises `get_snapshot`, the chat's catalog is the host's
+// `commands` section — pi's builtins included — requested ONCE as ONE
+// desktop-rpc read with `{ sections: ["commands"] }`; pi's own
+// `get_commands` stays the explicit degradation and the two are never
+// mixed. A failed or malformed answer keeps whatever the chat already
+// had — never an invented entry.
+// -----------------------------------------------------------------------
+
+describe("host command catalog (palette-host-catalog T1, S1/S2)", () => {
+  function desktopWidgetFrame(requestId: string, data: unknown): string {
+    return JSON.stringify({
+      type: "extension_ui_request",
+      id: "ui-desktop",
+      method: "setWidget",
+      widgetKey: "gentle-desktop-rpc",
+      widgetLines: [JSON.stringify({ schema: "gentle-shell.desktop-rpc/v1", kind: "response", requestId, data })],
+    });
+  }
+
+  function controlRequestId(write: string): string {
+    const prompt = JSON.parse(write) as { type: string; message: string };
+    if (prompt.type !== "prompt" || !prompt.message.startsWith("/gentle:desktop ")) {
+      throw new Error(`expected a /gentle:desktop prompt command, got: ${write}`);
+    }
+    return (JSON.parse(prompt.message.slice("/gentle:desktop ".length)) as { requestId: string }).requestId;
+  }
+
+  async function flushReplies(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  function controlRequest(write: string): { requestId: string; method: string; params: Record<string, unknown> } {
+    const prompt = JSON.parse(write) as { type: string; message: string };
+    if (prompt.type !== "prompt" || !prompt.message.startsWith("/gentle:desktop ")) {
+      throw new Error(`expected a /gentle:desktop prompt command, got: ${write}`);
+    }
+    return JSON.parse(prompt.message.slice("/gentle:desktop ".length)) as { requestId: string; method: string; params: Record<string, unknown> };
+  }
+
+  function writesOf(handle: FakeProcessHandle, type: string): string[] {
+    return handle.writes.filter((write) => (JSON.parse(write) as { type?: string }).type === type);
+  }
+
+  function commandsReply(id: string, commands: unknown): string {
+    return JSON.stringify({ type: "response", id, command: "get_commands", success: true, data: { commands } });
+  }
+
+  /** The captured wire payload from __fixtures__/host-commands.json: the
+   * `{ items, truncated }` answer the host's `commands` section carries. */
+  function hostCatalogPayload(): unknown {
+    return JSON.parse(readFileSync(path.join(__dirname, "..", "rpc", "__fixtures__", "host-commands.json"), "utf8"));
+  }
+
+  async function adoptChannel(handle: FakeProcessHandle, methods: string[]): Promise<void> {
+    const probeWrite = handle.writes.find((write) => write.includes("capabilities"));
+    if (!probeWrite) throw new Error("expected a capabilities probe write");
+    handle.emitStdout(
+      desktopWidgetFrame(controlRequestId(probeWrite), {
+        schema: "gentle-shell.desktop-rpc/v1",
+        command: "gentle:desktop",
+        widget: "gentle-desktop-rpc",
+        methods,
+        events: [],
+      }),
+    );
+    await flushReplies();
+  }
+
+  it("when the child advertises get_snapshot, the catalog is the host's commands section — and get_commands is never sent (S1: never both)", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle, ["capabilities", "get_snapshot", "run_command"]);
+
+    // Exactly ONE source: the host's catalog read — never a get_commands
+    // write on the same child.
+    expect(writesOf(handle, "get_commands")).toEqual([]);
+    const catalogWrites = handle.writes.filter((write) => write.includes("get_snapshot"));
+    expect(catalogWrites).toHaveLength(1);
+    const request = controlRequest(catalogWrites[0] ?? "");
+    expect(request.method).toBe("get_snapshot");
+    expect(request.params).toEqual({ sections: ["commands"] });
+
+    handle.emitStdout(
+      desktopWidgetFrame(request.requestId, { state: { session: { commands: hostCatalogPayload() } } }),
+    );
+    await flushReplies();
+
+    // The host's order, pi's builtins included, exactly as the parser folds it.
+    expect(session.getState().commands?.map((command) => `${command.source}:${command.name}`)).toEqual([
+      "builtin:new",
+      "builtin:resume",
+      "builtin:fork",
+      "builtin:name",
+      "extension:gentle:desktop",
+      "prompt:review",
+      "skill:skill:commit",
+    ]);
+    expect(session.getState().commands?.[0]).toEqual({ name: "new", description: "Start a new session", runnable: true, source: "builtin" });
+    // Command chrome never becomes transcript traffic.
+    expect(session.getState().messages).toEqual([]);
+
+    // Requested ONCE per child: a later settled turn asks nothing again.
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await flushReplies();
+    expect(handle.writes.filter((write) => write.includes("get_snapshot"))).toHaveLength(1);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("a failed get_snapshot answer (session_unavailable) keeps whatever the chat already had — never an invented entry", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle, ["capabilities", "get_snapshot"]);
+    const request = controlRequest(handle.writes.find((write) => write.includes("get_snapshot")) ?? "");
+
+    // The feed is not running for the session: the documented error answer.
+    handle.emitStdout(
+      JSON.stringify({
+        type: "extension_ui_request",
+        id: "ui-catalog",
+        method: "setWidget",
+        widgetKey: "gentle-desktop-rpc",
+        widgetLines: [
+          JSON.stringify({
+            schema: "gentle-shell.desktop-rpc/v1",
+            kind: "response",
+            requestId: request.requestId,
+            ok: false,
+            error: { code: "session_unavailable", message: "The feed is not running" },
+          }),
+        ],
+      }),
+    );
+    await flushReplies();
+    expect(session.getState().commands).toBeUndefined();
+
+    // A malformed ok-answer (no usable items) folds nothing either.
+    handle.emitStdout(desktopWidgetFrame(request.requestId, { state: { session: { commands: { items: "nope" } } } }));
+    await flushReplies();
+    expect(session.getState().commands).toBeUndefined();
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("without the get_snapshot advertisement the catalog stays pi's get_commands — never a get_snapshot prompt (S1: the degradation is explicit)", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle, ["capabilities", "get_subscription_usage"]);
+
+    expect(handle.writes.filter((write) => write.includes("get_snapshot"))).toEqual([]);
+    const commandWrites = writesOf(handle, "get_commands");
+    expect(commandWrites).toHaveLength(1);
+
+    handle.emitStdout(
+      commandsReply(commandId(commandWrites[0] ?? ""), [
+        { name: "review", description: "Run the rdd review flow", source: "prompt" },
+      ]),
+    );
+    await flushReplies();
+
+    expect(session.getState().commands).toEqual([
+      { name: "review", description: "Run the rdd review flow", runnable: false, source: "prompt" },
+    ]);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  // palette-host-catalog T3 (S4): the ONE execution path for runnable rows
+  // — the host's desktop-rpc `run_command`, gated on the advertisement like
+  // every other control write, with the wire's closed answer set (executed,
+  // or a refusal, or the retryable session_switching, or a transport
+  // failure) mapped into ChatCommandRunResult. A refusal is a SUCCESS
+  // response on the wire; nothing throws.
+  describe("run_command (palette-host-catalog T3, S4)", () => {
+    async function adoptAndSend(methods: string[], name: string, args?: string) {
+      const { spawner, handles } = createFakeSpawner();
+      const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+      session.start();
+      const handle = handles[0];
+      if (!handle) throw new Error("no spawned handle");
+      handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+      await adoptChannel(handle, methods);
+      const pending = session.runCommand(name, args);
+      await flushReplies();
+      return { session, handle, pending };
+    }
+
+    function runCommandRequest(write: string): { requestId: string; method: string; params: Record<string, unknown> } {
+      const prompt = JSON.parse(write) as { type: string; message: string };
+      if (prompt.type !== "prompt" || !prompt.message.startsWith("/gentle:desktop ")) {
+        throw new Error(`expected a /gentle:desktop prompt command, got: ${write}`);
+      }
+      return JSON.parse(prompt.message.slice("/gentle:desktop ".length)) as { requestId: string; method: string; params: Record<string, unknown> };
+    }
+
+    function answerFrame(requestId: string, data: unknown): string {
+      return desktopWidgetFrame(requestId, data);
+    }
+
+    function errorFrame(requestId: string, code: string, message: string): string {
+      return JSON.stringify({
+        type: "extension_ui_request",
+        id: "ui-error",
+        method: "setWidget",
+        widgetKey: "gentle-desktop-rpc",
+        widgetLines: [
+          JSON.stringify({ schema: "gentle-shell.desktop-rpc/v1", kind: "response", requestId, ok: false, error: { code, message } }),
+        ],
+      });
+    }
+
+    it("is gated on the child advertising run_command — no write, an honest transport failure", async () => {
+      const { spawner, handles } = createFakeSpawner();
+      const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+      session.start();
+      const handle = handles[0];
+      if (!handle) throw new Error("no spawned handle");
+      handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+      await adoptChannel(handle, ["capabilities", "get_snapshot"]);
+
+      await expect(session.runCommand("compact")).resolves.toEqual({
+        kind: "transport",
+        message: expect.stringContaining("run_command"),
+      });
+      expect(handle.writes.filter((write) => write.includes("run_command"))).toEqual([]);
+
+      handle.resolveExited({ code: 0, signal: null });
+    });
+
+    it("sends the documented request ({ name, args? }) and maps executed:true", async () => {
+      const { handle, pending } = await adoptAndSend(["capabilities", "run_command"], "compact");
+      const write = handle.writes.find((entry) => entry.includes("run_command"));
+      if (!write) throw new Error("expected a run_command write");
+      const request = runCommandRequest(write);
+      expect(request.method).toBe("run_command");
+      expect(request.params).toEqual({ name: "compact" });
+      handle.emitStdout(answerFrame(request.requestId, { executed: true }));
+      await flushReplies();
+      await expect(pending).resolves.toEqual({ kind: "executed" });
+
+      handle.resolveExited({ code: 0, signal: null });
+    });
+
+    it("carries args only when the caller supplies them", async () => {
+      const { handle, pending } = await adoptAndSend(["capabilities", "run_command"], "resume", "/tmp/sess-1.jsonl");
+      const write = handle.writes.find((entry) => entry.includes("run_command"));
+      if (!write) throw new Error("expected a run_command write");
+      const request = runCommandRequest(write);
+      expect(request.params).toEqual({ name: "resume", args: "/tmp/sess-1.jsonl" });
+      handle.emitStdout(answerFrame(request.requestId, { executed: true }));
+      await flushReplies();
+      await expect(pending).resolves.toEqual({ kind: "executed" });
+
+      handle.resolveExited({ code: 0, signal: null });
+    });
+
+    it("maps both refusal reasons — a refusal is a SUCCESS response, never an error", async () => {
+      const first = await adoptAndSend(["capabilities", "run_command"], "fork");
+      const write1 = first.handle.writes.find((entry) => entry.includes("run_command"));
+      if (!write1) throw new Error("expected a run_command write");
+      first.handle.emitStdout(answerFrame(runCommandRequest(write1).requestId, { executed: false, reason: "terminal_only" }));
+      await flushReplies();
+      await expect(first.pending).resolves.toEqual({ kind: "refused", reason: "terminal_only" });
+      first.handle.resolveExited({ code: 0, signal: null });
+
+      const second = await adoptAndSend(["capabilities", "run_command"], "ghost");
+      const write2 = second.handle.writes.find((entry) => entry.includes("run_command"));
+      if (!write2) throw new Error("expected a run_command write");
+      second.handle.emitStdout(answerFrame(runCommandRequest(write2).requestId, { executed: false, reason: "unknown_command" }));
+      await flushReplies();
+      await expect(second.pending).resolves.toEqual({ kind: "refused", reason: "unknown_command" });
+      second.handle.resolveExited({ code: 0, signal: null });
+    });
+
+    it("maps the retryable session_switching error without treating it as executed", async () => {
+      const { handle, pending } = await adoptAndSend(["capabilities", "run_command"], "new");
+      const write = handle.writes.find((entry) => entry.includes("run_command"));
+      if (!write) throw new Error("expected a run_command write");
+      handle.emitStdout(errorFrame(runCommandRequest(write).requestId, "session_switching", "A session switch is in progress; retry after it answers"));
+      await flushReplies();
+      await expect(pending).resolves.toEqual({ kind: "session_switching" });
+
+      handle.resolveExited({ code: 0, signal: null });
+    });
+
+    it("maps any other failure to a transport result carrying the wire's message — never a throw", async () => {
+      const { handle, pending } = await adoptAndSend(["capabilities", "run_command"], "compact");
+      const write = handle.writes.find((entry) => entry.includes("run_command"));
+      if (!write) throw new Error("expected a run_command write");
+      handle.emitStdout(errorFrame(runCommandRequest(write).requestId, "invalid_request", "Invalid run_command parameters"));
+      await flushReplies();
+      await expect(pending).resolves.toEqual({
+        kind: "transport",
+        message: "Invalid run_command parameters",
+      });
+
+      handle.resolveExited({ code: 0, signal: null });
+    });
+
+    it("an unusable ok-answer answers transport instead of inventing an outcome", async () => {
+      const { handle, pending } = await adoptAndSend(["capabilities", "run_command"], "compact");
+      const write = handle.writes.find((entry) => entry.includes("run_command"));
+      if (!write) throw new Error("expected a run_command write");
+      handle.emitStdout(answerFrame(runCommandRequest(write).requestId, { executed: "yes" }));
+      await flushReplies();
+      await expect(pending).resolves.toEqual({ kind: "transport", message: expect.stringContaining("unusable") });
+
+      handle.resolveExited({ code: 0, signal: null });
+    });
+  });
+
+  function commandId(write: string): string {
+    const id = (JSON.parse(write) as { id?: string }).id;
+    if (!id) throw new Error(`expected a correlation id on: ${write}`);
+    return id;
+  }
 });
 
 // -----------------------------------------------------------------------

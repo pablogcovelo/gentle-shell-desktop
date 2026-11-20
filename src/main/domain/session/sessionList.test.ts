@@ -21,6 +21,20 @@ function makeSession(overrides: Partial<SessionInfoLike> = {}): SessionInfoLike 
 }
 
 describe("toChatSummaries", () => {
+  // palette-host-catalog T3 (S5): the /resume picker hands the session's
+  // own file path to run_command as args — carried ONLY from the host's
+  // own answer, never invented.
+  it("carries the session's file path into the summary", () => {
+    const [summary] = toChatSummaries([makeSession({ path: "/tmp/sessions/proj/sess-1.jsonl" })]);
+    expect(summary?.path).toBe("/tmp/sessions/proj/sess-1.jsonl");
+  });
+
+  it("carries no path when the host reports none — never an invented one", () => {
+    const [summary] = toChatSummaries([makeSession({ path: "" })]);
+    expect(summary?.path).toBeUndefined();
+    expect(summary?.id).toBe("sess-1");
+  });
+
   it("prefers the session name for the title", () => {
     const [summary] = toChatSummaries([makeSession({ name: "  My chat  " })]);
     expect(summary?.title).toBe("My chat");

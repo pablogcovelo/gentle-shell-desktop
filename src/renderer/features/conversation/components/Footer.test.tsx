@@ -167,7 +167,7 @@ describe("Footer (desktop-workspace-shell T7 — the design's footer, S9/S10/S11
   describe("capabilities group", () => {
     it.each([
       { label: "empty", commands: [] },
-      { label: "non-skill", commands: [{ name: "extension", source: "extension" as const }, { name: "prompt", source: "prompt" as const }] },
+      { label: "non-skill", commands: [{ name: "extension", runnable: false, source: "extension" as const }, { name: "prompt", runnable: false, source: "prompt" as const }] },
     ])("reports a known zero for a $label catalog", ({ commands }) => {
       render(<Footer commands={commands} />);
       const skills = screen.getByRole("img", { name: "Skills: 0" });
@@ -181,9 +181,12 @@ describe("Footer (desktop-workspace-shell T7 — the design's footer, S9/S10/S11
       const extensions = screen.getByRole("img", { name: "Extensions: 0" });
 
       rerender(<Footer workspace={{ mcp: MCP }} commands={[
-        ...Array.from({ length: 15 }, (_, i) => ({ name: `skill:${i}`, source: "skill" as const })),
-        { name: "extension-command", source: "extension" },
-        { name: "prompt-command", source: "prompt" },
+        // runnable is required on every ChatCommand (palette-host-catalog
+        // S2); the footer counts only the source, so the fixtures carry the
+        // honest non-runnable verdict these registry rows have on the wire.
+        ...Array.from({ length: 15 }, (_, i) => ({ name: `skill:${i}`, runnable: false, source: "skill" as const })),
+        { name: "extension-command", runnable: false, source: "extension" },
+        { name: "prompt-command", runnable: false, source: "prompt" },
       ]} />);
       expect(screen.getByRole("img", { name: "Skills: 15" })).toBe(skills);
       expect(skills).toHaveTextContent("15");
