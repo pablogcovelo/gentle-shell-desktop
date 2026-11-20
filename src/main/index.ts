@@ -55,7 +55,7 @@ function logPiLine(line: string): void {
 // persisted first-run choice and resolveHomeArgs/homeDirFor defaults.
 const configStore = createAppConfigStore(path.join(app.getPath("userData"), "config.json"));
 const localDevelopment = process.env.GENTLE_SHELL_DESKTOP_LOCAL_PI === "1"
-  ? createLocalPiDevelopment()
+  ? createLocalPiDevelopment(app.getAppPath())
   : undefined;
 const locator = localDevelopment?.locator ?? createLauncherLocator();
 const homeSettings = localDevelopment?.homeSettings ?? createHomeSettings(configStore, process.env, locator);

@@ -1,7 +1,10 @@
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { PiSession } from "../domain/session/PiSession";
+import type { ProcessSpawner } from "../ports";
+import { sanitizeChildEnv } from "./childEnv";
 import { createLocalPiDevelopment } from "./localPiDevelopment";
 import { createLauncherLocator } from "./launcherLocator";
 
@@ -35,12 +38,37 @@ function fixture() {
 }
 
 describe("explicit local Pi development", () => {
+  it("does not reintroduce desktop dependency bins into the final session spawn PATH", () => {
+    const f = fixture();
+    const appRoot = path.join(f.root, "desktop");
+    const appBin = path.join(appRoot, "node_modules/.bin");
+    mkdirSync(appBin, { recursive: true });
+    const env = { ...f.env, PATH: `${appBin}${path.delimiter}${f.env.PATH}` };
+    const dev = createLocalPiDevelopment(appRoot, env);
+    const spawn = vi.fn<ProcessSpawner["spawn"]>(() => { throw new Error("capture spawn only"); });
+    const session = new PiSession({
+      spawner: { spawn },
+      locator: dev.locator,
+      env: sanitizeChildEnv(env, appRoot),
+      homeArgs: dev.homeSettings.homeArgs(),
+    });
+    session.start();
+    expect(spawn).toHaveBeenCalledOnce();
+    const finalEnv = spawn.mock.calls[0]![2] as NodeJS.ProcessEnv;
+    expect(finalEnv.PATH?.split(path.delimiter)).toEqual([
+      path.join(f.install, "runtime/node/bin"), f.env.PATH,
+    ]);
+    expect(finalEnv.GENTLE_SHELL_PI).toBe(path.join(f.install, "prefix/bin/pi"));
+    expect(finalEnv.GENTLE_SHELL_INTERACTIVE_HOST).toBe("1");
+    expect(env.PATH.split(path.delimiter)).toContain(appBin);
+  });
+
   it("selects source package and the installed home without persisting a home choice", async () => {
     const f = fixture();
     for (const choice of ["isolated", "link"]) {
       writeFileSync(f.config, JSON.stringify({ home: choice }));
       const before = readFileSync(f.config, "utf8");
-      const dev = createLocalPiDevelopment(f.env);
+      const dev = createLocalPiDevelopment(f.root, f.env);
       const launch = dev.locator.locate();
       expect(launch.command).toBe(process.execPath);
       expect(launch.args).toEqual([f.env.GENTLE_SHELL_BIN, "--package-root", f.source]);
@@ -67,7 +95,7 @@ describe("explicit local Pi development", () => {
     if (kind === "conflicting user home") env.GENTLE_SHELL_USER_PI_HOME = f.root;
     if (kind === "conflicting Pi home") env.PI_CODING_AGENT_DIR = f.root;
     const before = readFileSync(f.config, "utf8");
-    expect(() => createLocalPiDevelopment(env)).toThrow();
+    expect(() => createLocalPiDevelopment(f.root, env)).toThrow();
     expect(readFileSync(f.config, "utf8")).toBe(before);
   });
 

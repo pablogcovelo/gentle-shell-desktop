@@ -2,9 +2,10 @@ import { accessSync, constants, readFileSync, realpathSync, statSync } from "nod
 import path from "node:path";
 import type { HomeSettings, LauncherLocator, SetupService } from "../ports";
 import { createLauncherLocator } from "./launcherLocator";
+import { sanitizeChildEnv } from "./childEnv";
 
 /** Opt-in source launch, not an installed-supervisor launch contract. */
-export function createLocalPiDevelopment(env: NodeJS.ProcessEnv = process.env): {
+export function createLocalPiDevelopment(appRoot: string, env: NodeJS.ProcessEnv = process.env): {
   locator: LauncherLocator;
   homeSettings: HomeSettings & { homeDir(): string };
   setupService: SetupService;
@@ -57,8 +58,14 @@ export function createLocalPiDevelopment(env: NodeJS.ProcessEnv = process.env): 
     // Older layouts may rely on Node already on PATH, just as their launcher does.
   }
 
+  // PiSession applies launcher overrides after the base environment: sanitize
+  // this PATH too, or the private-Node override restores Desktop's local Pi bins.
+  const launcherEnv: Record<string, string> = {};
+  for (const [key, value] of Object.entries(sanitizeChildEnv(childEnv, appRoot))) {
+    if (value !== undefined) launcherEnv[key] = value;
+  }
   return {
-    locator: { locate: () => ({ command: process.execPath, args: [sourceEntry, "--package-root", sourceRoot], env: childEnv }) },
+    locator: { locate: () => ({ command: process.execPath, args: [sourceEntry, "--package-root", sourceRoot], env: launcherEnv }) },
     homeSettings: { homeArgs: () => ["--link"], homeDir: () => home },
     setupService: {
       status: async () => ({ needsChoice: false, detection: { found: true, dir: home, hasAuth: false, hasModels: false } }),
