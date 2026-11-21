@@ -89,16 +89,21 @@ export function ModelSelectorDialog({ hostId, currentModel, onConfirm, onCancel,
     };
   }, [bridge, hostId]);
 
+  // The current-model equality test, defined ONCE (R2-002): the ordering
+  // memo and the `current` pill below must answer the same question about
+  // the same exact provider/id pair.
+  const matchesCurrent = (entry: ModelOptionView): boolean =>
+    currentModel?.provider !== undefined &&
+    currentModel?.id !== undefined &&
+    entry.provider === currentModel.provider &&
+    entry.id === currentModel.id;
+
   // The child's order with the current model hoisted first — only when the
   // list actually contains that exact provider/id pair.
   const ordered = useMemo<readonly ModelOptionView[]>(() => {
     if (!result || result.kind !== "ok") return [];
-    const matchesCurrent = (entry: ModelOptionView): boolean =>
-      currentModel?.provider !== undefined &&
-      currentModel?.id !== undefined &&
-      entry.provider === currentModel.provider &&
-      entry.id === currentModel.id;
     return [...result.models.filter(matchesCurrent), ...result.models.filter((entry) => !matchesCurrent(entry))];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [result, currentModel?.provider, currentModel?.id]);
 
   // Selector mode only for a non-empty child snapshot; everything else is
@@ -320,10 +325,7 @@ export function ModelSelectorDialog({ hostId, currentModel, onConfirm, onCancel,
                     onClick={() => confirmEntry(entry)}
                   >
                     <span className="gc-dialog__row-label">{entry.label}</span>
-                    {currentModel?.provider !== undefined &&
-                    currentModel?.id !== undefined &&
-                    entry.provider === currentModel.provider &&
-                    entry.id === currentModel.id ? (
+                    {matchesCurrent(entry) ? (
                       <span className="gc-dialog__current" aria-hidden="true">current</span>
                     ) : null}
                   </div>

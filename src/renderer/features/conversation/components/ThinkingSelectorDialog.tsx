@@ -2,7 +2,6 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { THINKING_LEVEL, type AvailableThinkingLevelsResult, type ThinkingLevel } from "@shared/bridge-types";
 import { useBridge } from "@renderer/shared/bridge/useBridge";
 import "@renderer/app/components/AppDialogs.css";
-import "./ThinkingSelectorDialog.css";
 
 export interface ThinkingSelectorDialogProps {
   /** The chat's host id: the available-thinking-levels read is addressed

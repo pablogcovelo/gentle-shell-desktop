@@ -154,7 +154,6 @@ describe("ModelSelectorDialog", () => {
     expect(options[0]).toHaveAttribute("aria-selected", "true");
     expect(options[1]).toHaveTextContent("GPT-5");
     expect(options[2]).toHaveTextContent("Claude Opus 4");
-    expect(bridgeWith as unknown).toBeDefined();
 
     // Enter confirms the selection with provider/id as the value.
     fireEvent.keyDown(within(dialog).getByRole("combobox"), { key: "Enter" });
