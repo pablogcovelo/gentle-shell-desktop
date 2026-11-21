@@ -112,10 +112,16 @@ export function CommandPalette({ commands, onRun, onClose }: CommandPaletteProps
         event.key !== "Enter"
       )
         return;
-      event.stopImmediatePropagation();
+      // R3-002 (review): stopImmediatePropagation happens ONLY in the
+      // branches that actually handle the key — never before the claim is
+      // decided. A key the palette declines (Enter on the Clear button, a
+      // Tab with nothing to cycle) must stay alive for the other window
+      // listeners; stopping it here would starve them with a key the
+      // palette then returns unhandled.
       if (event.key === "Escape") {
         // Stop before the app-wide Escape listeners: closing the palette must
         // not also collapse the narrow navigation or another pane.
+        event.stopImmediatePropagation();
         event.preventDefault();
         onClose();
         return;
@@ -128,6 +134,7 @@ export function CommandPalette({ commands, onRun, onClose }: CommandPaletteProps
         // Tab is always claimed inside the dialog: it cycles (two or more
         // focusables) or stays put (exactly one) — it never falls through to
         // whatever sits behind the backdrop.
+        event.stopImmediatePropagation();
         event.preventDefault();
         const index = focusables.indexOf(document.activeElement as HTMLElement);
         const offset = event.shiftKey ? -1 : 1;
@@ -143,14 +150,6 @@ export function CommandPalette({ commands, onRun, onClose }: CommandPaletteProps
         // there must keep the button's native activation (clearing the
         // filter), not be swallowed for the selection (and never dispatch
         // a highlighted command instead — irreversible once run).
-        // R3-001/R4-001: Enter is claimed for the filter input, the list,
-        // its rows and the dialog/backdrop surface — but NEVER from a
-        // focused interactive control that is not a row of the list: the
-        // Tab cycle parks focus on the Clear button, and pressing Enter
-        // there must keep the button's native activation (clearing the
-        // filter) instead of being swallowed for the selection — a
-        // swallowed clear or a dispatched command is irreversible once
-        // the keydown lands.
         const target = event.target;
         const claimed =
           target === inputRef.current ||
@@ -159,12 +158,14 @@ export function CommandPalette({ commands, onRun, onClose }: CommandPaletteProps
               "button, a, input, textarea, select, [role=\"button\"], [contenteditable]",
             ) === null);
         if (!claimed) return;
+        event.stopImmediatePropagation();
         event.preventDefault();
         const entry = visible[selected];
         if (entry) onRun(entry);
         return;
       }
       // ↑/↓ move the selection with wraparound.
+      event.stopImmediatePropagation();
       event.preventDefault();
       if (visible.length === 0) return;
       const offset = event.key === "ArrowDown" ? 1 : -1;

@@ -607,10 +607,13 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   /** T3 (palette-command-arguments S2/S3/S4): whichever argument screen is
    * open confirms through ONE dispatch — the open screen's name is the
    * command, the confirmed value (a `provider/id`, a level, or typed text
-   * in the degraded S6 mode) is its run_command args. */
+   * in the degraded S6 mode) is its run_command args. The screen is NOT
+   * closed here (R4-001 review): it is the chosen value's home, and a
+   * retryable `session_switching` answer must not cost a re-entry through
+   * the palette and the list — the dispatch closes the screen itself when
+   * the run executes, and until then the value stays on the screen. */
   const confirmScreen = (value: string): void => {
     if (!commandScreen || commandScreen.key !== currentKey) return;
-    setCommandScreen(undefined);
     dispatchRunCommand(commandScreen.name, value);
   };
 
@@ -628,6 +631,11 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
     pending
       ?.then((result) => {
         if (runId !== commandRunRef.current) return;
+        // An EXECUTED run is the argument screen's whole job done: the
+        // screen closes on the answer, never before it (R4-001 review) —
+        // for a plain-row run there is no open screen and this clears
+        // nothing.
+        if (result?.kind === "executed") setCommandScreen(undefined);
         setBridgeError(result ? commandResultNotice({ name, runnable: true, source: "builtin" }, result) : "This bridge cannot run a catalog command.");
       })
       .catch((cause: unknown) => {
@@ -655,6 +663,12 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
    */
   const handleRunCommand = (entry: ChatCommand): void => {
     setPaletteOpen(false);
+    // R3-003 (review): the screen belongs to the command it was opened
+    // for. ANY new command clears it first — a later command can never
+    // overlap the mounted screen or leave it orphaned over a chat the
+    // user has already moved away from. A run that opens a screen of its
+    // own sets a fresh one right after this clear.
+    setCommandScreen(undefined);
       if (entry.runnable) {
       if (entry.source === "builtin" && entry.name === "resume") {
         openResumePicker();
@@ -685,8 +699,12 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
       // T3 (palette-command-arguments S1/S5, correction round): route by
       // NAME, one table lookup — the host declares `args: null` for /model
       // and /thinking (the value is chosen on the screen, never typed), so
-      // `entry.args` is absent there and cannot gate their screens.
-      const screen = COMMAND_ARGUMENT_SCREENS[entry.name];
+      // `entry.args` is absent there and cannot gate their screens. The
+      // lookup is an OWN-property one (R3-001 review): a plain record
+      // inherits Object.prototype, and a runnable command named `toString`
+      // or `constructor` would resolve to an inherited function — pass the
+      // screen gate, open nothing, and silently dispatch nothing.
+      const screen = Object.hasOwn(COMMAND_ARGUMENT_SCREENS, entry.name) ? COMMAND_ARGUMENT_SCREENS[entry.name] : undefined;
       if (screen !== undefined) {
         setCommandScreen({ key: currentKey, name: screen });
         return;

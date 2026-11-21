@@ -118,6 +118,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** The stdout RPC's absent-method reply is exact (R3-001/R4-001 review,
+ * verified against pi's rpc-mode): a command the child does not implement
+ * is refused with the literal `Unknown command: <command>` message — an
+ * OLDER child, a permanent absence. Any other failure message is the
+ * child answering a command it HAS with its own error — a transient
+ * failure, which must read as failed, never as a permanent unsupported. */
+function isUnknownCommandReply(error: string): boolean {
+  return error.startsWith("Unknown command: ");
+}
+
 /**
  * Set on every spawned pi process (M2 prerequisite, see
  * odd/tasks/desktop-m2-helpers.md): only with this flag does gentle-pi
@@ -972,14 +982,19 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
    * a /gentle:desktop prompt, gated on the adopted control channel like
    * every other write. Resolves an AvailableModelsResult — the bounded
    * answer, `unsupported` (no adopted channel, or the child refused the
-   * command), or `failed` (unanswered past the bound, the chat was
-   * replaced, or a malformed success payload) — instead of throwing. The
-   * list is bounded at MAX_AVAILABLE_MODELS with truncation flagged, and
-   * a model with no usable display name renders as `provider/id`. */
+   * command: the exact `Unknown command:` refusal of an older child), or
+   * `failed` (unanswered past the bound, the chat was replaced, a
+   * malformed success payload, or the child answering a command it HAS
+   * with its own transient failure — R3-001/R4-001 review) — instead of
+   * throwing. The list is bounded at MAX_AVAILABLE_MODELS with truncation
+   * flagged, and a model with no usable display name renders as
+   * `provider/id`. */
   async availableModels(): Promise<AvailableModelsResult> {
     const outcome = await this.childQuery("get_available_models", `models-${this.modelsRequestCounter++}`);
     if (outcome.kind !== "answered") return outcome.kind === "lost" ? { kind: "failed" } : { kind: "unsupported" };
-    if (!outcome.response.success) return { kind: "unsupported" };
+    if (!outcome.response.success) {
+      return isUnknownCommandReply(outcome.response.error) ? { kind: "unsupported" } : { kind: "failed" };
+    }
     const parsed = parseAvailableModels(outcome.response.data);
     if (!parsed) return { kind: "failed" };
     return { kind: "ok", models: parsed.models, truncated: parsed.truncated };
@@ -987,15 +1002,18 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
 
   /** Asks the child for its available thinking levels (palette-command-
    * arguments T1, S3) through pi's own correlated
-   * `get_available_thinking_levels` RPC command — the same gating and
-   * correlation as availableModels, with its own counter so a late models
-   * reply can never settle a levels read. Levels outside the closed
-   * THINKING_LEVEL union are DROPPED, never coerced (the fail-closed rule
-   * the command catalog applies). */
+   * `get_available_thinking_levels` RPC command — the same gating,
+   * correlation and refused-vs-failed split (R3-001/R4-001 review) as
+   * availableModels, with its own counter so a late models reply can
+   * never settle a levels read. Levels outside the closed THINKING_LEVEL
+   * union are DROPPED, never coerced (the fail-closed rule the command
+   * catalog applies). */
   async availableThinkingLevels(): Promise<AvailableThinkingLevelsResult> {
     const outcome = await this.childQuery("get_available_thinking_levels", `levels-${this.levelsRequestCounter++}`);
     if (outcome.kind !== "answered") return outcome.kind === "lost" ? { kind: "failed" } : { kind: "unsupported" };
-    if (!outcome.response.success) return { kind: "unsupported" };
+    if (!outcome.response.success) {
+      return isUnknownCommandReply(outcome.response.error) ? { kind: "unsupported" } : { kind: "failed" };
+    }
     const levels = parseAvailableThinkingLevels(outcome.response.data);
     if (!levels) return { kind: "failed" };
     return { kind: "ok", levels };

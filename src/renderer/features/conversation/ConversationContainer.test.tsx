@@ -2493,6 +2493,108 @@ describe("ConversationContainer command argument screens (T3, palette-command-ar
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  // R3-001 (U4 review): the screen table is keyed by NAME, and a lookup on
+  // a plain object inherits Object.prototype — a runnable command named
+  // `toString` passed the lookup and silently did nothing (no screen, no
+  // dispatch). The lookup must be an own-property one, so such a row
+  // dispatches like any other screenless runnable.
+  it("a runnable builtin whose name is an inherited Object.prototype member still dispatches (R3-001)", async () => {
+    const bridge = argsBridge({
+      newChat: vi.fn().mockResolvedValue({
+        hostId: "host-1",
+        state: {
+          ...ARGS_STATE,
+          commands: [{ name: "toString", description: "A name the prototype chain knows", runnable: true, source: "builtin" as const }],
+        },
+      }),
+    });
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    await runRow("toString");
+
+    // No screen exists for it and it declares no args: the row dispatches.
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(bridge.runCommand).toHaveBeenCalledExactlyOnceWith("host-1", "toString");
+  });
+
+  // R3-003 (U4 review): a mounted screen belongs to the command it was
+  // opened for. Running ANY other command clears it first, so a later
+  // command can never overlap the screen or leave it orphaned over a chat
+  // the user has already moved away from.
+  it("running another command while a screen is mounted clears the screen first — no orphaned dialog (R3-003)", async () => {
+    const bridge = argsBridge();
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    await runRow("model");
+    expect(await screen.findByRole("dialog", { name: "Choose a model" })).toBeInTheDocument();
+
+    // The palette reopens over the mounted screen (Ctrl+K is not one of the
+    // screen's claimed keys) and the user runs /new: the fresh chat must
+    // not leave the model screen behind it. The row is CLICKED, not
+    // Enter'd — the mounted screen claims Enter at window level for its
+    // own confirmation, a separate surface overlap this advisory does not
+    // own.
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const palette = screen.getByRole("dialog", { name: "Commands" });
+    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "new" } });
+    fireEvent.click(within(palette).getByRole("option", { name: /new/i }));
+
+    expect(bridge.newChat).toHaveBeenCalledTimes(2); // the pane's own open, then the row
+    expect(screen.queryByRole("dialog", { name: "Choose a model" })).not.toBeInTheDocument();
+  });
+
+  // R4-001 (U4 review): the screen is the chosen value's home. It stays
+  // mounted through the dispatch, so a retryable `session_switching`
+  // answer costs the user nothing — the value is still there and one Enter
+  // retries, with no re-entry through the palette and the list.
+  it("a retryable session_switching result keeps the model screen and its chosen value — a retry needs no re-entry (R4-001)", async () => {
+    const settles: Array<(result: unknown) => void> = [];
+    const bridge = argsBridge({
+      runCommand: vi.fn().mockImplementation(() => new Promise((resolve) => settles.push(resolve as (result: unknown) => void))),
+    });
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    await runRow("model");
+    const dialog = await screen.findByRole("dialog", { name: "Choose a model" });
+
+    // The chosen value dispatches; the answer is not known yet.
+    fireEvent.keyDown(within(dialog).getByRole("combobox"), { key: "Enter" });
+    expect(bridge.runCommand).toHaveBeenCalledTimes(1);
+    // The screen STAYS while the result is pending — closing it before the
+    // answer is known would throw the chosen value away.
+    expect(screen.getByRole("dialog", { name: "Choose a model" })).toBeInTheDocument();
+
+    settles[0]?.({ kind: "session_switching" });
+    await act(async () => {});
+    // The retryable answer keeps the screen open and names the retry.
+    expect(screen.getByRole("dialog", { name: "Choose a model" })).toBeInTheDocument();
+    expect(await screen.findByRole("status")).toHaveTextContent(/switching sessions/);
+
+    // One Enter retries the SAME value — the screen never lost it.
+    fireEvent.keyDown(within(screen.getByRole("dialog", { name: "Choose a model" })).getByRole("combobox"), { key: "Enter" });
+    expect(bridge.runCommand).toHaveBeenCalledTimes(2);
+    expect(bridge.runCommand).toHaveBeenLastCalledWith("host-1", "model", "anthropic/claude-sonnet-4");
+  });
+
+  // Preserved behavior the R4-001 change touches: the screen's dispatch
+  // ending EXECUTED is the screen's whole job done, so it still closes —
+  // now on the answer, instead of synchronously at confirm time.
+  it("the model screen still closes once its dispatch executes (preserved)", async () => {
+    const bridge = argsBridge({ runCommand: vi.fn().mockResolvedValue({ kind: "executed" }) });
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    await runRow("model");
+    const dialog = await screen.findByRole("dialog", { name: "Choose a model" });
+
+    fireEvent.keyDown(within(dialog).getByRole("combobox"), { key: "Enter" });
+    expect(bridge.runCommand).toHaveBeenCalledExactlyOnceWith("host-1", "model", "anthropic/claude-sonnet-4");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Choose a model" })).not.toBeInTheDocument());
+  });
+
   // The real /compact row: runnable with `args: null` on the wire — like
   // /new, it dispatches at once and no screen is invented for it.
   it("the real /compact row (args absent on the wire) dispatches immediately with no value", async () => {

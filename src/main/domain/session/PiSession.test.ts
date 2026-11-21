@@ -3453,12 +3453,17 @@ describe("available reads (palette-command-arguments T1, S2/S3)", () => {
     return { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", provider: "anthropic", ...overrides };
   }
 
-  function modelsReply(id: string, models: unknown, success = true): string {
-    return JSON.stringify({ type: "response", id, command: "get_available_models", success, ...(success ? { data: { models } } : { error: "boom" }) });
+  /** The wire's own failure shapes (verified against pi's rpc-mode): a
+   * command the child does not implement is refused with the exact
+   * `Unknown command: <command>` message; a command it HAS whose handler
+   * fails answers any other message. The refusal wording is the default —
+   * the read tests refusal with the REAL words, not a stand-in. */
+  function modelsReply(id: string, models: unknown, success = true, error = "Unknown command: get_available_models"): string {
+    return JSON.stringify({ type: "response", id, command: "get_available_models", success, ...(success ? { data: { models } } : { error }) });
   }
 
-  function levelsReply(id: string, levels: unknown, success = true): string {
-    return JSON.stringify({ type: "response", id, command: "get_available_thinking_levels", success, ...(success ? { data: { levels } } : { error: "boom" }) });
+  function levelsReply(id: string, levels: unknown, success = true, error = "Unknown command: get_available_thinking_levels"): string {
+    return JSON.stringify({ type: "response", id, command: "get_available_thinking_levels", success, ...(success ? { data: { levels } } : { error }) });
   }
 
   it("availableModels() sends pi's own correlated get_available_models after the probe and resolves the answer", async () => {
@@ -3585,6 +3590,32 @@ describe("available reads (palette-command-arguments T1, S2/S3)", () => {
     handle.emitStdout(modelsReply(commandId(writesOf(handle, "get_available_models")[0] ?? ""), undefined, false));
     await flushReplies();
     await expect(pending).resolves.toEqual({ kind: "unsupported" });
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  // R3-001/R4-001 (U2 review): the refusal and the failure are different
+  // answers. An absent method is the child's permanent lack (unsupported);
+  // a command the child HAS whose handler fails is a transient error — it
+  // must read as failed, never as a permanent unsupported.
+  it("a server-error failure reply (the child's own transient failure) resolves failed, not unsupported", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0]!;
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+
+    const pendingModels = session.availableModels();
+    handle.emitStdout(modelsReply(commandId(writesOf(handle, "get_available_models")[0] ?? ""), undefined, false, "the model runtime exploded"));
+    await flushReplies();
+    await expect(pendingModels).resolves.toEqual({ kind: "failed" });
+
+    const pendingLevels = session.availableThinkingLevels();
+    handle.emitStdout(levelsReply(commandId(writesOf(handle, "get_available_thinking_levels")[0] ?? ""), undefined, false, "the level read exploded"));
+    await flushReplies();
+    await expect(pendingLevels).resolves.toEqual({ kind: "failed" });
 
     handle.resolveExited({ code: 0, signal: null });
   });

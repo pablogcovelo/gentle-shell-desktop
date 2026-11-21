@@ -231,6 +231,27 @@ describe("CommandPalette", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  // R3-002 (U4 review): the window claim must stop propagation only where
+  // it actually handles the key. Enter on the Clear button is NOT claimed —
+  // but the handler used to stopImmediatePropagation() BEFORE deciding,
+  // starving every other window listener with a key it was declining.
+  it("a key the palette declines does not stop the other window listeners — Enter on the Clear button (R3-002)", () => {
+    const { input, onRun } = renderPalette();
+    fireEvent.change(input, { target: { value: "zzz" } });
+    const later = vi.fn();
+    // Registered AFTER the palette's own window claim, so within the same
+    // capture phase it runs second: the palette must leave the key event
+    // alive for it when it does not handle the key.
+    window.addEventListener("keydown", later, true);
+    try {
+      fireEvent.keyDown(screen.getByRole("button", { name: "Clear" }), { key: "Enter" });
+      expect(later).toHaveBeenCalledTimes(1);
+      expect(onRun).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener("keydown", later, true);
+    }
+  });
+
   it("keeps Tab inside the dialog: it cycles between the input and the Clear button", () => {
     const { input } = renderPalette();
 
