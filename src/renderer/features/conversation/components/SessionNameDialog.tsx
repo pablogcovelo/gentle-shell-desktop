@@ -11,6 +11,12 @@ export interface SessionNameDialogProps {
    * dispatches it as run_command args. */
   readonly onConfirm: (name: string) => void;
   readonly onCancel: () => void;
+  /** Whether this screen is the TOPMOST open surface and may claim keys
+   * at window level. Defaults to true for bare callers; the container
+   * passes false while another surface (the Ctrl+K palette) is open over
+   * it, so the mounted screen claims nothing and every key reaches the
+   * surface above it instead. */
+  readonly active?: boolean;
 }
 
 /**
@@ -24,7 +30,7 @@ export interface SessionNameDialogProps {
  * focus on open and restored on close, Escape/Tab claimed at window level
  * in capture, backdrop click cancels.
  */
-export function SessionNameDialog({ initialName, onConfirm, onCancel }: SessionNameDialogProps) {
+export function SessionNameDialog({ initialName, onConfirm, onCancel, active = true }: SessionNameDialogProps) {
   const titleId = useId();
   const panel = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -47,6 +53,11 @@ export function SessionNameDialog({ initialName, onConfirm, onCancel }: SessionN
   // convention) so the dialog cancels from any element inside it and focus
   // never escapes to the dimmed page behind. Other keys are left alone.
   useEffect(() => {
+    // A surface claims keys ONLY while it is the topmost open one: while
+    // another surface (the Ctrl+K palette) is open over this screen the
+    // claim is lifted entirely, so the keys the user types up there reach
+    // that surface and never cancel this screen from under it.
+    if (!active) return;
     const keydown = (event: KeyboardEvent): void => {
       // Only the two claimed keys are stopped here: a blanket
       // stopImmediatePropagation at window capture would keep every other
@@ -68,9 +79,14 @@ export function SessionNameDialog({ initialName, onConfirm, onCancel }: SessionN
     };
     window.addEventListener("keydown", keydown, true);
     return () => window.removeEventListener("keydown", keydown, true);
-  }, []);
+  }, [active]);
 
   const handleInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>): void => {
+    // The same topmost rule for the input's own Enter: while the palette
+    // is open above, its Enter claim deliberately declines targets inside
+    // other interactive elements, so an Enter that reaches this input
+    // would confirm the screen from under the surface above. Inert.
+    if (!active) return;
     if (event.key !== "Enter") return;
     event.preventDefault();
     if (valid) onConfirm(trimmed);

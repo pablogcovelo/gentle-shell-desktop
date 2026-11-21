@@ -2439,6 +2439,61 @@ describe("ConversationContainer command argument screens (T3, palette-command-ar
     expect(bridge.runCommand).toHaveBeenCalledExactlyOnceWith("host-1", "name", "New name");
   });
 
+  // Mirrors the model screen's topmost-surface test: the name screen owns a
+  // window-level key claim of its own, and a mounted surface may claim keys
+  // only while it is the topmost open one — Enter typed into the Ctrl+K
+  // palette's filter over it must run the palette's row and never dispatch
+  // the name screen's typed value behind it.
+  it("the palette over the mounted name screen runs its row on Enter — the name screen dispatches nothing while it is not topmost", async () => {
+    const bridge = argsBridge();
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    await runRow("name");
+    expect(await screen.findByRole("dialog", { name: "Name this session" })).toBeInTheDocument();
+
+    // Ctrl+K reopens the palette over the mounted name screen; the user
+    // types a different command and presses Enter in the palette's filter.
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const palette = screen.getByRole("dialog", { name: "Commands" });
+    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "compact" } });
+    fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
+
+    // The palette ran its row; the mounted name screen dispatched nothing.
+    expect(bridge.runCommand).toHaveBeenCalledExactlyOnceWith("host-1", "compact");
+    expect(bridge.runCommand).not.toHaveBeenCalledWith("host-1", "name", expect.anything());
+    // And the run of another command clears the mounted screen (R3-003).
+    expect(screen.queryByRole("dialog", { name: "Name this session" })).not.toBeInTheDocument();
+  });
+
+  // The name screen's own window-level claim (its Escape/Tab capture,
+  // registered before the palette's) used to fire even while the palette was
+  // open over it: Escape typed into the palette's filter cancelled the hidden
+  // name screen and stranded the open palette. A surface may claim keys only
+  // while it is the topmost open one.
+  it("Escape in the palette over the mounted name screen closes only the palette — the name screen stays mounted", async () => {
+    const bridge = argsBridge();
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    await runRow("name");
+    expect(await screen.findByRole("dialog", { name: "Name this session" })).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const palette = screen.getByRole("dialog", { name: "Commands" });
+    fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Escape" });
+
+    expect(screen.queryByRole("dialog", { name: "Commands" })).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Name this session" })).toBeInTheDocument();
+    expect(bridge.runCommand).not.toHaveBeenCalled();
+
+    // And once the palette is gone the name screen is topmost again: it
+    // cancels from any element inside it.
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "Name this session" }), { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Name this session" })).not.toBeInTheDocument();
+    expect(bridge.runCommand).not.toHaveBeenCalled();
+  });
+
   it("a runnable row that declares args but has no screen dispatches nothing and says why (contract guard)", async () => {
     const bridge = argsBridge();
     window.gentle = bridge;

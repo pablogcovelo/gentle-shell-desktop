@@ -923,6 +923,8 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
           initialName={chatState.session?.sessionName}
           onCancel={() => setCommandScreen(undefined)}
           onConfirm={confirmScreen}
+          // Same topmost-surface rule as the model screen above.
+          active={!paletteOpen}
         />
       ) : null}
     </section>
