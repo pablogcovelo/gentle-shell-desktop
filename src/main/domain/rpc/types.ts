@@ -56,6 +56,18 @@ export type RpcCommand =
    * a desktop-rpc method, so it never rides the widget channel.
    */
   | { readonly type: "get_commands"; readonly id?: string }
+  /**
+   * pi's own available-option reads (palette-command-arguments T1, S2/S3):
+   * ordinary RPC commands correlated by `id`, exactly like
+   * `get_commands`/`get_state` — PiSession sends them on demand (never a
+   * /gentle:desktop prompt, never the widget channel) and answers the
+   * correlated `response` frame to its caller. Verified against the
+   * resolved pi build (rpc-mode.js): `get_available_models` answers
+   * `{ models }` (pi-ai's readonly Model[]) and
+   * `get_available_thinking_levels` answers `{ levels: string[] }`.
+   */
+  | { readonly type: "get_available_models"; readonly id?: string }
+  | { readonly type: "get_available_thinking_levels"; readonly id?: string }
   | RpcExtensionUIResponse;
 
 /**

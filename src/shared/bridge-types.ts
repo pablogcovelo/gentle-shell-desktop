@@ -246,6 +246,11 @@ export type ThinkingLevel = (typeof THINKING_LEVEL)[keyof typeof THINKING_LEVEL]
  */
 export interface SessionIdentityView {
   readonly modelId?: string;
+  /** The session's own name (palette-command-arguments T2, S4), decoded
+   * from `get_state`'s `sessionName` — the prefill for the `name` screen.
+   * Present ONLY when the child reported one: an absent field renders as
+   * nothing, and an empty wire value is never turned into a name. */
+  readonly sessionName?: string;
   readonly modelName?: string;
   readonly modelProvider?: string;
   readonly thinkingLevel?: ThinkingLevel;
@@ -540,6 +545,45 @@ export type ChatCommandRunResult =
   | { readonly kind: "refused"; readonly reason: "terminal_only" | "unknown_command" }
   | { readonly kind: "session_switching" }
   | { readonly kind: "transport"; readonly message: string };
+
+/**
+ * One model option the child's `get_available_models` snapshot reports
+ * (palette-command-arguments T1, S2), as the selector renders it.
+ * `provider` + `id` identify the model — the exact pair a confirmation
+ * sends — and `label` is its display name: the wire's own `name` field,
+ * or `provider/id` when the entry has none. Nothing else is invented:
+ * no default selection, no synthesized friendly name.
+ */
+export interface ModelOptionView {
+  readonly provider: string;
+  readonly id: string;
+  readonly label: string;
+}
+
+/**
+ * Answer of the available-models read (palette-command-arguments T1):
+ * `ok` carries the bounded snapshot (truncation flagged, never silently
+ * clipped); `unsupported` means the read cannot be made — no adopted
+ * control channel, or the child refused the command (an older child
+ * without it); `failed` means the read was made but produced no usable
+ * answer (unanswered past the bound, the chat was replaced, or a success
+ * frame with a malformed payload). Never a throw for an expectable case.
+ */
+export type AvailableModelsResult =
+  | { readonly kind: "ok"; readonly models: readonly ModelOptionView[]; readonly truncated: boolean }
+  | { readonly kind: "unsupported" }
+  | { readonly kind: "failed" };
+
+/**
+ * Answer of the available-thinking-levels read (palette-command-
+ * arguments T1): `ok` carries exactly the levels the child offered —
+ * anything outside the closed THINKING_LEVEL union was dropped, never
+ * coerced; `unsupported`/`failed` as in AvailableModelsResult.
+ */
+export type AvailableThinkingLevelsResult =
+  | { readonly kind: "ok"; readonly levels: readonly ThinkingLevel[] }
+  | { readonly kind: "unsupported" }
+  | { readonly kind: "failed" };
 
 /**
  * One task in the chat's own ODD task list, as gentle-shell's todo tool
@@ -935,6 +979,20 @@ export interface GentleBridge {
    * bridge.ts, the mock bridge); a bridge without it leaves runnable rows
    * reporting their transport failure instead of dispatching. */
   runCommand?(hostId: string, name: string, args?: string): Promise<ChatCommandRunResult>;
+  /** Asks the addressed host's child for its REAL available-model snapshot
+   * (palette-command-arguments T1, S2) through pi's own correlated
+   * `get_available_models` RPC command. Resolves an AvailableModelsResult
+   * — the bounded list, `unsupported` (no adopted channel, or the child
+   * refused the command), or `failed` — never a throw for an expectable
+   * case. Optional: both real bridges implement it; a bridge without it
+   * leaves the model screen falling back instead of dispatching. */
+  availableModels?(hostId: string): Promise<AvailableModelsResult>;
+  /** Asks the addressed host's child for the thinking levels it offers
+   * (palette-command-arguments T1, S3) through pi's own correlated
+   * `get_available_thinking_levels` RPC command. Resolves an
+   * AvailableThinkingLevelsResult — never a throw for an expectable case.
+   * Optional: both real bridges implement it. */
+  availableThinkingLevels?(hostId: string): Promise<AvailableThinkingLevelsResult>;
   /** Opens Electron's native directory picker in the main process (T11)
    * and answers the chosen absolute directory path, or null when the user
    * cancelled. A null answer MUST change nothing: no chat, no host, no

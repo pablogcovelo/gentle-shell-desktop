@@ -1,4 +1,4 @@
-import { THINKING_LEVEL, type SessionIdentityView, type ThinkingLevel } from "@shared/bridge-types";
+import { THINKING_LEVEL, type ModelOptionView, type SessionIdentityView, type ThinkingLevel } from "@shared/bridge-types";
 
 /**
  * Decoders for pi's own `--mode rpc` command replies (desktop-rpc T4;
@@ -66,7 +66,75 @@ export function parseSessionState(data: unknown): Partial<SessionIdentityView> |
   if (typeof data.sessionId !== "string" || data.sessionId.length === 0) return undefined;
   if (typeof data.thinkingLevel !== "string" || !THINKING_LEVELS.has(data.thinkingLevel)) return undefined;
 
-  return { thinkingLevel: data.thinkingLevel as ThinkingLevel, ...toModel(data.model) };
+  return { thinkingLevel: data.thinkingLevel as ThinkingLevel, ...toSessionName(data.sessionName), ...toModel(data.model) };
+}
+
+/**
+ * The session's own name (palette-command-arguments T2, S4): the wire's
+ * `sessionName` field on `get_state`'s data (verified in pi's rpc-mode.js
+ * `get_state` arm — the field is always constructed, so an unnamed session
+ * serializes as an ABSENT key). A non-empty string is the name; anything
+ * else — absent, empty, wrongly typed — is an explicit no-name statement,
+ * expressed as an explicit undefined so the caller's spread clears a
+ * previously folded name. An empty string is never turned into a name.
+ */
+const NO_SESSION_NAME: Partial<SessionIdentityView> = { sessionName: undefined };
+
+function toSessionName(value: unknown): Partial<SessionIdentityView> {
+  if (typeof value === "string" && value.length > 0) return { sessionName: value };
+  return NO_SESSION_NAME;
+}
+
+/**
+ * The bound for the child's available-model list (palette-command-
+ * arguments T1, S2). pi's real catalogs — built-ins plus every configured
+ * extension — number in the low hundreds; 500 leaves generous headroom
+ * while keeping one IPC round trip and the selector's render bounded. A
+ * longer list is TRUNCATED, never silently clipped: the answer carries
+ * `truncated: true` so the screen can say so.
+ */
+export const MAX_AVAILABLE_MODELS = 500;
+
+/**
+ * Parses the `data` of a `get_available_models` response (palette-
+ * command-arguments T1, S2) into the bounded selector options. Every entry
+ * is identified by `provider` and `id` (pi-ai's `Model`) and labelled by
+ * the SAME `name` field the get_state parser reads as `modelName` — with
+ * `provider/id` as the only fallback when it is absent or empty, never an
+ * invented name and never a default-selected model. Fail-closed: a non-
+ * record entry, or an entry without a non-empty string `id` and `provider`,
+ * contributes nothing (the same rule the command catalog parser owns), and
+ * a payload that is not the documented shape at all yields `undefined`.
+ */
+export function parseAvailableModels(data: unknown): { models: readonly ModelOptionView[]; truncated: boolean } | undefined {
+  if (!isRecord(data)) return undefined;
+  const raw = data.models;
+  if (!Array.isArray(raw)) return undefined;
+  const models: ModelOptionView[] = [];
+  for (const entry of raw.slice(0, MAX_AVAILABLE_MODELS)) {
+    if (!isRecord(entry)) continue;
+    const { id, provider, name } = entry;
+    if (typeof id !== "string" || id.length === 0) continue;
+    if (typeof provider !== "string" || provider.length === 0) continue;
+    models.push({ provider, id, label: typeof name === "string" && name.length > 0 ? name : `${provider}/${id}` });
+  }
+  return { models, truncated: raw.length > MAX_AVAILABLE_MODELS };
+}
+
+/**
+ * Parses the `data` of a `get_available_thinking_levels` response
+ * (palette-command-arguments T1) into the levels the child offers,
+ * fail-closed: a member outside the closed THINKING_LEVEL union, or a
+ * non-string member, is DROPPED instead of coerced — the same rule the
+ * command catalog's closed source allow-list uses. An empty array is a
+ * valid answer (the child offers nothing); a payload that is not the
+ * documented shape at all yields `undefined`.
+ */
+export function parseAvailableThinkingLevels(data: unknown): readonly ThinkingLevel[] | undefined {
+  if (!isRecord(data)) return undefined;
+  const raw = data.levels;
+  if (!Array.isArray(raw)) return undefined;
+  return raw.filter((level): level is ThinkingLevel => typeof level === "string" && THINKING_LEVELS.has(level));
 }
 
 function toTokens(value: unknown): { total: number } | undefined {

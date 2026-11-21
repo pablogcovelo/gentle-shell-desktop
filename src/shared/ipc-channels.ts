@@ -33,6 +33,17 @@ export const IPC_CHANNELS = {
    * answer here, never a rejection. */
   COMMAND_RUN: "chat.runCommand",
   ANSWER_DIALOG: "dialog.answer",
+  /** Asks the host addressed by the leading host id (palette-command-
+   * arguments T1, S2) for its REAL available-model snapshot through pi's
+   * own correlated `get_available_models` RPC command. Answers an
+   * AvailableModelsResult — unsupported/failed resolve, never reject. */
+  AVAILABLE_MODELS: "chat.availableModels",
+  /** Asks the host addressed by the leading host id (palette-command-
+   * arguments T1, S3) for the thinking levels the child offers, through
+   * pi's own correlated `get_available_thinking_levels` RPC command.
+   * Answers an AvailableThinkingLevelsResult — unsupported/failed
+   * resolve, never reject. */
+  AVAILABLE_THINKING_LEVELS: "chat.availableThinkingLevels",
   /** Asks the host addressed by the leading host id (T5b) to stop one
    * helper (desktop-rpc T6): resolve with a StopHelperOutcome; the real
    * transition arrives via the state push. */
