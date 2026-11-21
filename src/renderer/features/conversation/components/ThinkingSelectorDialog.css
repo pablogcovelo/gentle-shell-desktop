@@ -1,0 +1,7 @@
+/* /thinking argument screen (palette-command-arguments T7, S9): nothing is
+ * screen-specific any more. The list, row, hover/selected/accent rules,
+ * the applied-value pill and the row metrics are shared dialog chrome in
+ * AppDialogs.css (gc-dialog__list, gc-dialog__row, gc-dialog__current),
+ * and the shell width is the shared gc-dialog default like every other
+ * dialog. This file stays only so the component's import of its screen
+ * stylesheet keeps resolving. */

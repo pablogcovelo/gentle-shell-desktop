@@ -1,0 +1,39 @@
+/* /name argument screen (palette-command-arguments T3): the gc-dialog shell
+ * from AppDialogs.css plus the text field's styling. */
+
+.gc-session-name {
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+}
+
+.gc-session-name__field {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+}
+
+.gc-session-name__field input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: 14px var(--font-mono);
+}
+
+.gc-session-name__field input:focus {
+  outline-offset: -2px;
+}
+
+.gc-session-name__confirm {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.gc-session-name__confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

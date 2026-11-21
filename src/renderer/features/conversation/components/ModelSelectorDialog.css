@@ -1,0 +1,58 @@
+/* /model argument screen (palette-command-arguments T7, S9): the list, row,
+ * applied-value pill and shared row metrics are dialog chrome in
+ * AppDialogs.css now (gc-dialog__list, gc-dialog__row, gc-dialog__current)
+ * — one copy for the model and thinking screens instead of two. The shell
+ * width is the shared gc-dialog default too, like every other dialog.
+ * This file keeps only what is specific to the model screen: the filter
+ * field's box (border, radius, padding), its flex layout and margin, its
+ * inset focus ring, the no-match text, the truncated notice and the
+ * degraded confirm action. */
+
+.gc-model-selector__input {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 10px 12px;
+  flex: none;
+  margin-bottom: 8px;
+}
+
+.gc-model-selector__input input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: 14px var(--font-mono);
+}
+
+.gc-model-selector__input input:focus {
+  outline-offset: -2px;
+}
+
+.gc-model-selector__input input::placeholder {
+  color: var(--muted);
+}
+
+.gc-model-selector__empty {
+  margin: 0;
+  padding: 24px 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.gc-model-selector__truncated {
+  color: var(--muted);
+}
+
+.gc-model-selector__confirm {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.gc-model-selector__confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

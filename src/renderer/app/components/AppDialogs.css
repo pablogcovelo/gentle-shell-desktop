@@ -106,6 +106,7 @@
 .gc-dialog__actions {
   display: flex;
   justify-content: flex-end;
+  gap: 10px;
   margin-top: 18px;
 }
 
@@ -129,4 +130,94 @@
 .gc-dialog__dismiss:focus-visible {
   outline: 2px solid var(--accent-active);
   outline-offset: 2px;
+}
+
+/* Shared selector list contract (palette-command-arguments T7, S9): ONE
+ * list and ONE row for the model and thinking screens, replacing the two
+ * duplicated copies in their screen stylesheets. The list element itself
+ * is the scrolling one (max-height + overflow-y), so the header, intro
+ * and footer never scroll away — the shell keeps its own max-height only
+ * as a safety net for tall non-list content. */
+.gc-dialog__list {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  min-height: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.gc-dialog__row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 40px;
+  padding: 10px 14px 10px 18px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font: 600 13px var(--font-mono);
+  cursor: pointer;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.gc-dialog__row:hover {
+  background: var(--line);
+}
+
+.gc-dialog__row.is-selected {
+  background: var(--raised);
+  border-color: var(--line-strong);
+}
+
+.gc-dialog__row.is-selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.gc-dialog__row.is-selected {
+  color: var(--accent);
+}
+
+/* The highlight IS the focus indicator (T11): a focused row draws no
+ * second rim on top of its selected treatment — the selected border,
+ * accent text and accent bar already say where the keyboard is, so the
+ * one treatment is never doubled. Model rows never receive focus, so
+ * only the thinking screen's focusable rows hit this rule. */
+.gc-dialog__row:focus-visible {
+  outline: none;
+}
+
+/* The row's own text: shrinkable inside the flex row so a long label
+ * wraps (with the row's overflow-wrap) instead of pushing the pill out. */
+.gc-dialog__row-label {
+  min-width: 0;
+}
+
+/* The APPLIED value's pill ("current"): driven by the dialog's current
+ * value, never by the highlighted row — both selectors share it. */
+.gc-dialog__current {
+  flex: none;
+  padding: 3px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font: 9px var(--font-mono);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: nowrap;
 }
