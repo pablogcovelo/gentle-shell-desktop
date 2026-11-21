@@ -1,6 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CHAT_STATE, ODD_PHASE, type ChatState } from "@shared/bridge-types";
-import { DEMO_WORKSPACE_DIRECTORY, mockBridge, resetMockBridge, setMockChats, setMockDirectoryPick } from "./mockBridge";
+import {
+  DEMO_WORKSPACE_DIRECTORY,
+  mockBridge,
+  resetMockBridge,
+  setMockAvailableModels,
+  setMockAvailableThinkingLevels,
+  setMockChats,
+  setMockDirectoryPick,
+} from "./mockBridge";
 
 function collectStates(): { states: ChatState[]; errors: string[] } {
   const states: ChatState[] = [];
@@ -487,4 +495,68 @@ it("seeds the demo state with a published ODD phase so the header indicator is e
   expect(state.oddPhase).toBeDefined();
   expect(Object.values(ODD_PHASE)).toContain(state.oddPhase);
 });
+});
+
+// ---------------------------------------------------------------------------
+// The available reads (palette-command-arguments T1): the renderer stand-in
+// answers both reads like a child would — the demo model list and the
+// closed thinking-level union — with test overrides for custom lists and
+// for a child that cannot answer.
+// ---------------------------------------------------------------------------
+
+describe("mockBridge available reads (palette-command-arguments T1)", () => {
+  it("availableModels answers the demo model list for the live host, and refuses an unknown host id", async () => {
+    const { errors } = collectStates();
+    const hostId = (await mockBridge.newChat()).hostId;
+
+    const answer = await mockBridge.availableModels!(hostId);
+    expect(answer.kind).toBe("ok");
+    expect(answer.kind === "ok" && answer.truncated).toBe(false);
+    expect(answer.kind === "ok" && answer.models).toEqual([
+      { provider: "anthropic", id: "claude-sonnet-4-20250514", label: "Claude Sonnet 4" },
+      { provider: "openai", id: "gpt-5", label: "GPT-5" },
+      { provider: "google", id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+    ]);
+
+    await expect(mockBridge.availableModels!("mock-host-999")).rejects.toThrow(/No live workspace host/);
+    expect(errors).toEqual([]);
+  });
+
+  it("setMockAvailableModels overrides the answer; null simulates a child that cannot answer (unsupported)", async () => {
+    const hostId = (await mockBridge.newChat()).hostId;
+
+    setMockAvailableModels([{ provider: "fixture", id: "only-model", label: "Fixture Model" }]);
+    expect(await mockBridge.availableModels!(hostId)).toEqual({
+      kind: "ok",
+      truncated: false,
+      models: [{ provider: "fixture", id: "only-model", label: "Fixture Model" }],
+    });
+
+    setMockAvailableModels(null);
+    expect(await mockBridge.availableModels!(hostId)).toEqual({ kind: "unsupported" });
+
+    // resetMockBridge restores the demo list.
+    resetMockBridge();
+    const freshHostId = (await mockBridge.newChat()).hostId;
+    const demo = await mockBridge.availableModels!(freshHostId);
+    expect(demo.kind).toBe("ok");
+    expect(demo.kind === "ok" && demo.models.length).toBeGreaterThan(1);
+  });
+
+  it("availableThinkingLevels answers the closed union for the live host, with a test override and an unsupported simulation", async () => {
+    const hostId = (await mockBridge.newChat()).hostId;
+
+    expect(await mockBridge.availableThinkingLevels!(hostId)).toEqual({
+      kind: "ok",
+      levels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+    });
+
+    setMockAvailableThinkingLevels(["medium"]);
+    expect(await mockBridge.availableThinkingLevels!(hostId)).toEqual({ kind: "ok", levels: ["medium"] });
+
+    setMockAvailableThinkingLevels(null);
+    expect(await mockBridge.availableThinkingLevels!(hostId)).toEqual({ kind: "unsupported" });
+
+    await expect(mockBridge.availableThinkingLevels!("mock-host-999")).rejects.toThrow(/No live workspace host/);
+  });
 });

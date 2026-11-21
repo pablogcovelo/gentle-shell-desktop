@@ -1,5 +1,7 @@
 import type {
   AppInfo,
+  AvailableModelsResult,
+  AvailableThinkingLevelsResult,
   ChatCommandRunResult,
   ChatState,
   ChatSummary,
@@ -54,6 +56,12 @@ export function createBridge(ipc: RendererIpc): GentleBridge {
       args === undefined
         ? (ipc.invoke(IPC_CHANNELS.COMMAND_RUN, hostId, name) as Promise<ChatCommandRunResult>)
         : (ipc.invoke(IPC_CHANNELS.COMMAND_RUN, hostId, name, args) as Promise<ChatCommandRunResult>),
+    // palette-command-arguments T1 (S2/S3): the available reads — the
+    // answers are AvailableModelsResult/AvailableThinkingLevelsResult, a
+    // refusal is a resolved answer, never a rejection.
+    availableModels: (hostId: string) => ipc.invoke(IPC_CHANNELS.AVAILABLE_MODELS, hostId) as Promise<AvailableModelsResult>,
+    availableThinkingLevels: (hostId: string) =>
+      ipc.invoke(IPC_CHANNELS.AVAILABLE_THINKING_LEVELS, hostId) as Promise<AvailableThinkingLevelsResult>,
     // T5c: asks the addressed host for its current state (no child
     // round-trip, no restart); the answer is the ChatState the renderer
     // reconciles its focus-painted snapshot against.

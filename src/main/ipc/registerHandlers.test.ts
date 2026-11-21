@@ -887,6 +887,43 @@ describe("registerHandlers", () => {
     expect(host.runCommand).toHaveBeenCalledWith("resume", "/tmp/sess-1.jsonl");
   });
 
+  // palette-command-arguments T1 — the available reads register as the
+  // same host-addressed request style as the channels above: the host id
+  // first, the classification (ok / unsupported / failed) resolving, never
+  // rejecting, and only the addressed host is touched.
+  it("registers chat.availableModels and chat.availableThinkingLevels, routing (host id) to that host's reads (palette-command-arguments T1)", async () => {
+    const ipc = fakeIpcMain();
+    const host = fakeHost({
+      availableModels: vi.fn().mockResolvedValue({ kind: "ok", models: [], truncated: false }),
+      availableThinkingLevels: vi.fn().mockResolvedValue({ kind: "ok", levels: ["off"] }),
+    });
+
+    registerHandlers(new WorkspaceHostRouter(fakeHostSource(host)), fakeSetup(), fakeWebContents().webContents, ipc);
+
+    const modelsHandler = registeredHandler(ipc, IPC_CHANNELS.AVAILABLE_MODELS);
+    await expect(modelsHandler({} as never, "host-1")).resolves.toEqual({ kind: "ok", models: [], truncated: false });
+    expect(host.availableModels).toHaveBeenCalledWith();
+
+    const levelsHandler = registeredHandler(ipc, IPC_CHANNELS.AVAILABLE_THINKING_LEVELS);
+    await expect(levelsHandler({} as never, "host-1")).resolves.toEqual({ kind: "ok", levels: ["off"] });
+    expect(host.availableThinkingLevels).toHaveBeenCalledWith();
+  });
+
+  it("the available-read channels reject an unknown host id, and no child's stdin receives anything", async () => {
+    const ipc = fakeIpcMain();
+    const host = fakeHost({
+      availableModels: vi.fn().mockResolvedValue({ kind: "ok", models: [], truncated: false }),
+      availableThinkingLevels: vi.fn().mockResolvedValue({ kind: "ok", levels: [] }),
+    });
+
+    registerHandlers(new WorkspaceHostRouter(fakeHostSource(host)), fakeSetup(), fakeWebContents().webContents, ipc);
+
+    await expect(registeredHandler(ipc, IPC_CHANNELS.AVAILABLE_MODELS)({} as never, "host-unknown")).rejects.toThrow(/No live workspace host/);
+    await expect(registeredHandler(ipc, IPC_CHANNELS.AVAILABLE_THINKING_LEVELS)({} as never, "host-unknown")).rejects.toThrow(/No live workspace host/);
+    expect(host.availableModels).not.toHaveBeenCalled();
+    expect(host.availableThinkingLevels).not.toHaveBeenCalled();
+  });
+
   // registerRequestHandler is a thin pass-through (ipc.handle(channel,
   // listener) with no try/catch of its own) so a rejected SetupService
   // call reaches the renderer as a rejected invoke() unchanged — this is

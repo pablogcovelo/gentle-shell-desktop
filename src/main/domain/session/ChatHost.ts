@@ -1,4 +1,13 @@
-import type { ChatCommandRunResult, ChatState, ChatSummary, DialogAnswer, PromptResult, StopHelperOutcome } from "@shared/bridge-types";
+import type {
+  AvailableModelsResult,
+  AvailableThinkingLevelsResult,
+  ChatCommandRunResult,
+  ChatState,
+  ChatSummary,
+  DialogAnswer,
+  PromptResult,
+  StopHelperOutcome,
+} from "@shared/bridge-types";
 import { boundedStop } from "../lifecycle/boundedStop";
 import type { RpcEvent } from "../rpc/types";
 import type { HomeSettings, LauncherLocator, ProcessSpawner, SessionStore } from "../../ports";
@@ -206,6 +215,22 @@ export class ChatHost {
 
   async answerDialog(id: string, answer: DialogAnswer): Promise<void> {
     this.requireCurrent().answerDialog(id, answer);
+  }
+
+  /** Reads the current session's REAL available-model snapshot through
+   * pi's own correlated `get_available_models` (palette-command-
+   * arguments T1, S2) — the same named passthrough shape as runCommand:
+   * the gating, correlation and answer classification (ok / unsupported /
+   * failed) are PiSession's. */
+  async availableModels(): Promise<AvailableModelsResult> {
+    return this.requireCurrent().availableModels();
+  }
+
+  /** Reads the current session's available thinking levels through pi's
+   * own correlated `get_available_thinking_levels` (palette-command-
+   * arguments T1, S3) — the same passthrough as availableModels. */
+  async availableThinkingLevels(): Promise<AvailableThinkingLevelsResult> {
+    return this.requireCurrent().availableThinkingLevels();
   }
 
   /** Stops the current session, if any. Called on app quit. Joins

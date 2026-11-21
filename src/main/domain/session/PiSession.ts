@@ -1,4 +1,9 @@
-import { MESSAGE_ROLE, type ChatMessage } from "@shared/bridge-types";
+import {
+  MESSAGE_ROLE,
+  type AvailableModelsResult,
+  type AvailableThinkingLevelsResult,
+  type ChatMessage,
+} from "@shared/bridge-types";
 import {
   STOP_HELPER_OUTCOME,
   type ChatCommand,
@@ -16,8 +21,8 @@ import { INITIAL_CHAT_STATE, reduceChat } from "../rpc/chatReducer";
 import { decodeLine, encodeCommand } from "../rpc/codec";
 import { applyAgentState, mergeAgentEntry, parseAgentEntry, parseAgentList } from "../rpc/agents";
 import { CATALOG_SOURCES, parseCommandCatalog } from "../rpc/commandCatalog";
-import { DESKTOP_RPC_WIDGET_KEY, DesktopRpcClient, parseDesktopRpcWidget } from "../rpc/desktopRpc";
-import { parseSessionState, parseSessionStats } from "../rpc/sessionStats";
+import { DESKTOP_RPC_DEFAULT_TIMEOUT_MS, DESKTOP_RPC_WIDGET_KEY, DesktopRpcClient, parseDesktopRpcWidget } from "../rpc/desktopRpc";
+import { parseAvailableModels, parseAvailableThinkingLevels, parseSessionState, parseSessionStats } from "../rpc/sessionStats";
 import { parseToolVocabulary } from "../rpc/toolVocabulary";
 import {
   parseActiveProfile,
@@ -81,6 +86,33 @@ class TypedEmitter<Events> {
 }
 
 const STOP_GRACE_PERIOD_MS = 3000;
+
+/**
+ * The bound for one on-demand correlated read's wait (palette-command-
+ * arguments T1): the SAME bound the desktop-rpc control channel applies
+ * to its own requests, so every child round trip a caller can await
+ * settles by the same deadline instead of an ad-hoc per-call guess. An
+ * unanswered read past it resolves `failed` — it never throws and never
+ * hangs.
+ */
+const CHILD_QUERY_TIMEOUT_MS = DESKTOP_RPC_DEFAULT_TIMEOUT_MS;
+
+/** How `PiSession.availableModels`/`availableThinkingLevels` classify
+ * their outcome once the correlated reply (or the wait's deadline) has
+ * settled. */
+type ChildQueryOutcome =
+  | { readonly kind: "unsupported" }
+  | { readonly kind: "lost" }
+  | { readonly kind: "answered"; readonly response: RpcResponse };
+
+/** One on-demand correlated read awaiting its `response` frame. Keyed by
+ * the request's correlation id; settled exactly once — by the matching
+ * frame, by the wait's deadline, or by stop()/exit (a session nobody is
+ * using can never answer). */
+interface ChildQueryWaiter {
+  readonly command: string;
+  settle: (response: RpcResponse | undefined) => void;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -190,6 +222,20 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
    * client — the same binding rule the usage/worktree reads apply, so a
    * late answer for a replaced read never overwrites the current catalog. */
   private catalogRequestEpoch = 0;
+  /** Counts the available-models reads (palette-command-arguments T1).
+   * On-demand (the palette's own screens ask for them, the way
+   * runCommand/stopHelper are asked) rather than probe-triggered: S6 pins
+   * the startup and the rest of the palette unchanged, and an older child
+   * that cannot answer leaves the app exactly as it is today. */
+  private modelsRequestCounter = 0;
+  /** Counts the available-thinking-levels reads (palette-command-
+   * arguments T1). Separate from the models counter so a late models
+   * reply can never settle a levels read. */
+  private levelsRequestCounter = 0;
+  /** The on-demand correlated reads awaiting their `response` frames,
+   * keyed by correlation id (palette-command-arguments T1). See
+   * ChildQueryWaiter. */
+  private readonly childQueryWaiters = new Map<string, ChildQueryWaiter>();
 
   constructor(options: PiSessionOptions) {
     super();
@@ -900,7 +946,16 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
       const detail = reply.error.kind === "server_error" ? reply.error.message : reply.error.detail;
       return { kind: "transport", message: detail ?? `The host did not answer run_command (${reply.error.kind}).` };
     }
-    if (isRecord(reply.data) && reply.data.executed === true) return { kind: "executed" };
+    if (isRecord(reply.data) && reply.data.executed === true) {
+      // palette-command-arguments T5: the names the argument screens dispatch
+      // change what the identity reads report — the effective model, the
+      // thinking level, the session name. The child applies the change and
+      // publishes it on its own schedule, so without this read the footer kept
+      // the OLD model and level until the next settled turn happened to re-read
+      // them (the owner saw it update only after a first interaction).
+      if (name === "model" || name === "thinking" || name === "name") this.requestIdentity();
+      return { kind: "executed" };
+    }
     if (
       isRecord(reply.data) &&
       reply.data.executed === false &&
@@ -909,6 +964,89 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
       return { kind: "refused", reason: reply.data.reason };
     }
     return { kind: "transport", message: "The host answered run_command with an unusable payload." };
+  }
+
+  /** Asks the child for its REAL available-model snapshot (palette-
+   * command-arguments T1, S2) through pi's own correlated
+   * `get_available_models` RPC command — an ordinary command by id, never
+   * a /gentle:desktop prompt, gated on the adopted control channel like
+   * every other write. Resolves an AvailableModelsResult — the bounded
+   * answer, `unsupported` (no adopted channel, or the child refused the
+   * command), or `failed` (unanswered past the bound, the chat was
+   * replaced, or a malformed success payload) — instead of throwing. The
+   * list is bounded at MAX_AVAILABLE_MODELS with truncation flagged, and
+   * a model with no usable display name renders as `provider/id`. */
+  async availableModels(): Promise<AvailableModelsResult> {
+    const outcome = await this.childQuery("get_available_models", `models-${this.modelsRequestCounter++}`);
+    if (outcome.kind !== "answered") return outcome.kind === "lost" ? { kind: "failed" } : { kind: "unsupported" };
+    if (!outcome.response.success) return { kind: "unsupported" };
+    const parsed = parseAvailableModels(outcome.response.data);
+    if (!parsed) return { kind: "failed" };
+    return { kind: "ok", models: parsed.models, truncated: parsed.truncated };
+  }
+
+  /** Asks the child for its available thinking levels (palette-command-
+   * arguments T1, S3) through pi's own correlated
+   * `get_available_thinking_levels` RPC command — the same gating and
+   * correlation as availableModels, with its own counter so a late models
+   * reply can never settle a levels read. Levels outside the closed
+   * THINKING_LEVEL union are DROPPED, never coerced (the fail-closed rule
+   * the command catalog applies). */
+  async availableThinkingLevels(): Promise<AvailableThinkingLevelsResult> {
+    const outcome = await this.childQuery("get_available_thinking_levels", `levels-${this.levelsRequestCounter++}`);
+    if (outcome.kind !== "answered") return outcome.kind === "lost" ? { kind: "failed" } : { kind: "unsupported" };
+    if (!outcome.response.success) return { kind: "unsupported" };
+    const levels = parseAvailableThinkingLevels(outcome.response.data);
+    if (!levels) return { kind: "failed" };
+    return { kind: "ok", levels };
+  }
+
+  /** The one on-demand correlated read (palette-command-arguments T1):
+   * gated on the adopted channel and a live child (the same discipline
+   * the neighbouring readers apply — before the probe is ok NOTHING is
+   * written), sent with the caller's fresh correlation id, and awaited
+   * until its matching `response` frame, the deadline, or the session's
+   * end settles it. Never throws. */
+  private childQuery(command: "get_available_models" | "get_available_thinking_levels", id: string): Promise<ChildQueryOutcome> {
+    if (!this.process || this.stopping || this.probeState !== "ok") {
+      return Promise.resolve({ kind: "unsupported" });
+    }
+    return new Promise<ChildQueryOutcome>((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let settled = false;
+      const finish = (response: RpcResponse | undefined): void => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        this.childQueryWaiters.delete(id);
+        resolve(response === undefined ? { kind: "lost" } : { kind: "answered", response });
+      };
+      timer = setTimeout(() => finish(undefined), CHILD_QUERY_TIMEOUT_MS);
+      this.childQueryWaiters.set(id, { command, settle: finish });
+      this.send({ type: command, id });
+    });
+  }
+
+  /** Settles the on-demand read whose correlated `response` frame this is
+   * (palette-command-arguments T1): a frame whose id no pending waiter
+   * holds — a stale, duplicate or unrelated reply — changes nothing, and
+   * a frame that arrives after the child exited belongs to a session
+   * nobody is using (the same live-child guard the other folds apply).
+   * Never folds state: these reads answer their caller, not the reducer. */
+  private settleChildQueries(response: RpcResponse): void {
+    if (!this.process) return;
+    const waiter = this.childQueryWaiters.get(response.id ?? "");
+    if (!waiter || waiter.command !== response.command) return;
+    waiter.settle(response);
+  }
+
+  /** Settles every pending on-demand child read as unanswered: the child
+   * that would answer is gone (stop or exit), so a session nobody is
+   * using can never satisfy a caller still awaiting its answer. */
+  private settleLostChildQueries(): void {
+    const waiters = [...this.childQueryWaiters.values()];
+    this.childQueryWaiters.clear();
+    for (const waiter of waiters) waiter.settle(undefined);
   }
 
   getState(): ChatState {
@@ -933,6 +1071,7 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
     const proc = this.process;
     this.rpcClient?.dispose();
     this.rpcClient = undefined;
+    this.settleLostChildQueries();
     if (!proc) return;
 
     this.stopping = true;
@@ -1070,6 +1209,10 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
         this.state = this.applyHistoryResponse(this.state, decoded);
         this.state = this.applyIdentityResponse(this.state, decoded);
         this.state = this.applyCommandsResponse(this.state, decoded);
+        // The on-demand correlated reads (palette-command-arguments T1)
+        // settle from the same frame — they answer their caller instead of
+        // folding state.
+        this.settleChildQueries(decoded);
         // Correction R3-001: the reopened chat's capabilities probe is
         // issued HERE, after the history response has landed, so the
         // child's writes are [get_messages, probe] and its last write is
@@ -1091,6 +1234,14 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
    * `pendingHistoryRequestId` (stale or unrelated), is ignored outright.
    * Never throws: a failed response surfaces as `lastError` instead of an
    * empty thread with no explanation.
+   *
+   * This is the INITIAL load's fold (start()'s first read of a reopened
+   * session), and it keeps every live-rows guard: a live prompt's message,
+   * todo panel or tool row is never clobbered by the answer that fills the
+   * empty slots around it. `new`/`resume` do not run through here at all —
+   * the desktop routes them through its own chat-open/new-chat session
+   * paths (the session-replacement reflection was withdrawn; see
+   * odd/tasks/session-replacement-reflection.md).
    */
   private applyHistoryResponse(state: ChatState, response: RpcResponse): ChatState {
     if (response.command !== "get_messages" || response.id !== this.pendingHistoryRequestId) return state;
@@ -1099,6 +1250,7 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
     if (!response.success) {
       return { ...state, lastError: "Could not load this chat's history" };
     }
+
     const history = extractHistoryMessages(response.data);
     // The ODD task panel state is recovered from the same history (S4):
     // gentle-todo persisted its snapshot in the session file, so a reopened
@@ -1107,20 +1259,28 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
     // the newer snapshot, so it wins and the older snapshot in the response
     // only fills the panel when nothing live has arrived yet — mirroring the
     // live-messages rule below, which history must never clobber either.
-    const todo = state.todo ?? extractTodoPanel(history);
+    const answerTodo = extractTodoPanel(history);
+    const todo = state.todo ?? answerTodo;
     // Tool-call detail recovery (desktop-pending-work T7, S7): a reopened
     // chat's rows are rebuilt from the same history, so args/result/error
     // survive a reload. Recovery happens ONLY while the state has no live
-    // rows yet (`toolCalls` absent or empty): a live row that arrived while
-    // the history answer was in flight always wins — no recovered row is
-    // ever written over one, and a recovered id a live row already owns is
-    // never resurrected (the reducer, not this code, folds later live
-    // events: a duplicate start is skipped and an end replaces by id).
-    // An empty recovery leaves `toolCalls` absent, exactly as it was.
-    const recoveredToolCalls = state.toolCalls && state.toolCalls.length > 0 ? undefined : historyToToolCalls(history);
-    const toolCalls = recoveredToolCalls && recoveredToolCalls.length > 0 ? recoveredToolCalls : undefined;
+    // rows yet (`toolCalls` absent or empty, S5): a live row that arrived
+    // while the history answer was in flight always wins — no recovered row
+    // is ever written over one (the reducer, not this code, folds later
+    // live events: a duplicate start is skipped and an end replaces by id).
+    // An empty recovery leaves `toolCalls` absent on the initial load,
+    // exactly as it was.
+    const recoveredToolCalls = historyToToolCalls(history);
+    let toolCalls: typeof recoveredToolCalls | undefined;
+    if (state.toolCalls && state.toolCalls.length > 0) {
+      toolCalls = undefined; // live rows already present: nothing is recovered over them
+    } else if (recoveredToolCalls.length > 0) {
+      toolCalls = recoveredToolCalls;
+    } else {
+      toolCalls = undefined;
+    }
     // Never clobber messages a live prompt already appended while the
-    // history request was still in flight.
+    // history request was still in flight — the live-rows guard (S5).
     if (state.messages.length > 0) return toolCalls ? { ...state, todo, toolCalls } : { ...state, todo };
 
     return toolCalls
@@ -1155,6 +1315,7 @@ export class PiSession extends TypedEmitter<PiSessionEventMap> {
     this.rpcClient?.dispose();
     this.rpcClient = undefined;
     this.process = undefined;
+    this.settleLostChildQueries();
     if (this.stopping) return;
 
     this.state = { ...this.state, working: false, pendingDialogs: [] };

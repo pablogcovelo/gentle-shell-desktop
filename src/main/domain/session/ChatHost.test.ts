@@ -682,3 +682,89 @@ it("runCommand routes through the current session's run_command path (palette-ho
     vi.useRealTimers();
   }
 });
+
+// palette-command-arguments T1 — the available reads ride the SAME host
+// passthrough shape as runCommand/stopHelper: ChatHost never interprets
+// them, the answer classification (ok / unsupported / failed) is
+// PiSession's, and an unknown id is the requireCurrent() refusal.
+it("availableModels/availableThinkingLevels route through the current session's correlated reads (palette-command-arguments T1)", async () => {
+  const { spawner, handles } = createFakeSpawner();
+  const store = fakeSessionStore([session({ id: "sess-1", path: "/home/sessions/proj/sess-1.jsonl" })]);
+  const host = new ChatHost({ spawner, locator: fakeLocator, sessionStore: store, env: {} });
+
+  // No chat open yet: the refusal is the bridge's own error, like every
+  // other requireCurrent() call.
+  await expect(host.availableModels()).rejects.toThrow(/no chat is open/i);
+  await expect(host.availableThinkingLevels()).rejects.toThrow(/no chat is open/i);
+
+  const openPromise = host.openChat("sess-1");
+  await respondToHistoryRequest(handles, 0);
+  await openPromise;
+
+  const handle = handles[0];
+  if (!handle) throw new Error("no spawned handle");
+  const probeWrite = handle.writes.find((write) => write.includes("capabilities"));
+  if (!probeWrite) throw new Error("expected a capabilities probe write");
+  const probeRequest = JSON.parse((JSON.parse(probeWrite) as { message: string }).message.slice("/gentle:desktop ".length)) as { requestId: string };
+  handle.emitStdout(
+    JSON.stringify({
+      type: "extension_ui_request",
+      id: "ui-capabilities",
+      method: "setWidget",
+      widgetKey: "gentle-desktop-rpc",
+      widgetLines: [
+        JSON.stringify({
+          schema: "gentle-shell.desktop-rpc/v1",
+          kind: "response",
+          requestId: probeRequest.requestId,
+          ok: true,
+          data: {
+            schema: "gentle-shell.desktop-rpc/v1",
+            command: "gentle:desktop",
+            widget: "gentle-desktop-rpc",
+            methods: ["capabilities"],
+            events: [],
+          },
+        }),
+      ],
+    }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const modelsPending = host.availableModels();
+  await vi.waitFor(() => expect(handle.writes.some((write) => write.includes("get_available_models"))).toBe(true));
+  const modelsWrite = handle.writes.find((write) => write.includes("get_available_models"));
+  if (!modelsWrite) throw new Error("expected a get_available_models write");
+  const modelsRequest = JSON.parse(modelsWrite) as { type: string; id?: string };
+  expect(modelsRequest.type).toBe("get_available_models");
+  handle.emitStdout(
+    JSON.stringify({
+      type: "response",
+      id: modelsRequest.id,
+      command: "get_available_models",
+      success: true,
+      data: { models: [{ id: "fixture-model", name: "Fixture Model", provider: "fixture" }] },
+    }),
+  );
+  await expect(modelsPending).resolves.toEqual({
+    kind: "ok",
+    truncated: false,
+    models: [{ provider: "fixture", id: "fixture-model", label: "Fixture Model" }],
+  });
+
+  const levelsPending = host.availableThinkingLevels();
+  await vi.waitFor(() => expect(handle.writes.some((write) => write.includes("get_available_thinking_levels"))).toBe(true));
+  const levelsWrite = handle.writes.find((write) => write.includes("get_available_thinking_levels"));
+  if (!levelsWrite) throw new Error("expected a get_available_thinking_levels write");
+  const levelsRequest = JSON.parse(levelsWrite) as { type: string; id?: string };
+  handle.emitStdout(
+    JSON.stringify({
+      type: "response",
+      id: levelsRequest.id,
+      command: "get_available_thinking_levels",
+      success: true,
+      data: { levels: ["off", "medium"] },
+    }),
+  );
+  await expect(levelsPending).resolves.toEqual({ kind: "ok", levels: ["off", "medium"] });
+});

@@ -3,6 +3,8 @@ import { isAbsolute } from "node:path";
 import type { IpcMain, WebContents } from "electron";
 import type {
   AppInfo,
+  AvailableModelsResult,
+  AvailableThinkingLevelsResult,
   ChatCommandRunResult,
   ChatState,
   ChatSummary,
@@ -503,6 +505,19 @@ export class WorkspaceHostRouter {
     return this.requireHost(hostId).stopHelper(helperId);
   }
 
+  /** Reads the addressed host's REAL available-model snapshot (palette-
+   * command-arguments T1, S2) — the same host-addressed shape as
+   * stopHelper/runCommand; the classification is PiSession's. */
+  async availableModels(hostId: string): Promise<AvailableModelsResult> {
+    return this.requireHost(hostId).availableModels();
+  }
+
+  /** Reads the addressed host's available thinking levels (palette-
+   * command-arguments T1, S3) — the same host-addressed shape. */
+  async availableThinkingLevels(hostId: string): Promise<AvailableThinkingLevelsResult> {
+    return this.requireHost(hostId).availableThinkingLevels();
+  }
+
   /** Runs one catalog command on the addressed host (palette-host-catalog
    * T3, S4): the answer is a ChatCommandRunResult — a refusal is a SUCCESS
    * answer, never a rejection — and only the addressed host is touched. */
@@ -675,6 +690,11 @@ export function registerHandlers(
   registerRequestHandler(ipc, IPC_CHANNELS.ANSWER_DIALOG, (_event, hostId: string, dialogId: string, answer: DialogAnswer) =>
     router.answerDialog(hostId, dialogId, answer),
   );
+  // palette-command-arguments T1: the available reads — the same
+  // host-addressed surface style as the channels above, the host id first;
+  // unsupported/failed resolve, never reject.
+  registerRequestHandler(ipc, IPC_CHANNELS.AVAILABLE_MODELS, (_event, hostId: string) => router.availableModels(hostId));
+  registerRequestHandler(ipc, IPC_CHANNELS.AVAILABLE_THINKING_LEVELS, (_event, hostId: string) => router.availableThinkingLevels(hostId));
   registerRequestHandler(ipc, IPC_CHANNELS.STOP_HELPER, (_event, hostId: string, helperId: string) => router.stopHelper(hostId, helperId));
   // palette-host-catalog T3 (S4): the ONE execution channel for runnable
   // catalog rows. Same chat.* surface style as the channels above — the

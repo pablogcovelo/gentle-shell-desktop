@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createNodeProcessSpawner } from "../../adapters/nodeProcessSpawner";
 import { createLauncherLocator } from "../../adapters/launcherLocator";
 import { DESKTOP_RPC_DEFAULT_TIMEOUT_MS } from "../rpc/desktopRpc";
+import { MAX_AVAILABLE_MODELS } from "../rpc/sessionStats";
 import { PiSession } from "./PiSession";
 import type { ChatState } from "../rpc/chatReducer";
 import type { LauncherLocator, ProcessSpawner, SpawnedProcess } from "../../ports";
@@ -2400,6 +2401,57 @@ describe("session identity (desktop-rpc T4)", () => {
     handle.resolveExited({ code: 0, signal: null });
   });
 
+  // palette-command-arguments T2 (S4): the wire carries the session's own
+  // name in get_state's `sessionName` — the prefill for the `name` screen.
+  it("folds the child's own session name into state.session", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    const bootstrapId = commandId(handle.writes[0] ?? "");
+    handle.emitStdout(stateReply(bootstrapId, { sessionName: "my-feature-work" }));
+    await flushReplies();
+
+    expect(session.getState().session?.sessionName).toBe("my-feature-work");
+    // The name is identity, not transcript.
+    expect(session.getState().messages).toEqual([]);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("an empty or absent session name never becomes a name, and a later no-name statement clears a folded one", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0];
+    if (!handle) throw new Error("no spawned handle");
+
+    // The bootstrap state reply (fixture data) carries a name; an empty
+    // wire value in its place is NOT a name — nothing is invented.
+    const bootstrapId = commandId(handle.writes[0] ?? "");
+    handle.emitStdout(stateReply(bootstrapId, { sessionName: "" }));
+    await flushReplies();
+    expect(session.getState().session?.sessionName).toBeUndefined();
+
+    // A later correlated reply with a name folds it...
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+    handle.emitStdout(stateReply(commandId(writesOf(handle, "get_state")[0] ?? ""), { sessionName: "renamed" }));
+    await flushReplies();
+    expect(session.getState().session?.sessionName).toBe("renamed");
+
+    // ...and a later reply without one clears it (the wire's explicit
+    // no-name statement — an unnamed session serializes the key as absent).
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    handle.emitStdout(stateReply(commandId(writesOf(handle, "get_state")[1] ?? ""), { sessionName: undefined }));
+    await flushReplies();
+    expect(session.getState().session?.sessionName).toBeUndefined();
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
   it("an identity reply that arrives after the session stopped never folds into state", async () => {
     const { spawner, handles } = createFakeSpawner();
     const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
@@ -3196,6 +3248,94 @@ describe("host command catalog (palette-host-catalog T1, S1/S2)", () => {
 
       handle.resolveExited({ code: 0, signal: null });
     });
+
+    function lastRunCommandWrite(handle: FakeProcessHandle): string {
+      const write = handle.writes.filter((entry) => entry.includes("run_command")).at(-1);
+      if (!write) throw new Error("expected a run_command write");
+      return write;
+    }
+
+    // The session-replacement reflection was withdrawn: no `run_command`
+    // answer — executed or not, session-replacing or not — re-reads the
+    // child's history any more. The desktop routes `new`/`resume` through
+    // its own chat-open/new-chat session paths instead, so an executed
+    // answer changes nothing but the identity reads it already owns.
+    it("no executed run_command answer re-reads the child's history — the reflection is withdrawn (S3)", async () => {
+      const { session, handle } = await adoptAndSend(["capabilities", "run_command"], "compact");
+      session.prompt("hi");
+
+      for (const name of ["compact", "reload", "model", "thinking", "name", "new", "resume"]) {
+        const pending = session.runCommand(name);
+        await flushReplies();
+        handle.emitStdout(answerFrame(runCommandRequest(lastRunCommandWrite(handle)).requestId, { executed: true }));
+        await flushReplies();
+        await expect(pending).resolves.toEqual({ kind: "executed" });
+      }
+
+      expect(writesOf(handle, "get_messages")).toEqual([]);
+      expect(session.getState().messages).toHaveLength(1);
+
+      handle.resolveExited({ code: 0, signal: null });
+    });
+
+    it("an executed model, thinking or name change re-reads the identity so the footer follows it (palette-command-arguments T5)", async () => {
+      const { session, handle, pending } = await adoptAndSend(["capabilities", "run_command"], "model", "anthropic/claude-sonnet-4");
+
+      const settle = async (command: Promise<unknown>) => {
+        handle.emitStdout(answerFrame(runCommandRequest(lastRunCommandWrite(handle)).requestId, { executed: true }));
+        await flushReplies();
+        await expect(command).resolves.toEqual({ kind: "executed" });
+      };
+
+      // The identity read is the SAME one every settled turn issues, so the
+      // footer follows the change immediately instead of waiting for the next
+      // interaction with the chat.
+      const expectIdentityRefreshed = async (run: () => Promise<void>, expected: string) => {
+        const before = writesOf(handle, "get_state").length;
+        await run();
+        expect(writesOf(handle, "get_state")).toHaveLength(before + 1);
+        const stateWrite = writesOf(handle, "get_state").at(-1) ?? "";
+        handle.emitStdout(
+          JSON.stringify({
+            type: "response",
+            id: commandId(stateWrite),
+            command: "get_state",
+            success: true,
+            data: {
+              model: { id: expected, name: `Model ${expected}`, provider: "p" },
+              thinkingLevel: "high",
+              isStreaming: false,
+              isCompacting: false,
+              steeringMode: "all",
+              followUpMode: "one-at-a-time",
+              sessionId: "abc123",
+              autoCompactionEnabled: true,
+            },
+          }),
+        );
+        await flushReplies();
+        expect(session.getState().session?.modelId).toBe(expected);
+        expect(session.getState().session?.thinkingLevel).toBe("high");
+      };
+
+      await expectIdentityRefreshed(() => settle(pending), "after-model");
+
+      for (const name of ["thinking", "name"]) {
+        const command = session.runCommand(name, `value-${name}`);
+        await flushReplies();
+        await expectIdentityRefreshed(() => settle(command), `after-${name}`);
+      }
+
+      // A command that leaves the identity alone still re-reads nothing.
+      const beforeCompact = writesOf(handle, "get_state").length;
+      const compact = session.runCommand("compact");
+      await flushReplies();
+      await settle(compact);
+      expect(writesOf(handle, "get_state")).toHaveLength(beforeCompact);
+
+      handle.resolveExited({ code: 0, signal: null });
+    });
+
   });
 
   function commandId(write: string): string {
@@ -3249,5 +3389,336 @@ describe("PiSession: session_state_changed (ODD phase, desktop-pending-work T5)"
     expect(pushes).toHaveLength(2);
 
     handle.resolveExited({ code: 0, signal: null });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The available reads (palette-command-arguments T1, S2/S3): pi's own
+// `get_available_models` and `get_available_thinking_levels` — ordinary
+// RPC commands correlated by `id`, exactly like the identity reads. Gated
+// on the adopted control channel like every other write; a result that
+// distinguishes an answer from a refusal/failure instead of throwing.
+// ---------------------------------------------------------------------------
+
+describe("available reads (palette-command-arguments T1, S2/S3)", () => {
+  function desktopWidgetFrame(requestId: string, data: unknown): string {
+    return JSON.stringify({
+      type: "extension_ui_request",
+      id: "ui-desktop",
+      method: "setWidget",
+      widgetKey: "gentle-desktop-rpc",
+      widgetLines: [JSON.stringify({ schema: "gentle-shell.desktop-rpc/v1", kind: "response", requestId, data })],
+    });
+  }
+
+  function controlRequestId(write: string): string {
+    const prompt = JSON.parse(write) as { type: string; message: string };
+    if (prompt.type !== "prompt" || !prompt.message.startsWith("/gentle:desktop ")) {
+      throw new Error(`expected a /gentle:desktop prompt command, got: ${write}`);
+    }
+    return (JSON.parse(prompt.message.slice("/gentle:desktop ".length)) as { requestId: string }).requestId;
+  }
+
+  async function flushReplies(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  const CAPABILITIES_DATA = {
+    schema: "gentle-shell.desktop-rpc/v1",
+    command: "gentle:desktop",
+    widget: "gentle-desktop-rpc",
+    methods: ["capabilities", "get_subscription_usage"],
+    events: ["rate_limit"],
+  };
+
+  async function adoptChannel(handle: FakeProcessHandle): Promise<void> {
+    const probeWrite = handle.writes.find((write) => write.includes("capabilities"));
+    if (!probeWrite) throw new Error("expected a capabilities probe write");
+    handle.emitStdout(desktopWidgetFrame(controlRequestId(probeWrite), CAPABILITIES_DATA));
+    await flushReplies();
+  }
+
+  function writesOf(handle: FakeProcessHandle, type: string): string[] {
+    return handle.writes.filter((write) => (JSON.parse(write) as { type?: string }).type === type);
+  }
+
+  function commandId(write: string): string {
+    const id = (JSON.parse(write) as { id?: string }).id;
+    if (!id) throw new Error(`expected a correlation id on: ${write}`);
+    return id;
+  }
+
+  /** pi-ai's Model snapshot entry, as the wire carries it. */
+  function wireModel(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", provider: "anthropic", ...overrides };
+  }
+
+  function modelsReply(id: string, models: unknown, success = true): string {
+    return JSON.stringify({ type: "response", id, command: "get_available_models", success, ...(success ? { data: { models } } : { error: "boom" }) });
+  }
+
+  function levelsReply(id: string, levels: unknown, success = true): string {
+    return JSON.stringify({ type: "response", id, command: "get_available_thinking_levels", success, ...(success ? { data: { levels } } : { error: "boom" }) });
+  }
+
+  it("availableModels() sends pi's own correlated get_available_models after the probe and resolves the answer", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0]!;
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+
+    const pending = session.availableModels();
+    // An ORDINARY RPC command (never a /gentle:desktop prompt), with a
+    // fresh correlation id of its own.
+    const writes = writesOf(handle, "get_available_models");
+    expect(writes).toHaveLength(1);
+    const request = JSON.parse(writes[0] ?? "{}") as { type: string; id?: string };
+    expect(request.type).toBe("get_available_models");
+    expect(typeof request.id).toBe("string");
+
+    handle.emitStdout(modelsReply(String(request.id), [wireModel(), wireModel({ id: "mystery", name: undefined, provider: "openai" })]));
+    await flushReplies();
+    await expect(pending).resolves.toEqual({
+      kind: "ok",
+      truncated: false,
+      models: [
+        { provider: "anthropic", id: "claude-sonnet-4-20250514", label: "Claude Sonnet 4" },
+        { provider: "openai", id: "mystery", label: "openai/mystery" },
+      ],
+    });
+    // The read is a query, never transcript traffic.
+    expect(session.getState().messages).toEqual([]);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("each read carries a fresh correlation id, and the two reads never share a pending slot", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0]!;
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+
+    const first = session.availableModels();
+    const second = session.availableModels();
+    const writes = writesOf(handle, "get_available_models");
+    expect(writes).toHaveLength(2);
+    expect(commandId(writes[0] ?? "")).not.toEqual(commandId(writes[1] ?? ""));
+
+    // The first reply settles only the first request; the second stays
+    // pending until its OWN matching reply arrives.
+    handle.emitStdout(modelsReply(commandId(writes[0] ?? ""), []));
+    await flushReplies();
+    await expect(first).resolves.toEqual({ kind: "ok", models: [], truncated: false });
+
+    const levelsPending = session.availableThinkingLevels();
+    handle.emitStdout(levelsReply(commandId(writesOf(handle, "get_available_thinking_levels")[0] ?? ""), ["medium"]));
+    await flushReplies();
+    await expect(levelsPending).resolves.toEqual({ kind: "ok", levels: ["medium"] });
+
+    handle.emitStdout(modelsReply(commandId(writes[1] ?? ""), [wireModel()]));
+    await flushReplies();
+    await expect(second).resolves.toEqual({ kind: "ok", truncated: false, models: [{ provider: "anthropic", id: "claude-sonnet-4-20250514", label: "Claude Sonnet 4" }] });
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("availableThinkingLevels() resolves the child's levels, dropping members outside the closed union instead of coercing", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0]!;
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+
+    const pending = session.availableThinkingLevels();
+    const writes = writesOf(handle, "get_available_thinking_levels");
+    expect(writes).toHaveLength(1);
+    handle.emitStdout(levelsReply(commandId(writes[0] ?? ""), ["off", "medium", "extreme", 42, "max"]));
+    await flushReplies();
+    await expect(pending).resolves.toEqual({ kind: "ok", levels: ["off", "medium", "max"] });
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("never writes before the control channel is adopted and the probe is ok; a too-early read resolves unsupported", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0]!;
+
+    // Only the bootstrap get_state write exists; the read is refused
+    // WITHOUT writing anything to the child.
+    await expect(session.availableModels()).resolves.toEqual({ kind: "unsupported" });
+    await expect(session.availableThinkingLevels()).resolves.toEqual({ kind: "unsupported" });
+    expect(writesOf(handle, "get_available_models")).toEqual([]);
+    expect(writesOf(handle, "get_available_thinking_levels")).toEqual([]);
+
+    // And a child whose probe FAILED never gets the read either.
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    const probeWrite = handle.writes.find((write) => write.includes("capabilities"));
+    if (!probeWrite) throw new Error("expected a capabilities probe write");
+    handle.emitStdout(desktopWidgetFrame(controlRequestId(probeWrite), { schema: "gentle-shell.desktop-rpc/v1", kind: "response", requestId: controlRequestId(probeWrite), ok: false }));
+    await flushReplies();
+    await expect(session.availableModels()).resolves.toEqual({ kind: "unsupported" });
+    expect(writesOf(handle, "get_available_models")).toEqual([]);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("a refused reply (an older child without the command) resolves unsupported, never a throw", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0]!;
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+
+    const pending = session.availableModels();
+    handle.emitStdout(modelsReply(commandId(writesOf(handle, "get_available_models")[0] ?? ""), undefined, false));
+    await flushReplies();
+    await expect(pending).resolves.toEqual({ kind: "unsupported" });
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("a success frame with an unusable payload resolves failed, never a throw", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0]!;
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+
+    const pending = session.availableModels();
+    handle.emitStdout(modelsReply(commandId(writesOf(handle, "get_available_models")[0] ?? ""), "not-an-array"));
+    await flushReplies();
+    await expect(pending).resolves.toEqual({ kind: "failed" });
+
+    const pendingLevels = session.availableThinkingLevels();
+    handle.emitStdout(levelsReply(commandId(writesOf(handle, "get_available_thinking_levels")[0] ?? ""), "medium"));
+    await flushReplies();
+    await expect(pendingLevels).resolves.toEqual({ kind: "failed" });
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("a reply whose id does not match any pending request is ignored; the matching reply still settles its own read", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0]!;
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+
+    const pending = session.availableModels();
+    const requestId = commandId(writesOf(handle, "get_available_models")[0] ?? "");
+
+    // A mismatched id under the right command, then the pending id under a
+    // different command: neither may settle the read, neither may consume
+    // the pending slot.
+    handle.emitStdout(modelsReply("not-the-pending-id", [wireModel()]));
+    handle.emitStdout(JSON.stringify({ type: "response", id: requestId, command: "get_state", success: true, data: {} }));
+    await flushReplies();
+    expect(session.getState().session).toBeUndefined(); // the stray get_state folded nothing either
+
+    handle.emitStdout(modelsReply(requestId, [wireModel()]));
+    await flushReplies();
+    await expect(pending).resolves.toEqual({ kind: "ok", truncated: false, models: [{ provider: "anthropic", id: "claude-sonnet-4-20250514", label: "Claude Sonnet 4" }] });
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("an oversized model list is bounded and flagged as truncated", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0]!;
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+
+    const pending = session.availableModels();
+    const oversized = Array.from({ length: MAX_AVAILABLE_MODELS + 1 }, (_, index) =>
+      wireModel({ id: `model-${index}`, name: undefined }),
+    );
+    handle.emitStdout(modelsReply(commandId(writesOf(handle, "get_available_models")[0] ?? ""), oversized));
+    await flushReplies();
+    const result = await pending;
+    expect(result.kind).toBe("ok");
+    expect(result.kind === "ok" && result.truncated).toBe(true);
+    expect(result.kind === "ok" && result.models).toHaveLength(MAX_AVAILABLE_MODELS);
+
+    handle.resolveExited({ code: 0, signal: null });
+  });
+
+  it("an unanswered read degrades to failed after the bound, without throwing", async () => {
+    vi.useFakeTimers();
+    try {
+      const { spawner, handles } = createFakeSpawner();
+      const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+      session.start();
+      const handle = handles[0]!;
+
+      handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+      await vi.advanceTimersByTimeAsync(0);
+      // adoptChannel, inlined with the fake-timer-aware flush (its own
+      // flushReplies uses a real setTimeout the fake clock would hold).
+      const probeWrite = handle.writes.find((write) => write.includes("capabilities"));
+      if (!probeWrite) throw new Error("expected a capabilities probe write");
+      handle.emitStdout(desktopWidgetFrame(controlRequestId(probeWrite), CAPABILITIES_DATA));
+      await vi.advanceTimersByTimeAsync(0);
+
+      const pending = session.availableModels();
+      await vi.advanceTimersByTimeAsync(DESKTOP_RPC_DEFAULT_TIMEOUT_MS);
+      await expect(pending).resolves.toEqual({ kind: "failed" });
+
+      // The lost slot is free: a later read works normally. The reply
+      // answers the RETRY's own correlation id (the newest write — the
+      // lost read's write came first).
+      const retry = session.availableModels();
+      handle.emitStdout(modelsReply(commandId(writesOf(handle, "get_available_models").at(-1) ?? ""), []));
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(retry).resolves.toEqual({ kind: "ok", models: [], truncated: false });
+
+      handle.resolveExited({ code: 0, signal: null });
+      await vi.advanceTimersByTimeAsync(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a reply that arrives after the session was replaced is dropped; the replaced read resolves failed", async () => {
+    const { spawner, handles } = createFakeSpawner();
+    const session = new PiSession({ spawner, locator: fakeLocator, env: {} });
+    session.start();
+    const handle = handles[0]!;
+
+    handle.emitStdout(JSON.stringify({ type: "agent_settled" }));
+    await adoptChannel(handle);
+
+    const pending = session.availableModels();
+    const requestId = commandId(writesOf(handle, "get_available_models")[0] ?? "");
+
+    // stop() replaces the session: the caller's read can no longer be
+    // satisfied — it degrades to failed, and the child's last gasp (its
+    // correlated reply, landing after exit) changes nothing.
+    handle.resolveExited({ code: 0, signal: null });
+    await flushMicrotasks();
+    // The caller's read degrades instead of hanging, and the child's last
+    // gasp (its correlated reply, landing after exit) changes nothing.
+    await expect(pending).resolves.toEqual({ kind: "failed" });
+    handle.emitStdout(modelsReply(requestId, [wireModel()]));
+    await flushReplies();
+    expect(session.getState().messages).toEqual([]);
   });
 });

@@ -3,7 +3,10 @@ import {
   HELPER_STATUS,
   MESSAGE_ROLE,
   NOTIFICATION_SEVERITY,
+  THINKING_LEVEL,
   type AppInfo,
+  type AvailableModelsResult,
+  type AvailableThinkingLevelsResult,
   type ChatCommandRunResult,
   type ChatMessage,
   type ChatNotification,
@@ -22,7 +25,9 @@ import {
   type NotificationSeverity,
   type OpenChatResult,
   type PiDetection,
+  type ModelOptionView,
   type PromptResult,
+  type ThinkingLevel,
   type SetupStatus,
   type StopHelperOutcome,
   type WorkspaceInfo,
@@ -179,6 +184,9 @@ function emptyState(): ChatState {
     // rendered only when supplied: drop any one of them here to see that
     // field disappear rather than fall back to a zero.
     session: {
+      // palette-command-arguments T2 (S4): the demo session name the `name`
+      // screen's prefill is exercisable with.
+      sessionName: "Write the README intro",
       modelId: "claude-sonnet-4-20250514",
       modelName: "Claude Sonnet 4",
       modelProvider: "anthropic",
@@ -332,6 +340,41 @@ function isAbsolutePath(candidate: string): boolean {
   return candidate.startsWith("/") || candidate.startsWith("\\") || /^[a-zA-Z]:[\\/]/.test(candidate);
 }
 
+// ---------------------------------------------------------------------------
+// The available reads (palette-command-arguments T1): the demo model list
+// the mock's availableModels() answers — plain options, no invented name
+// and no default-selected model (the current one is state.session's own
+// identity, the T3 screen's preselection) — plus the closed thinking-level
+// union. Tests override either with the setters below; `null` simulates a
+// child that cannot answer (the mock answers `unsupported`), `undefined`
+// restores the demo data.
+// ---------------------------------------------------------------------------
+
+const DEMO_MODELS: readonly ModelOptionView[] = [
+  { provider: "anthropic", id: "claude-sonnet-4-20250514", label: "Claude Sonnet 4" },
+  { provider: "openai", id: "gpt-5", label: "GPT-5" },
+  { provider: "google", id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+];
+
+const DEMO_THINKING_LEVELS: readonly ThinkingLevel[] = Object.values(THINKING_LEVEL);
+
+let mockAvailableModels: readonly ModelOptionView[] | null | undefined;
+let mockAvailableThinkingLevels: readonly ThinkingLevel[] | null | undefined;
+
+/** Overrides the mock's availableModels() answer (tests only; the preview
+ * always uses the demo list). Pass an array for a custom list, null to
+ * simulate a child that cannot answer the read (`unsupported`), or
+ * undefined to restore the demo list. */
+export function setMockAvailableModels(models: readonly ModelOptionView[] | null | undefined): void {
+  mockAvailableModels = models;
+}
+
+/** Overrides the mock's availableThinkingLevels() answer (tests only),
+ * with the same null/undefined contract as setMockAvailableModels. */
+export function setMockAvailableThinkingLevels(levels: readonly ThinkingLevel[] | null | undefined): void {
+  mockAvailableThinkingLevels = levels;
+}
+
 /** The creation path the Add-workspace flow and workspace.open share
  * (T11/T1): bind a host to the directory — reusing an already-open
  * directory's host instead of minting a second child — and carry the
@@ -398,6 +441,8 @@ export function resetMockBridge(): void {
   directoryPick = undefined;
   persistedWorkspaces = [];
   exampleChats = EXAMPLE_CHATS;
+  mockAvailableModels = undefined;
+  mockAvailableThinkingLevels = undefined;
   stateListeners.clear();
   errorListeners.clear();
   closeListeners.clear();
@@ -969,6 +1014,22 @@ export const mockBridge: GentleBridge = {
 
   async chooseFile(): Promise<string | null> {
     return filePick === undefined ? DEMO_ATTACHMENT_PATH : filePick;
+  },
+
+  // palette-command-arguments T1 (S2/S3): the demo answers for the two
+  // available reads, overridden per test with setMockAvailableModels /
+  // setMockAvailableThinkingLevels (null = a child that cannot answer).
+  // requireHost first, like every other host-addressed request.
+  async availableModels(hostId: string): Promise<AvailableModelsResult> {
+    requireHost(hostId);
+    if (mockAvailableModels === null) return { kind: "unsupported" };
+    return { kind: "ok", truncated: false, models: [...(mockAvailableModels ?? DEMO_MODELS)] };
+  },
+
+  async availableThinkingLevels(hostId: string): Promise<AvailableThinkingLevelsResult> {
+    requireHost(hostId);
+    if (mockAvailableThinkingLevels === null) return { kind: "unsupported" };
+    return { kind: "ok", levels: [...(mockAvailableThinkingLevels ?? DEMO_THINKING_LEVELS)] };
   },
 
   stopHelper,
