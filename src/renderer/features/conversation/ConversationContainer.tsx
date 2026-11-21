@@ -901,6 +901,11 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
           currentModel={chatState.session ? { provider: chatState.session.modelProvider, id: chatState.session.modelId } : undefined}
           onCancel={() => setCommandScreen(undefined)}
           onConfirm={confirmScreen}
+          // Topmost-surface rule: a mounted screen claims window keys only
+          // while no other surface is open over it — the Ctrl+K palette
+          // takes precedence while it is open, so Enter typed into its
+          // filter runs its row and never dispatches this screen.
+          active={!paletteOpen}
         />
       ) : null}
       {commandScreen?.key === currentKey && commandScreen.name === "thinking" ? (
@@ -909,6 +914,8 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
           currentLevel={chatState.session?.thinkingLevel}
           onCancel={() => setCommandScreen(undefined)}
           onConfirm={confirmScreen}
+          // Same topmost-surface rule as the model screen above.
+          active={!paletteOpen}
         />
       ) : null}
       {commandScreen?.key === currentKey && commandScreen.name === "name" ? (

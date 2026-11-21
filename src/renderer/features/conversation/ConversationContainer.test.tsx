@@ -2339,6 +2339,33 @@ describe("ConversationContainer command argument screens (T3, palette-command-ar
     expect(bridge.sendMessage).not.toHaveBeenCalled();
   });
 
+  // Separately discovered defect: with an argument screen mounted, its
+  // window-level Enter claim also fired for Enter typed in the Ctrl+K
+  // palette's filter over it, dispatching the mounted screen instead of
+  // running the palette row. A surface may claim keys only while it is the
+  // topmost open one — the palette takes precedence while it is open.
+  it("the palette over a mounted screen runs its row on Enter — the screen dispatches nothing while it is not topmost", async () => {
+    const bridge = argsBridge();
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    await runRow("model");
+    expect(await screen.findByRole("dialog", { name: "Choose a model" })).toBeInTheDocument();
+
+    // Ctrl+K reopens the palette over the mounted screen; the user types a
+    // different command and presses Enter in the palette's filter.
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const palette = screen.getByRole("dialog", { name: "Commands" });
+    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "compact" } });
+    fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
+
+    // The palette ran its row; the mounted screen dispatched nothing.
+    expect(bridge.runCommand).toHaveBeenCalledExactlyOnceWith("host-1", "compact");
+    expect(bridge.runCommand).not.toHaveBeenCalledWith("host-1", "model", expect.anything());
+    // And the run of another command clears the mounted screen (R3-003).
+    expect(screen.queryByRole("dialog", { name: "Choose a model" })).not.toBeInTheDocument();
+  });
+
   it("the model selector's filter narrows the list before dispatching", async () => {
     const bridge = argsBridge();
     window.gentle = bridge;
@@ -2533,9 +2560,9 @@ describe("ConversationContainer command argument screens (T3, palette-command-ar
     // The palette reopens over the mounted screen (Ctrl+K is not one of the
     // screen's claimed keys) and the user runs /new: the fresh chat must
     // not leave the model screen behind it. The row is CLICKED, not
-    // Enter'd — the mounted screen claims Enter at window level for its
-    // own confirmation, a separate surface overlap this advisory does not
-    // own.
+    // Enter'd — while the palette is open over the screen it holds the
+    // keys (topmost surface), so Enter would run the palette's highlighted
+    // row, not the screen behind it.
     fireEvent.keyDown(document, { key: "k", ctrlKey: true });
     const palette = screen.getByRole("dialog", { name: "Commands" });
     fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "new" } });

@@ -18,6 +18,12 @@ export interface ModelSelectorDialogProps {
    * input). ConversationContainer dispatches it as run_command args. */
   readonly onConfirm: (model: string) => void;
   readonly onCancel: () => void;
+  /** Whether this screen is the TOPMOST open surface and may claim keys
+   * at window level. Defaults to true for bare callers; the container
+   * passes false while another surface (the Ctrl+K palette) is open over
+   * it, so the mounted screen never dispatches an Enter the user typed
+   * into the surface above it. */
+  readonly active?: boolean;
 }
 
 /**
@@ -40,7 +46,7 @@ export interface ModelSelectorDialogProps {
  * capture (isolated from the app's global shortcuts), backdrop click
  * cancels.
  */
-export function ModelSelectorDialog({ hostId, currentModel, onConfirm, onCancel }: ModelSelectorDialogProps) {
+export function ModelSelectorDialog({ hostId, currentModel, onConfirm, onCancel, active = true }: ModelSelectorDialogProps) {
   const bridge = useBridge();
   const titleId = useId();
   const listId = useId();
@@ -58,16 +64,26 @@ export function ModelSelectorDialog({ hostId, currentModel, onConfirm, onCancel 
 
   useEffect(() => {
     let cancelled = false;
-    bridge
-      .availableModels?.(hostId)
-      .then((answer) => {
-        if (!cancelled) setResult(answer);
-      })
-      .catch(() => {
-        // A failed read degrades honestly: the typed input mode, not a
-        // fake list.
-        if (!cancelled) setResult({ kind: "failed" });
-      });
+    // R2-001/R3-001/R3-003: the documented degradation for a bridge that
+    // LACKS the method. The optional call short-circuits before
+    // .then/.catch — without the settle below, `result` would stay
+    // undefined and the screen would sit on "Loading…" forever. Without
+    // the method the read cannot be made, so the screen settles into the
+    // same degraded typed-input state the `unsupported` arm produces.
+    const read = bridge.availableModels?.(hostId);
+    if (read) {
+      read
+        .then((answer) => {
+          if (!cancelled) setResult(answer);
+        })
+        .catch(() => {
+          // A failed read degrades honestly: the typed input mode, not a
+          // fake list.
+          if (!cancelled) setResult({ kind: "failed" });
+        });
+    } else {
+      setResult({ kind: "failed" });
+    }
     return () => {
       cancelled = true;
     };
@@ -116,7 +132,13 @@ export function ModelSelectorDialog({ hostId, currentModel, onConfirm, onCancel 
   useEffect(() => {
     const row = selectedRowRef.current;
     if (row && typeof row.scrollIntoView === "function") row.scrollIntoView({ block: "nearest" });
-  }, [selected]);
+    // R3-002: the effect also re-runs on a FILTER change, not only on a
+    // selection change. When the visible rows change while the selected
+    // index stays put (e.g. the first match of a new filter on a list the
+    // user has scrolled down), the selected row can be offscreen and Enter
+    // would confirm a row the user cannot see — the re-run brings it back
+    // into view.
+  }, [selected, query]);
 
   useEffect(() => {
     // On close, focus returns to the element that had it before opening —
@@ -153,6 +175,11 @@ export function ModelSelectorDialog({ hostId, currentModel, onConfirm, onCancel 
   // in that window would hit a stale claim (the degraded mode, an empty
   // typed value) and confirm nothing.
   useLayoutEffect(() => {
+    // A surface claims keys ONLY while it is the topmost open one: while
+    // another surface (the Ctrl+K palette) is open over this screen the
+    // claim is lifted entirely, so Enter typed into that surface's filter
+    // reaches it and never dispatches this screen's hidden choice.
+    if (!active) return;
     const keydown = (event: KeyboardEvent): void => {
       // Only the claimed keys are stopped here: a blanket
       // stopImmediatePropagation at window capture would keep every other
@@ -212,7 +239,7 @@ export function ModelSelectorDialog({ hostId, currentModel, onConfirm, onCancel 
     };
     window.addEventListener("keydown", keydown, true);
     return () => window.removeEventListener("keydown", keydown, true);
-  }, [listMode, visible, selected, query, onConfirm]);
+  }, [active, listMode, visible, selected, query, onConfirm]);
 
   // S11: when the app window regains focus (clicking back into the GUI
   // after clicking outside it, or the tab becoming visible again) and the

@@ -16,6 +16,12 @@ export interface ThinkingSelectorDialogProps {
    * as run_command args. */
   readonly onConfirm: (level: ThinkingLevel) => void;
   readonly onCancel: () => void;
+  /** Whether this screen is the TOPMOST open surface and may claim keys
+   * at window level. Defaults to true for bare callers; the container
+   * passes false while another surface (the Ctrl+K palette) is open over
+   * it, so the mounted screen never swallows the keys typed into the
+   * surface above it. */
+  readonly active?: boolean;
 }
 
 /** The closed level union the app already types (S6 degradation): shown
@@ -52,7 +58,7 @@ function deriveSelected(levels: readonly ThinkingLevel[], choice: ThinkingLevel 
  * focus on open and restored on close, Escape/Tab claimed at window level
  * in capture, backdrop click cancels.
  */
-export function ThinkingSelectorDialog({ hostId, currentLevel, onConfirm, onCancel }: ThinkingSelectorDialogProps) {
+export function ThinkingSelectorDialog({ hostId, currentLevel, onConfirm, onCancel, active = true }: ThinkingSelectorDialogProps) {
   const bridge = useBridge();
   const titleId = useId();
   const panel = useRef<HTMLDivElement>(null);
@@ -68,14 +74,24 @@ export function ThinkingSelectorDialog({ hostId, currentLevel, onConfirm, onCanc
 
   useEffect(() => {
     let cancelled = false;
-    bridge
-      .availableThinkingLevels?.(hostId)
-      .then((answer) => {
-        if (!cancelled) setResult(answer);
-      })
-      .catch(() => {
-        if (!cancelled) setResult({ kind: "failed" });
-      });
+    // R2-001/R3-001/R3-003: the documented degradation for a bridge that
+    // LACKS the method. The optional call short-circuits before
+    // .then/.catch — without the settle below, `result` would stay
+    // undefined and the screen would sit on "Loading…" forever. Without
+    // the method the read cannot be made, so the screen settles into the
+    // same degraded app-union state the `unsupported` arm produces.
+    const read = bridge.availableThinkingLevels?.(hostId);
+    if (read) {
+      read
+        .then((answer) => {
+          if (!cancelled) setResult(answer);
+        })
+        .catch(() => {
+          if (!cancelled) setResult({ kind: "failed" });
+        });
+    } else {
+      setResult({ kind: "failed" });
+    }
     return () => {
       cancelled = true;
     };
@@ -95,6 +111,52 @@ export function ThinkingSelectorDialog({ hostId, currentLevel, onConfirm, onCanc
   // The selection always owns focus: ↑/↓ move it (and the buttons
   // follow), Enter confirms the focused row (which the highlight
   // follows — see the focus-sync below), Escape cancels from
+  // anywhere inside the dialog. The effect re-runs when the read answers
+  // too: before that the list is not rendered, so a run keyed on
+  // `selected` alone could focus nothing and never try again — the cause
+  // of arrows reaching no handler at all. A LAYOUT effect, so the row owns
+  // focus deterministically: a passive effect can be flushed after the DOM
+  // update is already observable (the same mount-focus race the model
+  // screen had with its filter field).
+  // The highlight follows the DOM focus (the Enter rule's other half):
+  // when focus lands on a row — Tab walking the list, the window
+  // refocusing, any path — the selection becomes THAT row, so highlight
+  // and focus can never disagree and Enter always confirms the option
+  // focus actually holds. A native capture listener on the panel (not a
+  // React onFocus): focus events do not bubble, and the claim must hold
+  // no matter how focus moved. Focus landing on a non-row (the ✕, the
+  // footer Cancel) syncs nothing — Enter on those defers to the button's
+  // own click anyway.
+  //
+  // R3-005: a LAYOUT effect, DECLARED BEFORE the row-focus effect below.
+  // Both being layout-time means the listener carrying this render's
+  // levels is (re)registered before the row-focus effect focuses the
+  // selected row: the focus event that focus() fires synchronously is
+  // handled by the mapping from the SAME render, never by the previous
+  // render's stale one — on the render where the asynchronous answer
+  // arrives, a stale app-union mapping would otherwise translate the
+  // focused index into the wrong level (a child list in a non-canonical
+  // order disagrees with the app's own union order) and move the
+  // highlight onto a row focus never held. A passive effect could not
+  // even promise the ordering: it runs after the layout effects, so the
+  // stale listener would already have answered.
+  useLayoutEffect(() => {
+    const panelEl = panel.current;
+    if (!panelEl) return;
+    const sync = (event: FocusEvent): void => {
+      if (!(event.target instanceof HTMLElement)) return;
+      const index = event.target.getAttribute("data-level-index");
+      if (index === null) return;
+      const level = levels[Number(index)];
+      if (level !== undefined) setChoice(level);
+    };
+    panelEl.addEventListener("focus", sync, true);
+    return () => panelEl.removeEventListener("focus", sync, true);
+  }, [levels]);
+
+  // The selection always owns focus: ↑/↓ move it (and the buttons
+  // follow), Enter confirms the focused row (which the highlight
+  // follows — see the focus-sync above), Escape cancels from
   // anywhere inside the dialog. The effect re-runs when the read answers
   // too: before that the list is not rendered, so a run keyed on
   // `selected` alone could focus nothing and never try again — the cause
@@ -134,29 +196,6 @@ export function ThinkingSelectorDialog({ hostId, currentLevel, onConfirm, onCanc
     };
   }, []);
 
-  // The highlight follows the DOM focus (the Enter rule's other half):
-  // when focus lands on a row — Tab walking the list, the window
-  // refocusing, any path — the selection becomes THAT row, so highlight
-  // and focus can never disagree and Enter always confirms the option
-  // focus actually holds. A native capture listener on the panel (not a
-  // React onFocus): focus events do not bubble, and the claim must hold
-  // no matter how focus moved. Focus landing on a non-row (the ✕, the
-  // footer Cancel) syncs nothing — Enter on those defers to the button's
-  // own click anyway.
-  useEffect(() => {
-    const panelEl = panel.current;
-    if (!panelEl) return;
-    const sync = (event: FocusEvent): void => {
-      if (!(event.target instanceof HTMLElement)) return;
-      const index = event.target.getAttribute("data-level-index");
-      if (index === null) return;
-      const level = levels[Number(index)];
-      if (level !== undefined) setChoice(level);
-    };
-    panelEl.addEventListener("focus", sync, true);
-    return () => panelEl.removeEventListener("focus", sync, true);
-  }, [levels]);
-
   // S11: Escape, Tab, the arrows and Enter are claimed at window level in
   // capture (ResumeSessionDialog's convention, extended), so the dialog
   // cancels, traps focus and navigates no matter what holds focus —
@@ -167,6 +206,11 @@ export function ThinkingSelectorDialog({ hostId, currentLevel, onConfirm, onCanc
   // observable (the read answering), and a keydown in that window would
   // hit a stale claim.
   useLayoutEffect(() => {
+    // A surface claims keys ONLY while it is the topmost open one: while
+    // another surface (the Ctrl+K palette) is open over this screen the
+    // claim is lifted entirely, so the keys typed into that surface's
+    // filter reach it and never move this screen's hidden choice.
+    if (!active) return;
     const keydown = (event: KeyboardEvent): void => {
       // Only the claimed keys are stopped here: a blanket
       // stopImmediatePropagation at window capture would keep every other
@@ -214,14 +258,20 @@ export function ThinkingSelectorDialog({ hostId, currentLevel, onConfirm, onCanc
         onConfirm(levels[selected]!);
         return;
       }
-      // ↑/↓ move the highlighted level with wraparound (S8).
+      // ↑/↓ move the highlighted level with wraparound (S8) — but ONLY an
+      // answered read (R3-004): while the read is still pending no list was
+      // ever shown, so the arrows would move a hidden choice the user
+      // cannot see, which would then preselect the wrong row the moment
+      // the answer lands. The key stays swallowed (like Enter, the claim
+      // was already decided above); the choice simply does not move.
+      if (!result) return;
       event.preventDefault();
       const offset = event.key === "ArrowDown" ? 1 : -1;
       setChoice(levels[(selected + offset + levels.length) % levels.length]!);
     };
     window.addEventListener("keydown", keydown, true);
     return () => window.removeEventListener("keydown", keydown, true);
-  }, [levels, selected, onConfirm, result]);
+  }, [active, levels, selected, onConfirm, result]);
 
   // S11: when the app window regains focus (clicking back into the GUI
   // after clicking outside it, or the tab becoming visible again) and the

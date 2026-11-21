@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { AvailableThinkingLevelsResult, GentleBridge } from "@shared/bridge-types";
 import { mockBridge } from "@renderer/shared/bridge/mockBridge";
@@ -156,6 +156,56 @@ describe("ThinkingSelectorDialog", () => {
     }
   });
 
+  // R3-004: the arrows must not move the hidden choice while the read is
+  // still pending — Enter is already gated on the answer, and a choice
+  // moved invisibly behind the loading line would preselect the wrong row
+  // the moment the answer lands.
+  it("ignores the arrows while the read has not answered — the pending screen cannot move the hidden choice (R3-004)", async () => {
+    const onConfirm = vi.fn();
+    let answer!: (result: AvailableThinkingLevelsResult) => void;
+    window.gentle = {
+      ...mockBridge,
+      availableThinkingLevels: vi.fn().mockImplementation(
+        () => new Promise<AvailableThinkingLevelsResult>((done) => { answer = done; }),
+      ),
+    };
+    render(<ThinkingSelectorDialog hostId="host-1" currentLevel="medium" onConfirm={onConfirm} onCancel={vi.fn()} />);
+    expect(screen.getByText("Loading thinking levels…")).toBeInTheDocument();
+
+    // The user taps an arrow while the screen still shows the loading line.
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "Choose a thinking level" }), { key: "ArrowDown" });
+
+    // The read answers late, in a NON-canonical order (the app's own union
+    // order disagrees with the child's): the selection must still be the
+    // CURRENT level — the hidden choice was never moved.
+    await act(async () => {
+      answer({ kind: "ok", levels: ["high", "medium", "off"] });
+    });
+    const options = await screen.findAllByRole("option");
+    expect(options[1]).toHaveAttribute("aria-selected", "true"); // medium
+    expect(options[1]).toHaveFocus();
+  });
+
+  // R3-005: the focus-sync listener was a passive effect while the
+  // row-focus effect is a layout effect, so on the render where the
+  // asynchronous answer arrives the stale levels mapping could win and
+  // move the highlight onto a row focus never held. With the sync at
+  // layout time as well, focus and the levels mapping always come from
+  // the same render — pinned here with a child list in a NON-canonical
+  // order, where the app's own union order disagrees with the child's.
+  it("keeps the highlight on the focused current level when the child reports a non-canonical order (R3-005)", async () => {
+    const onConfirm = vi.fn();
+    window.gentle = bridgeWith({ kind: "ok", levels: ["high", "medium", "off"] });
+    render(<ThinkingSelectorDialog hostId="host-1" currentLevel="high" onConfirm={onConfirm} onCancel={vi.fn()} />);
+
+    const options = await screen.findAllByRole("option");
+    expect(options[0]).toHaveTextContent("high");
+    expect(options[0]).toHaveAttribute("aria-selected", "true");
+    expect(options[0]).toHaveFocus();
+    fireEvent.keyDown(options[0]!, { key: "Enter" });
+    expect(onConfirm).toHaveBeenCalledExactlyOnceWith("high");
+  });
+
   it("cancels with Escape and confirms nothing", async () => {
     const onConfirm = vi.fn();
     const onCancel = vi.fn();
@@ -185,6 +235,23 @@ describe("ThinkingSelectorDialog", () => {
     expect(options.map(levelText)).toEqual(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
     expect(screen.getByText(/reported no thinking levels/)).toBeInTheDocument();
     expect(screen.queryByText(/did not report its thinking levels/)).not.toBeInTheDocument();
+  });
+
+  it("falls back to the app's closed level union when the bridge has no availableThinkingLevels method at all (R2-001/R3-001)", async () => {
+    const onConfirm = vi.fn();
+    // A bridge that simply lacks the method — the short-circuit case: the
+    // optional call yields undefined, and the documented degradation must
+    // still settle instead of the dialog sitting on "Loading…" forever.
+    const { availableThinkingLevels: _omitted, ...bridgeWithoutMethod } = mockBridge;
+    window.gentle = bridgeWithoutMethod as GentleBridge;
+    render(<ThinkingSelectorDialog hostId="host-1" currentLevel="medium" onConfirm={onConfirm} onCancel={vi.fn()} />);
+
+    expect(await screen.findByText(/did not report its thinking levels/)).toBeInTheDocument();
+    expect(screen.queryByText("Loading thinking levels…")).not.toBeInTheDocument();
+    const options = screen.getAllByRole("option");
+    expect(options.map(levelText)).toEqual(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+    fireEvent.keyDown(options[3]!, { key: "Enter" });
+    expect(onConfirm).toHaveBeenCalledExactlyOnceWith("medium");
   });
 
   it.each(["unsupported", "failed"] as const)("falls back to the app's closed level union when the child cannot answer (%s), and says so", async (kind) => {

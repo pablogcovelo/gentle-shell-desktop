@@ -105,6 +105,38 @@ describe("ModelSelectorDialog", () => {
     }
   });
 
+  it("scrolls the selected row into view after a filter change even when the selection index did not move (R3-002)", async () => {
+    const calls: Array<{ element: Element | undefined; arg: unknown }> = [];
+    const spy = vi
+      .spyOn(Element.prototype, "scrollIntoView")
+      .mockImplementation(function (this: Element, arg) {
+        calls.push({ element: this, arg });
+      });
+    try {
+      window.gentle = bridgeWith({ kind: "ok", truncated: false, models: MANY_MODELS });
+      render(<ModelSelectorDialog hostId="host-1" onConfirm={vi.fn()} onCancel={vi.fn()} />);
+      await screen.findAllByRole("option");
+      calls.length = 0; // drop the initial mount scroll
+
+      // The user wheel-scrolls the list down without moving the selection:
+      // row 0 stays highlighted but is out of the visible window.
+      const list = screen.getByRole("listbox", { name: "Models" });
+      list.scrollTop = list.scrollHeight;
+      calls.length = 0;
+
+      // A filter change keeps the selection on the first match and must
+      // bring it back into view — Enter would otherwise confirm a row the
+      // user cannot see.
+      fireEvent.change(screen.getByRole("combobox", { name: "Filter models" }), { target: { value: "model-0" } });
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.element).toBe(screen.getAllByRole("option")[0]);
+      expect(calls[0]!.arg).toEqual({ block: "nearest" });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("lists the child's models with the current model preselected and first, and confirms the exact provider/id", async () => {
     const onConfirm = vi.fn();
     const onCancel = vi.fn();
@@ -199,6 +231,23 @@ describe("ModelSelectorDialog", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onConfirm).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Use model" })).toBeDisabled();
+  });
+
+  it("degrades to the typed input when the bridge has no availableModels method at all (R2-001/R3-001)", async () => {
+    const onConfirm = vi.fn();
+    // A bridge that simply lacks the method — the short-circuit case: the
+    // optional call yields undefined, and the documented degradation must
+    // still settle instead of the dialog sitting on "Loading…" forever.
+    const { availableModels: _omitted, ...bridgeWithoutMethod } = mockBridge;
+    window.gentle = bridgeWithoutMethod as GentleBridge;
+    render(<ModelSelectorDialog hostId="host-1" onConfirm={onConfirm} onCancel={vi.fn()} />);
+
+    expect(await screen.findByText(/did not report its available models/)).toBeInTheDocument();
+    expect(screen.queryByText("Loading models…")).not.toBeInTheDocument();
+    const input = screen.getByRole("textbox", { name: "Model" });
+    fireEvent.change(input, { target: { value: "openai/gpt-5" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onConfirm).toHaveBeenCalledExactlyOnceWith("openai/gpt-5");
   });
 
   it("an ok answer with no models also degrades to the typed input", async () => {
