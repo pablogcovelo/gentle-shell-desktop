@@ -6,6 +6,9 @@ import { HelpersContainer } from "@renderer/features/helpers/HelpersContainer";
 import { directoryOf } from "@renderer/features/chats/components/ChatListItem";
 import { Composer } from "./components/Composer";
 import { CommandPalette } from "./components/CommandPalette";
+import { ModelSelectorDialog } from "./components/ModelSelectorDialog";
+import { ThinkingSelectorDialog } from "./components/ThinkingSelectorDialog";
+import { SessionNameDialog } from "./components/SessionNameDialog";
 import { ResumeSessionDialog } from "./components/ResumeSessionDialog";
 import { Footer } from "./components/Footer";
 import { CONVERSATION_PANE, ConversationHeader, type ConversationPane } from "./components/ConversationHeader";
@@ -95,6 +98,24 @@ const hostByChatKey = new Map<string, string>();
  * that opens and closes chats all session. */
 const CLOSED_HOST_MEMORY = 32;
 const closedHosts = new Set<string>();
+
+/**
+ * T3 (palette-command-arguments S1/S5, correction round): the argument
+ * screens, keyed by command NAME — never by the catalog's `args` hint. The
+ * host declares `args: null` for /model and /thinking (the value is chosen
+ * on the screen, not typed), and parseCommandCatalog carries `args` only
+ * when the wire carries a string, so those rows have NO `args` at all and
+ * an `entry.args !== undefined` gate left both screens dead in the shipped
+ * app. The name is the stable key; every runnable row is already a builtin
+ * (the host never marks extension/prompt/skill rows runnable), so no
+ * source check rides on top of the lookup. /resume keeps its own picker
+ * above this table — its screen is the session list, not a value form.
+ */
+const COMMAND_ARGUMENT_SCREENS: Readonly<Record<string, "model" | "thinking" | "name">> = {
+  model: "model",
+  thinking: "thinking",
+  name: "name",
+};
 
 /** Clears the T5c snapshot cache between tests (same reason as
  * resetWelcomeHeroIntrosForTests): module-level maps would otherwise leak
@@ -203,6 +224,8 @@ function unlistedSlashNotice(
   }
   if (command.source !== "builtin") return undefined;
   if (!command.runnable) {
+    // A genuinely NON-runnable builtin stays honest: it really does live
+    // only in pi's terminal UI (palette-host-catalog S3).
     return `pi runs /${name} in its terminal UI only — it was sent as a normal message.`;
   }
   return `/${name} is a host command — run it from the command palette. It was sent to Pi as plain text.`;
@@ -216,8 +239,11 @@ function commandResultNotice(entry: ChatCommand, result: ChatCommandRunResult): 
     case "executed":
       return undefined;
     case "refused":
+      // T4 (palette-command-arguments S5): a runnable builtin is never
+      // presented as if it lived only in the terminal — the host's refusal
+      // is named without the terminal claim.
       return result.reason === "terminal_only"
-        ? `The host runs /${entry.name} only in its terminal UI.`
+        ? `The host cannot dispatch /${entry.name} from the desktop.`
         : `The host reports no /${entry.name} command.`;
     case "session_switching":
       return `gentle-shell is switching sessions right now — retry /${entry.name} in a moment.`;
@@ -262,6 +288,10 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   const [paletteOpen, setPaletteOpen] = useState(false);
   const commandRunRef = useRef(0);
   const [resumeSelection, setResumeSelection] = useState<{ key: string; directory: string }>();
+  // T3 (palette-command-arguments S1): the argument screen a runnable row
+  // with `args` opened, keyed to the pane it was opened for — like the
+  // resume picker, it never survives a selection change.
+  const [commandScreen, setCommandScreen] = useState<{ key: string; name: "model" | "thinking" | "name" }>();
   const [pane, setPane] = useState<ConversationPane>(CONVERSATION_PANE.CHAT);
   // The packaged app's version for the footer's last group (S9). Asked once:
   // the value never changes while the window lives, and a bridge without
@@ -328,6 +358,7 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
       forgetClosedHost(closedHostId);
       if (closedHostId === hostId) {
         setResumeSelection(undefined);
+        setCommandScreen(undefined);
         setResolved(undefined);
         onHostResolved?.(undefined);
         setBridgeError("This workspace's host was closed");
@@ -373,6 +404,7 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   useEffect(() => {
     setPane(CONVERSATION_PANE.CHAT);
     setResumeSelection(undefined);
+    setCommandScreen(undefined);
     setHelpersOpenedAt(new Date().toISOString());
   }, [activeChat]);
 
@@ -531,6 +563,57 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
     setResumeSelection({ key: currentKey, directory: workspacePath });
   };
 
+  /** The desktop's own session paths (session-replacement-reflection,
+   * withdrawn): the palette's `new` and `resume` rows no longer dispatch
+   * through the host's `run_command` — a session replaced in-child cannot
+   * tell the client which live rows belong to the old or the new session
+   * (message ids are synthesized per load), so the pane is driven by the
+   * SAME open/new resolution the app has always used. A resolved result is
+   * adopted into this pane exactly like the open/new effect adopts its own:
+   * the host id is reported up, its state is cached as the snapshot, and the
+   * pane renders it. The chat→host mapping is deliberately NOT rewritten —
+   * the pane's key still belongs to the chat the user selected, and the
+   * resolved pair above is what keeps the adopted host addressed. */
+  const adoptSessionPath = (result: OpenChatResult): void => {
+    if (closedHosts.has(result.hostId)) return;
+    rememberSnapshot(result.hostId, result.state);
+    setResolved({ key: currentKey, hostId: result.hostId });
+    onHostResolved?.(result.hostId);
+    setChatState(result.state);
+  };
+
+  /** Reopens the chosen saved chat through the bridge's chat-open path —
+   * the same one the sidebar's selection resolves through — instead of
+   * handing a session file path to `run_command`. A failure surfaces on the
+   * status line and changes nothing. */
+  const openChatThroughBridge = (id: string): void => {
+    bridge
+      .openChat(id)
+      .then(adoptSessionPath)
+      .catch((cause: unknown) => setBridgeError(errorText(cause)));
+  };
+
+  /** Starts a fresh chat through the bridge's new-chat path — the same one
+   * the app's own "New chat" action resolves through — instead of asking
+   * the host to replace the session in-child. A failure surfaces on the
+   * status line and changes nothing. */
+  const startNewChatThroughBridge = (): void => {
+    bridge
+      .newChat()
+      .then(adoptSessionPath)
+      .catch((cause: unknown) => setBridgeError(errorText(cause)));
+  };
+
+  /** T3 (palette-command-arguments S2/S3/S4): whichever argument screen is
+   * open confirms through ONE dispatch — the open screen's name is the
+   * command, the confirmed value (a `provider/id`, a level, or typed text
+   * in the degraded S6 mode) is its run_command args. */
+  const confirmScreen = (value: string): void => {
+    if (!commandScreen || commandScreen.key !== currentKey) return;
+    setCommandScreen(undefined);
+    dispatchRunCommand(commandScreen.name, value);
+  };
+
   /** Runs one dispatch through the host's `run_command` path (S4): the
    * result shapes the status line (executed clears it; a refusal names its
    * reason; `session_switching` is retryable and never "executed"; a
@@ -554,13 +637,17 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
   };
 
   /** T9 (S19), palette-host-catalog S3/S5: a palette row was run. The
-   * execution matrix is the CONTRACT, never a name list — the one permitted
-   * by-name special case is the catalog's runnable /resume, whose session
-   * choice is the desktop's own picker flow:
+   * execution matrix is the CONTRACT, never a name list — the permitted
+   * by-name special cases are the catalog's runnable /resume (whose
+   * session choice is the desktop's own picker flow) and /new (whose
+   * fresh chat is the desktop's own new-chat path), plus the three
+   * argument screens of palette-command-arguments T3:
    *
-   *   - `runnable: true` → the host's `run_command` (S4), args supplied
-   *     only by the /resume picker (the catalog's own args are a display
-   *     hint, never a value to send);
+   *   - `runnable: true` → the host's `run_command` (S4); a row whose NAME
+   *     has an argument screen (COMMAND_ARGUMENT_SCREENS: model, thinking,
+   *     name) opens that screen, and /resume keeps its picker — a runnable
+   *     command is never dispatched without its value
+   *     (palette-command-arguments S1/S5);
    *   - extension / prompt / skill with `runnable: false` → `/name` sent as
    *     a prompt, the path pi already dispatches from prompts (S3);
    *   - builtin with `runnable: false` → shown, never dispatched, and the
@@ -568,19 +655,50 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
    */
   const handleRunCommand = (entry: ChatCommand): void => {
     setPaletteOpen(false);
-    if (entry.runnable) {
+      if (entry.runnable) {
       if (entry.source === "builtin" && entry.name === "resume") {
         openResumePicker();
         return;
       }
+      // The desktop's own session paths (session-replacement-reflection,
+      // withdrawn): /new starts a fresh chat through the bridge's new-chat
+      // path — the same resolution the app's own "New chat" action uses —
+      // never through a `run_command` that replaces the session in-child.
+      // Neither path is host-addressed, so neither waits on the readiness
+      // gate below; both are always reachable from an open pane.
+      if (entry.source === "builtin" && entry.name === "new") {
+        startNewChatThroughBridge();
+        return;
+      }
       // T10 (R3-004): a dispatch needs the same readiness the composer's
       // Send already gates: an empty host id has nowhere to route the
-      // request. The palette is a transient launcher, so it is dismissed
+      // request — and that holds for a screen too, whose reads are
+      // addressed to the host. The gate sits BEFORE any screen or
+      // dispatch; the palette is a transient launcher, so it is dismissed
       // instead of lingering open as a modal that silently ignores its
       // input — but the dismissal is never SILENT: the reason is named on
       // the status line so the click never looks like it ran something.
       if (hostId === "") {
         setBridgeError(`Open a chat before running /${entry.name}.`);
+        return;
+      }
+      // T3 (palette-command-arguments S1/S5, correction round): route by
+      // NAME, one table lookup — the host declares `args: null` for /model
+      // and /thinking (the value is chosen on the screen, never typed), so
+      // `entry.args` is absent there and cannot gate their screens.
+      const screen = COMMAND_ARGUMENT_SCREENS[entry.name];
+      if (screen !== undefined) {
+        setCommandScreen({ key: currentKey, name: screen });
+        return;
+      }
+      // The catalog contract decides the rest, never a name list — `args`
+      // present means the command needs a value, and a runnable command is
+      // never dispatched WITHOUT it. A runnable-with-args row with no
+      // screen in the table dispatches nothing: its value would just earn
+      // the host's refusal, so the status line says honestly that it needs
+      // an argument this app cannot collect.
+      if (entry.args !== undefined) {
+        setBridgeError(`/${entry.name} needs an argument (${entry.args}) — this app has no screen for it, so nothing was dispatched.`);
         return;
       }
       dispatchRunCommand(entry.name);
@@ -747,20 +865,39 @@ export function ConversationContainer({ activeChat, activeHostId, onHostResolved
           onCancel={() => setResumeSelection(undefined)}
           onSelect={(chat) => {
             setResumeSelection(undefined);
-            // palette-host-catalog S5: the picked session's file path goes
-            // to the host as `run_command` args — the ONE own flow left. A
-            // chat the host reported without a path must not send its id
-            // as if it were a path: the refusal is the honest answer.
-            if (!chat.path) {
-              setBridgeError("The selected session's path is unknown — the host did not report it, so /resume cannot run.");
-              return;
-            }
-            if (hostId === "") {
-              setBridgeError("Open a chat before running /resume.");
-              return;
-            }
-            dispatchRunCommand("resume", chat.path);
+            // The desktop's own chat-open path (session-replacement-
+            // reflection, withdrawn): the chosen session reopens through
+            // the SAME resolution the sidebar's selection uses — never a
+            // `run_command` that replaces the session in-child.
+            openChatThroughBridge(chat.id);
           }}
+        />
+      ) : null}
+      {/* T3 (palette-command-arguments S2/S3/S4): the three argument
+      screens, keyed to the pane they were opened for exactly like the
+      resume picker. Each one owns its fetch and its S6 degradation; the
+      confirmation dispatches through run_command args. */}
+      {commandScreen?.key === currentKey && commandScreen.name === "model" ? (
+        <ModelSelectorDialog
+          hostId={hostId}
+          currentModel={chatState.session ? { provider: chatState.session.modelProvider, id: chatState.session.modelId } : undefined}
+          onCancel={() => setCommandScreen(undefined)}
+          onConfirm={confirmScreen}
+        />
+      ) : null}
+      {commandScreen?.key === currentKey && commandScreen.name === "thinking" ? (
+        <ThinkingSelectorDialog
+          hostId={hostId}
+          currentLevel={chatState.session?.thinkingLevel}
+          onCancel={() => setCommandScreen(undefined)}
+          onConfirm={confirmScreen}
+        />
+      ) : null}
+      {commandScreen?.key === currentKey && commandScreen.name === "name" ? (
+        <SessionNameDialog
+          initialName={chatState.session?.sessionName}
+          onCancel={() => setCommandScreen(undefined)}
+          onConfirm={confirmScreen}
         />
       ) : null}
     </section>

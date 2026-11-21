@@ -279,6 +279,31 @@ describe("mockBridge", () => {
     expect(other.hostId).not.toBe(first.hostId);
   });
 
+  // The desktop's own session paths (session-replacement-reflection,
+  // withdrawn): the palette routes /new through newChat and /resume's
+  // picker through openChat, so the stand-in models them the way the real
+  // host does — a (fresh) open loads the chosen session's transcript, a
+  // new chat starts empty, and an already-live chat keeps its own state.
+  it("a fresh openChat loads the chosen session's transcript and newChat starts empty", async () => {
+    const opened = await mockBridge.openChat("chat-refactor");
+    expect(opened.state.messages.map((message) => message.text)).toEqual([
+      "Refactor the session store.",
+      "The session store is refactored.",
+    ]);
+
+    const fresh = await mockBridge.newChat();
+    expect(fresh.hostId).not.toBe(opened.hostId);
+    expect(fresh.state.messages).toEqual([]);
+
+    // An already-live chat keeps its host's own state: a re-open never
+    // rewinds a conversation in progress.
+    await mockBridge.sendMessage(opened.hostId, "one more turn");
+    const again = await mockBridge.openChat("chat-refactor");
+    expect(again.hostId).toBe(opened.hostId);
+    expect(again.state.messages.some((message) => message.text === "one more turn")).toBe(true);
+    expect(again.state.messages[0]?.text).toBe("Refactor the session store.");
+  });
+
   it("rejects a request whose host id is unknown or no longer current, and mutates no state", async () => {
     const { states } = collectStates();
 

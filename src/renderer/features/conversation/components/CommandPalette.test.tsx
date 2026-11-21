@@ -197,6 +197,40 @@ describe("CommandPalette", () => {
     expect(onClose).toHaveBeenCalledExactlyOnceWith();
   });
 
+  it("keeps Enter native on the focused Clear button: it clears the filter and dispatches nothing (R3-001/R4-001)", () => {
+    const { input, dialog, onRun, onClose } = renderPalette();
+
+    // A filter with no matches shows the Clear button; the palette's Tab
+    // cycle parks focus on it, and Enter there must keep the button's
+    // native activation — clearing the filter — instead of being claimed
+    // for the (here empty) selection and swallowing the clear.
+    fireEvent.change(input, { target: { value: "zzz" } });
+    const clear = screen.getByRole("button", { name: "Clear" });
+    clear.focus();
+    expect(clear).toHaveFocus();
+
+    // A cancelable Enter keydown, with preventDefault spied: the palette
+    // must return WITHOUT claiming the key, so the browser's native button
+    // activation proceeds. jsdom performs no keydown→click default action
+    // itself, so the native activation the browser would run is simulated
+    // with the button's own click below.
+    const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    const preventDefault = vi.spyOn(enter, "preventDefault");
+    clear.dispatchEvent(enter);
+
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(onRun).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+
+    // The native activation: the filter is cleared, the full catalog is
+    // listed again, and still nothing was dispatched.
+    fireEvent.click(clear);
+    expect(input).toHaveValue("");
+    expect(within(dialog).getAllByRole("option")).toHaveLength(6);
+    expect(onRun).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("keeps Tab inside the dialog: it cycles between the input and the Clear button", () => {
     const { input } = renderPalette();
 
@@ -273,6 +307,35 @@ describe("CommandPalette", () => {
     expect(foot?.textContent).toContain("move");
     expect(foot?.textContent).toContain("run");
     expect(foot?.textContent).toContain("close");
+  });
+
+  it("moves the selection with the arrows even when nothing holds focus — the keydown is dispatched on document.body (S11)", () => {
+    const { input, rows } = renderPalette();
+    // The browser parks focus on body after the app window loses focus:
+    // nothing inside the palette holds it, and navigation must stay active
+    // (the owner's report: arrows only worked while the text field held
+    // focus).
+    input.blur();
+    expect(document.activeElement).toBe(document.body);
+
+    fireEvent.keyDown(document.body, { key: "ArrowDown" });
+    expect(rows()[1]).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(document.body, { key: "ArrowUp" });
+    expect(rows()[0]).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("restores focus to the filter input when the app window regains focus, and the arrows still navigate (S11)", () => {
+    const { input, rows } = renderPalette();
+    expect(input).toHaveFocus();
+
+    // The app window loses focus (a click outside the GUI) — the browser
+    // parks focus on body — and then the window regains it.
+    input.blur();
+    fireEvent(window, new Event("focus"));
+
+    expect(input).toHaveFocus();
+    fireEvent.keyDown(document.body, { key: "ArrowDown" });
+    expect(rows()[1]).toHaveAttribute("aria-selected", "true");
   });
 
   it("restores focus to the previously focused element when it closes", () => {

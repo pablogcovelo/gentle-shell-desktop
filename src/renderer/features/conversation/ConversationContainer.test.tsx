@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { CHAT_STATE, MESSAGE_ROLE, type ChatState, type ChatSummary, type Dialog, type GentleBridge, type SubscriptionUsage } from "@shared/bridge-types";
+import { mockBridge, resetMockBridge, setMockChatMessages, setMockChats } from "@renderer/shared/bridge/mockBridge";
 import { ConversationContainer, resetWorkspaceSnapshotsForTests, type ActiveChat } from "./ConversationContainer";
 import { resetWelcomeHeroIntrosForTests } from "./components/WelcomeHero";
 
@@ -1835,6 +1836,7 @@ describe("ConversationContainer command palette (T9, palette-host-catalog T2)", 
       { name: "skill:review", runnable: false, source: "skill" as const },
       { name: "new", description: "Start a new session", runnable: true, source: "builtin" as const },
       { name: "resume", description: "Resume another session", runnable: true, source: "builtin" as const },
+      { name: "compact", description: "Manually compact the session context", runnable: true, source: "builtin" as const },
       { name: "fork", description: "Fork from a previous message", runnable: false, source: "builtin" as const },
     ],
   };
@@ -1993,13 +1995,20 @@ describe("ConversationContainer command palette (T9, palette-host-catalog T2)", 
 
   // palette-host-catalog S3: the row's execution is decided by the wire's
   // `runnable` verdict and `source` — never by a client-side name list.
-  it("runs the catalog's runnable /new row through bridge.runCommand instead of sending text (S4)", async () => {
+  // The session-replacement reflection was withdrawn: the catalog's
+  // runnable /new row routes through the desktop's OWN new-chat path —
+  // the same bridge.newChat() resolution the app's "New chat" action
+  // uses — never through a `run_command` that replaces the session
+  // in-child. The pane adopts the fresh chat's resolution like the
+  // open/new effect does: empty messages, the reported host addressed.
+  it("routes the catalog's runnable /new row through the bridge's new-chat path (the reflection is withdrawn)", async () => {
     const bridge = makeBridge({
-      newChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: PALETTE_STATE }),
+      openChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: PALETTE_STATE }),
+      newChat: vi.fn().mockResolvedValue({ hostId: "host-2", state: emptyState() }),
       sendMessage: vi.fn().mockResolvedValue({ queued: true }),
     });
     window.gentle = bridge;
-    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} />);
     await act(async () => {});
     fireEvent.keyDown(document, { key: "k", ctrlKey: true });
     const palette = screen.getByRole("dialog", { name: "Commands" });
@@ -2009,7 +2018,8 @@ describe("ConversationContainer command palette (T9, palette-host-catalog T2)", 
     fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "new" } });
     fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
 
-    expect(bridge.runCommand).toHaveBeenCalledExactlyOnceWith("host-1", "new");
+    expect(bridge.newChat).toHaveBeenCalledExactlyOnceWith();
+    expect(bridge.runCommand).not.toHaveBeenCalled();
     expect(bridge.sendMessage).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog", { name: "Commands" })).not.toBeInTheDocument();
   });
@@ -2077,20 +2087,26 @@ describe("ConversationContainer command palette (T9, palette-host-catalog T2)", 
     render(<ConversationContainer activeChat={NEW_CHAT} />);
     await act(async () => {});
 
+    // /new routes through the desktop's own new-chat path now; /compact is
+    // a dispatched row, so its refusals still name their reasons.
     fireEvent.keyDown(document, { key: "k", ctrlKey: true });
     const palette = screen.getByRole("dialog", { name: "Commands" });
-    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "new" } });
+    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "compact" } });
+    // T4 (palette-command-arguments S5): the wording no longer claims the
+    // host runs the dispatched command in its terminal UI — the desktop
+    // simply cannot dispatch it.
     fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "The host runs /new only in its terminal UI.",
+      "The host cannot dispatch /compact from the desktop.",
     );
+    expect(screen.getByRole("status")).not.toHaveTextContent("terminal UI");
 
     fireEvent.keyDown(document, { key: "k", ctrlKey: true });
     const palette2 = screen.getByRole("dialog", { name: "Commands" });
-    fireEvent.change(within(palette2).getByRole("combobox"), { target: { value: "new" } });
+    fireEvent.change(within(palette2).getByRole("combobox"), { target: { value: "compact" } });
     fireEvent.keyDown(within(palette2).getByRole("combobox"), { key: "Enter" });
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "The host reports no /new command.",
+      "The host reports no /compact command.",
     );
   });
 
@@ -2107,7 +2123,7 @@ describe("ConversationContainer command palette (T9, palette-host-catalog T2)", 
     // not be swallowed by it, and must not clear the line as if it ran.
     fireEvent.keyDown(document, { key: "k", ctrlKey: true });
     const palette = screen.getByRole("dialog", { name: "Commands" });
-    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "new" } });
+    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "compact" } });
     fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
     expect(await screen.findByRole("status")).toHaveTextContent(/switching sessions/);
     expect(screen.getByRole("status")).toHaveTextContent(/retry/i);
@@ -2124,7 +2140,7 @@ describe("ConversationContainer command palette (T9, palette-host-catalog T2)", 
     await act(async () => {});
     fireEvent.keyDown(document, { key: "k", ctrlKey: true });
     const palette = screen.getByRole("dialog", { name: "Commands" });
-    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "new" } });
+    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "compact" } });
     fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
 
     expect(await screen.findByRole("status")).toHaveTextContent("The child exited before answering");
@@ -2144,19 +2160,24 @@ describe("ConversationContainer command palette (T9, palette-host-catalog T2)", 
     await act(async () => {});
     fireEvent.keyDown(document, { key: "k", ctrlKey: true });
     const palette = screen.getByRole("dialog", { name: "Commands" });
-    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "new" } });
+    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "compact" } });
     fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
-    expect(await screen.findByRole("status")).toHaveTextContent("The host reports no /new command.");
+    expect(await screen.findByRole("status")).toHaveTextContent("The host reports no /compact command.");
 
     fireEvent.keyDown(document, { key: "k", ctrlKey: true });
     const palette2 = screen.getByRole("dialog", { name: "Commands" });
-    fireEvent.change(within(palette2).getByRole("combobox"), { target: { value: "new" } });
+    fireEvent.change(within(palette2).getByRole("combobox"), { target: { value: "compact" } });
     fireEvent.keyDown(within(palette2).getByRole("combobox"), { key: "Enter" });
 
     await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
   });
 
-  it("opens the resume picker from the catalog's runnable resume row and hands the chosen path to run_command (S5)", async () => {
+  // The desktop's own session paths (session-replacement-reflection,
+  // withdrawn): the catalog's runnable /resume row keeps its picker, but
+  // the chosen session now reopens through the bridge's chat-open path —
+  // the SAME resolution the sidebar's selection uses — instead of handing
+  // a session file path to `run_command` to replace the session in-child.
+  it("opens the resume picker from the catalog's resume row and reopens the chosen session through the chat-open path", async () => {
     const bridge = makeBridge({
       openChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: PALETTE_STATE }),
       listChats: vi.fn().mockResolvedValue([{ ...EXISTING_CHAT, path: "/tmp/project/sess-1.jsonl" }]),
@@ -2175,41 +2196,313 @@ describe("ConversationContainer command palette (T9, palette-host-catalog T2)", 
     expect(bridge.sendMessage).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog", { name: "Commands" })).not.toBeInTheDocument();
 
-    // The picker's choice goes to the host as run_command args — the session
-    // FILE path, never the chat id — and the legacy openChat route is gone
-    // (openChat's one call is the pane's own open, before the picker).
+    // The picker's choice reopens the session through bridge.openChat —
+    // the chat id, never a run_command dispatch (openChat's earlier call
+    // is the pane's own open, before the picker).
     const openCalls = vi.mocked(bridge.openChat).mock.calls.length;
     fireEvent.click(await within(resumeDialog).findByRole("button", { name: /Refactor the store/ }));
-    expect(bridge.runCommand).toHaveBeenCalledExactlyOnceWith("host-1", "resume", "/tmp/project/sess-1.jsonl");
-    expect(vi.mocked(bridge.openChat).mock.calls.length).toBe(openCalls);
+    expect(vi.mocked(bridge.openChat).mock.calls.length).toBe(openCalls + 1);
+    expect(vi.mocked(bridge.openChat).mock.lastCall).toEqual(["chat-1"]);
+    expect(bridge.runCommand).not.toHaveBeenCalled();
   });
 
-  it("a selected session with no host-reported path refuses run_command and says the path is unknown (S5)", async () => {
-    const bridge = makeBridge({
-      openChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: PALETTE_STATE }),
-      listChats: vi.fn().mockResolvedValue([{ ...EXISTING_CHAT, path: undefined }]),
-    });
-    window.gentle = bridge;
-    render(<ConversationContainer activeChat={{ kind: "existing", chat: EXISTING_CHAT }} />);
-    await act(async () => {});
-    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
-    const palette = screen.getByRole("dialog", { name: "Commands" });
-    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "resume" } });
-    fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
-
-    const resumeDialog = await screen.findByRole("dialog", { name: "Resume a session" });
-    fireEvent.click(await within(resumeDialog).findByRole("button", { name: /Refactor the store/ }));
-
-    // The id is never sent as if it were a path: the refusal is the answer
-    // (openChat's one call is the pane's own open, before the picker).
-    expect(bridge.runCommand).not.toHaveBeenCalled();
-    expect(await screen.findByRole("status")).toHaveTextContent(
-      /The selected session's path is unknown — the host did not report it, so \/resume cannot run\./,
+  // The reflection is withdrawn: the picker's choice reopens the session
+  // through the REAL mock bridge's chat-open path — the stand-in that
+  // models what the real host does — so the chosen session's transcript
+  // must arrive in the pushed state and the previous session's must be
+  // gone from it. A per-test fake bridge would pass trivially (the pane
+  // renders whatever state the bridge resolves); the mock is the stand-in.
+  it("reopening a session through the picker loads that session's transcript, and the previous session's rows are gone", async () => {
+    stubHeroAnimations(1);
+    resetMockBridge();
+    setMockChats([
+      { id: "chat-a", title: "Chat A", cwd: "/tmp/project", path: "/tmp/project/a.jsonl", updatedAt: "2026-09-21T09:00:00.000Z", messageCount: 2, state: CHAT_STATE.IDLE },
+      { id: "chat-b", title: "Chat B", cwd: "/tmp/project", path: "/tmp/project/b.jsonl", updatedAt: "2026-09-21T10:00:00.000Z", messageCount: 2, state: CHAT_STATE.IDLE },
+    ]);
+    setMockChatMessages(
+      new Map([
+        ["chat-a", [
+          { id: "a-1", role: MESSAGE_ROLE.USER, text: "Resumed A question" },
+          { id: "a-2", role: MESSAGE_ROLE.ASSISTANT, text: "Resumed A answer", streaming: false },
+        ]],
+        ["chat-b", [
+          { id: "b-1", role: MESSAGE_ROLE.USER, text: "Resumed B question" },
+          { id: "b-2", role: MESSAGE_ROLE.ASSISTANT, text: "Resumed B answer", streaming: false },
+        ]],
+      ]),
     );
+    window.gentle = mockBridge;
+    render(<ConversationContainer activeChat={{ kind: "workspace", directory: "/tmp/project" }} />);
+    await act(async () => {});
+
+    const openResumePickerAndChoose = async (buttonName: RegExp): Promise<void> => {
+      fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+      const palette = screen.getByRole("dialog", { name: "Commands" });
+      fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "resume" } });
+      fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
+      const resumeDialog = await screen.findByRole("dialog", { name: "Resume a session" });
+      fireEvent.click(await within(resumeDialog).findByRole("button", { name: buttonName }));
+    };
+
+    await openResumePickerAndChoose(/Chat A/);
+    expect(await screen.findByText("Resumed A question")).toBeInTheDocument();
+    expect(screen.getByText("Resumed A answer")).toBeInTheDocument();
+
+    // Reopening another session swaps the pane to that session's own
+    // transcript — the chat-open path loads it, and chat A's rows leave.
+    await openResumePickerAndChoose(/Chat B/);
+    expect(await screen.findByText("Resumed B question")).toBeInTheDocument();
+    expect(screen.getByText("Resumed B answer")).toBeInTheDocument();
+    expect(screen.queryByText("Resumed A question")).not.toBeInTheDocument();
+    expect(screen.queryByText("Resumed A answer")).not.toBeInTheDocument();
   });
 
   it("leaves the removed Search chats dialog gone when Ctrl+K opens the palette", async () => {
     await renderWithPalette();
     expect(screen.queryByRole("searchbox", { name: "Search chats" })).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T3/T4 (palette-command-arguments S1–S6): the three argument screens and the
+// NAME-keyed routing. The state below carries the host's REAL builtin
+// entries exactly as parseCommandCatalog folds them (gentle-pi
+// lib/desktop-feed.ts DESKTOP_FEED_BUILTIN_COMMANDS): `args: null` is the
+// wire's "absent", so /model and /thinking carry NO args — the value is
+// chosen on their screens, never typed — and only /name declares
+// "<name>". Routing keyed on `entry.args` left the model and thinking
+// screens dead in the shipped app; these tests pin the real payload.
+// ---------------------------------------------------------------------------
+
+describe("ConversationContainer command argument screens (T3, palette-command-arguments)", () => {
+  const ARGS_STATE = {
+    ...emptyState(),
+    session: { modelId: "claude-sonnet-4", modelProvider: "anthropic", thinkingLevel: "medium" as const, sessionName: "Old name" },
+    commands: [
+      { name: "new", description: "Start a new session", runnable: true, source: "builtin" as const },
+      { name: "compact", description: "Manually compact the session context", runnable: true, source: "builtin" as const },
+      { name: "model", description: "Select model (opens selector UI)", runnable: true, source: "builtin" as const },
+      { name: "thinking", description: "Set thinking level", runnable: true, source: "builtin" as const },
+      { name: "name", description: "Set session display name", runnable: true, source: "builtin" as const, args: "<name>" },
+      // The contract guard, NOT a host row: today's real catalog has no
+      // runnable row that declares args without a screen (name is the only
+      // one and it has one). This fixture pins the honest branch so a future
+      // args-declaring builtin without a screen says so instead of
+      // dispatching half a command.
+      { name: "needs-value-someday", description: "Contract guard: declares args, has no screen", runnable: true, source: "builtin" as const, args: "<value>" },
+    ],
+  };
+
+  const REPORTED_MODELS = [
+    { provider: "openai", id: "gpt-5", label: "GPT-5" },
+    { provider: "anthropic", id: "claude-sonnet-4", label: "Claude Sonnet 4" },
+  ];
+
+  function argsBridge(overrides: Partial<GentleBridge> = {}): GentleBridge {
+    return makeBridge({
+      newChat: vi.fn().mockResolvedValue({ hostId: "host-1", state: ARGS_STATE }),
+      availableModels: vi.fn().mockResolvedValue({ kind: "ok", truncated: false, models: REPORTED_MODELS }),
+      availableThinkingLevels: vi.fn().mockResolvedValue({ kind: "ok", levels: ["off", "medium", "high"] }),
+      runCommand: vi.fn().mockResolvedValue({ kind: "executed" }),
+      ...overrides,
+    });
+  }
+
+  /** Opens the palette and runs one catalog row by name. */
+  async function runRow(name: string): Promise<void> {
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const palette = screen.getByRole("dialog", { name: "Commands" });
+    fireEvent.change(within(palette).getByRole("combobox"), { target: { value: name } });
+    fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
+  }
+
+  it("the model row opens the selector with the current model first and dispatches the exact provider/id", async () => {
+    const bridge = argsBridge();
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    await runRow("model");
+
+    const dialog = await screen.findByRole("dialog", { name: "Choose a model" });
+    const options = within(dialog).getAllByRole("option");
+    expect(options[0]).toHaveTextContent("Claude Sonnet 4");
+    expect(options[0]).toHaveAttribute("aria-selected", "true");
+    expect(options[1]).toHaveTextContent("GPT-5");
+    expect(bridge.availableModels).toHaveBeenCalledWith("host-1");
+    // The real catalog row carries NO args (the wire's null is dropped), so
+    // nothing may claim the host cannot dispatch this name from the desktop.
+    expect(screen.queryByText(/cannot dispatch/)).not.toBeInTheDocument();
+    expect(bridge.runCommand).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(within(dialog).getByRole("combobox"), { key: "Enter" });
+    expect(bridge.runCommand).toHaveBeenCalledExactlyOnceWith("host-1", "model", "anthropic/claude-sonnet-4");
+    expect(bridge.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("the model selector's filter narrows the list before dispatching", async () => {
+    const bridge = argsBridge();
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    await runRow("model");
+
+    const dialog = await screen.findByRole("dialog", { name: "Choose a model" });
+    const input = within(dialog).getByRole("combobox", { name: "Filter models" });
+    fireEvent.change(input, { target: { value: "gpt" } });
+    const options = within(dialog).getAllByRole("option");
+    expect(options).toHaveLength(1);
+    expect(options[0]).toHaveTextContent("GPT-5");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(bridge.runCommand).toHaveBeenCalledExactlyOnceWith("host-1", "model", "openai/gpt-5");
+  });
+
+  it("Escape on the model screen dispatches nothing", async () => {
+    const bridge = argsBridge();
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    await runRow("model");
+
+    const dialog = await screen.findByRole("dialog", { name: "Choose a model" });
+    fireEvent.keyDown(within(dialog).getByRole("combobox"), { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Choose a model" })).not.toBeInTheDocument();
+    expect(bridge.runCommand).not.toHaveBeenCalled();
+  });
+
+  it("the thinking row dispatches the chosen level as args", async () => {
+    const bridge = argsBridge();
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    await runRow("thinking");
+
+    const dialog = await screen.findByRole("dialog", { name: "Choose a thinking level" });
+    // The real catalog row carries NO args: the screen opens instead of a
+    // valueless dispatch that would earn the host's refusal.
+    expect(screen.queryByText(/cannot dispatch/)).not.toBeInTheDocument();
+    expect(bridge.runCommand).not.toHaveBeenCalled();
+    const medium = within(dialog).getByRole("option", { name: "medium" });
+    expect(medium).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(medium, { key: "ArrowDown" });
+    const high = within(dialog).getByRole("option", { name: "high" });
+    expect(high).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(high, { key: "Enter" });
+    expect(bridge.runCommand).toHaveBeenCalledExactlyOnceWith("host-1", "thinking", "high");
+  });
+
+  it("the name row prefills the session name, refuses empty, and dispatches the typed text", async () => {
+    const bridge = argsBridge();
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    await runRow("name");
+
+    const dialog = await screen.findByRole("dialog", { name: "Name this session" });
+    const input = within(dialog).getByRole("textbox", { name: "Session name" });
+    expect(input).toHaveValue("Old name");
+
+    // The host rejects an empty name, so the screen refuses it too.
+    fireEvent.change(input, { target: { value: "   " } });
+    expect(within(dialog).getByRole("button", { name: "Save name" })).toBeDisabled();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(bridge.runCommand).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: "  New name  " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(bridge.runCommand).toHaveBeenCalledExactlyOnceWith("host-1", "name", "New name");
+  });
+
+  it("a runnable row that declares args but has no screen dispatches nothing and says why (contract guard)", async () => {
+    const bridge = argsBridge();
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    await runRow("needs-value-someday");
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "/needs-value-someday needs an argument (<value>) — this app has no screen for it, so nothing was dispatched.",
+    );
+    expect(bridge.runCommand).not.toHaveBeenCalled();
+    expect(bridge.sendMessage).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("an unsupported model list degrades to the typed input with the right source label, and its text dispatches as args", async () => {
+    const bridge = argsBridge({
+      availableModels: vi.fn().mockResolvedValue({ kind: "unsupported" }),
+    });
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    await runRow("model");
+
+    const dialog = await screen.findByRole("dialog", { name: "Choose a model" });
+    expect(dialog).toHaveTextContent("did not report its available models");
+    expect(within(dialog).queryByRole("option")).not.toBeInTheDocument();
+    const input = within(dialog).getByRole("textbox", { name: "Model" });
+    fireEvent.change(input, { target: { value: "openai/gpt-5" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(bridge.runCommand).toHaveBeenCalledExactlyOnceWith("host-1", "model", "openai/gpt-5");
+  });
+
+  it("a truncated model list says it is truncated", async () => {
+    const bridge = argsBridge({
+      availableModels: vi.fn().mockResolvedValue({ kind: "ok", truncated: true, models: REPORTED_MODELS }),
+    });
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    await runRow("model");
+
+    expect(await screen.findByText(/truncated/)).toBeInTheDocument();
+  });
+
+  it("an unsupported thinking list falls back to the app's closed union and says so", async () => {
+    const bridge = argsBridge({
+      availableThinkingLevels: vi.fn().mockResolvedValue({ kind: "unsupported" }),
+    });
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    await runRow("thinking");
+
+    const dialog = await screen.findByRole("dialog", { name: "Choose a thinking level" });
+    expect(dialog).toHaveTextContent("did not report its thinking levels");
+    // The full closed union the app already types — including a level the
+    // child's own list in the happy-path test did not carry.
+    expect(within(dialog).getByRole("option", { name: "xhigh" })).toBeInTheDocument();
+    const medium = within(dialog).getByRole("option", { name: "medium" });
+    expect(medium).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(medium, { key: "Enter" });
+    expect(bridge.runCommand).toHaveBeenCalledExactlyOnceWith("host-1", "thinking", "medium");
+  });
+
+  // The desktop's own session paths (session-replacement-reflection,
+  // withdrawn): the runnable /new row routes through the bridge's new-chat
+  // path — the same resolution the app's "New chat" action uses — never
+  // through a `run_command` that replaces the session in-child.
+  it("the /new row routes through the bridge's new-chat path, not run_command", async () => {
+    const bridge = argsBridge();
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    await runRow("new");
+
+    expect(bridge.newChat).toHaveBeenCalledTimes(2); // the pane's own open, then the row
+    expect(bridge.runCommand).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  // The real /compact row: runnable with `args: null` on the wire — like
+  // /new, it dispatches at once and no screen is invented for it.
+  it("the real /compact row (args absent on the wire) dispatches immediately with no value", async () => {
+    const bridge = argsBridge();
+    window.gentle = bridge;
+    render(<ConversationContainer activeChat={NEW_CHAT} />);
+    await act(async () => {});
+    await runRow("compact");
+
+    expect(bridge.runCommand).toHaveBeenCalledExactlyOnceWith("host-1", "compact");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

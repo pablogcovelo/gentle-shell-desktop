@@ -85,6 +85,38 @@ const EXAMPLE_CHATS: ChatSummary[] = [
   },
 ];
 
+/**
+ * The transcripts the mock serves when a chat is opened (the desktop's own
+ * chat-open path): `openChat` loads the chosen session's transcript the way
+ * the real host does — a reopened session shows ITS conversation, never the
+ * previous session's. Tests override the map with setMockChatMessages; a
+ * chat without an entry opens with an empty thread (the mock records no
+ * transcript for it).
+ */
+const DEMO_CHAT_MESSAGES: ReadonlyMap<string, readonly ChatMessage[]> = new Map([
+  ["chat-readme", [
+    { id: "demo-readme-1", role: MESSAGE_ROLE.USER, text: "Write the README intro." },
+    { id: "demo-readme-2", role: MESSAGE_ROLE.ASSISTANT, text: "Here is a draft intro for the README.", streaming: false },
+  ]],
+  ["chat-refactor", [
+    { id: "demo-refactor-1", role: MESSAGE_ROLE.USER, text: "Refactor the session store." },
+    { id: "demo-refactor-2", role: MESSAGE_ROLE.ASSISTANT, text: "The session store is refactored.", streaming: false },
+  ]],
+  ["chat-migration", [
+    { id: "demo-migration-1", role: MESSAGE_ROLE.USER, text: "Migrate the config schema." },
+    { id: "demo-migration-2", role: MESSAGE_ROLE.ASSISTANT, text: "The config schema is migrated.", streaming: false },
+  ]],
+]);
+
+let demoChatMessages: ReadonlyMap<string, readonly ChatMessage[]> = DEMO_CHAT_MESSAGES;
+
+/** Overrides the mock's per-chat resumed transcripts (tests only; the
+ * preview always uses the demo transcripts). Call with undefined to restore
+ * the demo map. */
+export function setMockChatMessages(messages: ReadonlyMap<string, readonly ChatMessage[]> | undefined): void {
+  demoChatMessages = messages ?? DEMO_CHAT_MESSAGES;
+}
+
 const STREAM_DELAY_MS = 40;
 
 /** Fake "we found pi on this machine" detection (T5), so the first-run
@@ -439,6 +471,7 @@ export function resetMockBridge(): void {
   directoryByHostId.clear();
   statesByHostId.clear();
   directoryPick = undefined;
+  demoChatMessages = DEMO_CHAT_MESSAGES;
   persistedWorkspaces = [];
   exampleChats = EXAMPLE_CHATS;
   mockAvailableModels = undefined;
@@ -801,10 +834,16 @@ export const mockBridge: GentleBridge = {
     currentHostId = hostId;
     const directory = exampleChats.find((chat) => chat.id === id)?.cwd;
     if (directory) directoryByHostId.set(hostId, directory);
+    const live = statesByHostId.get(hostId);
     setState({
-      ...(statesByHostId.get(hostId) ?? emptyState()),
+      ...(live ?? emptyState()),
       hostId,
       workspacePath: directory,
+      // A FRESH open loads the chosen session's transcript — the way the
+      // real host's chat.open does (the session file's history becomes the
+      // pane). An already-live host keeps its own state: a re-open never
+      // rewinds a conversation in progress.
+      ...(live ? {} : { messages: demoChatMessages.get(id) ?? [] }),
       // Only the worktree is overridden: the demo keeps the profile and MCP
       // inventory the same chat already showed.
       ...(id === "chat-migration"
@@ -819,6 +858,8 @@ export const mockBridge: GentleBridge = {
     helpersScenarioToken += 1;
     const hostId = mintHostId();
     currentHostId = hostId;
+    // The desktop's own new-chat path starts EMPTY: a fresh session has no
+    // transcript, exactly as the real host's chat.new resolution does.
     setState({ ...emptyState(), hostId });
     return { hostId, state: currentState };
   },
@@ -986,26 +1027,21 @@ export const mockBridge: GentleBridge = {
 
   // palette-host-catalog S4: the host's `run_command` path, mocked with the
   // same closed answer set — executed, a refusal, or (never here) the
-  // retryable session_switching. `new` and `resume` replace the session
-  // IN-CHILD (the same host id keeps answering — how the real switch
-  // behaves), so the pane's requests keep being addressed correctly.
+  // retryable session_switching. `new` and `resume` ARE host commands the
+  // child executes, but the desktop no longer dispatches them here: it
+  // routes /new through its own new-chat path and /resume through its
+  // picker and the chat-open path (the session-replacement reflection was
+  // withdrawn), so the mock carries NO session-replacement modeling — the
+  // answer is the bare verdict the real bridge resolves, and the pane is
+  // driven by the openChat/newChat pushes instead.
   async runCommand(hostId: string, name: string, args?: string): Promise<ChatCommandRunResult> {
     requireHost(hostId);
-    if (name === "new") {
-      helpersScenarioToken += 1;
-      setState({ ...emptyState(), hostId });
-      return { kind: "executed" };
-    }
+    if (name === "new") return { kind: "executed" };
     if (name === "resume") {
       // args is the session FILE path (S5); an unknown one answers the
       // host's refusal, never a throw.
-      const chat = args === undefined ? undefined : exampleChats.find((entry) => entry.path === args);
-      if (!chat) return { kind: "refused", reason: "terminal_only" };
-      helpersScenarioToken += 1;
-      hostIdByChat.set(chat.id, hostId);
-      setState({ ...(statesByHostId.get(hostId) ?? emptyState()), hostId, workspacePath: chat.cwd });
-      if (chat.id === "chat-migration") startHelpersScenario();
-      return { kind: "executed" };
+      const known = args !== undefined && exampleChats.some((entry) => entry.path === args);
+      return known ? { kind: "executed" } : { kind: "refused", reason: "terminal_only" };
     }
     // Every other catalog name — the remaining builtins included — lives in
     // pi's TUI, exactly like the host's own answer set.

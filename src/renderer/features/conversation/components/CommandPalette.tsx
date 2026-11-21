@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { ChatCommand } from "@shared/bridge-types";
 import "./CommandPalette.css";
@@ -87,62 +87,114 @@ export function CommandPalette({ commands, onRun, onClose }: CommandPaletteProps
     document.getElementById(`${listId}-option-${selected}`)?.scrollIntoView?.({ block: "nearest" });
   }, [listId, selected, visible.length]);
 
-  // The list keys (S19): ↑/↓ move the selection with wraparound, Enter runs
-  // the selected row. Escape is handled one level up, on the panel (see
-  // handlePanelKeyDown), so it closes the palette from ANY element inside
-  // the dialog, not only from this field. Every other key is left alone:
-  // the field keeps typing.
-  const handleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
-    if (event.key === "ArrowDown") {
+  // S11: the palette's keys are claimed at WINDOW level in capture, so a
+  // keydown reaches the surface no matter what holds focus — including
+  // nothing at all: after the app window loses and regains focus the
+  // browser parks it on body, and the arrows must still move the selection.
+  // One listener claims every key: Escape closes (isolated from the app-wide
+  // Escape listeners), Tab / Shift+Tab cycle only among the palette's own
+  // focusables (the input and, when shown, the Clear button) — focus never
+  // escapes to the dimmed page behind the modal (S21 makes the palette the
+  // only command surface, so focus lost behind the backdrop would strand the
+  // user with no way back to commands) — and the list keys keep their S19
+  // jobs: ↑/↓ move the selection with wraparound, Enter runs the selected
+  // row once. Every other key is left alone: the field keeps typing. A
+  // LAYOUT effect, so the claim is always in sync with the committed DOM —
+  // a passive effect can be flushed after a state update is already
+  // observable, and a keydown in that window would hit a stale claim.
+  useLayoutEffect(() => {
+    const keydown = (event: KeyboardEvent): void => {
+      if (
+        event.key !== "Escape" &&
+        event.key !== "Tab" &&
+        event.key !== "ArrowUp" &&
+        event.key !== "ArrowDown" &&
+        event.key !== "Enter"
+      )
+        return;
+      event.stopImmediatePropagation();
+      if (event.key === "Escape") {
+        // Stop before the app-wide Escape listeners: closing the palette must
+        // not also collapse the narrow navigation or another pane.
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key === "Tab") {
+        const focusables = [
+          ...(panelRef.current?.querySelectorAll<HTMLElement>("input, button:not(:disabled)") ?? []),
+        ];
+        if (focusables.length === 0) return;
+        // Tab is always claimed inside the dialog: it cycles (two or more
+        // focusables) or stays put (exactly one) — it never falls through to
+        // whatever sits behind the backdrop.
+        event.preventDefault();
+        const index = focusables.indexOf(document.activeElement as HTMLElement);
+        const offset = event.shiftKey ? -1 : 1;
+        const next = focusables[(index + offset + focusables.length) % focusables.length]!;
+        next.focus();
+        return;
+      }
+      if (event.key === "Enter") {
+        // R3-001/R4-001: Enter is claimed for the filter input, the list,
+        // its rows and the dialog/backdrop surface — but NEVER from a
+        // focused interactive control that is not a row of the list: the
+        // Tab cycle parks focus on the Clear button, and pressing Enter
+        // there must keep the button's native activation (clearing the
+        // filter), not be swallowed for the selection (and never dispatch
+        // a highlighted command instead — irreversible once run).
+        // R3-001/R4-001: Enter is claimed for the filter input, the list,
+        // its rows and the dialog/backdrop surface — but NEVER from a
+        // focused interactive control that is not a row of the list: the
+        // Tab cycle parks focus on the Clear button, and pressing Enter
+        // there must keep the button's native activation (clearing the
+        // filter) instead of being swallowed for the selection — a
+        // swallowed clear or a dispatched command is irreversible once
+        // the keydown lands.
+        const target = event.target;
+        const claimed =
+          target === inputRef.current ||
+          (target instanceof Element &&
+            target.closest(
+              "button, a, input, textarea, select, [role=\"button\"], [contenteditable]",
+            ) === null);
+        if (!claimed) return;
+        event.preventDefault();
+        const entry = visible[selected];
+        if (entry) onRun(entry);
+        return;
+      }
+      // ↑/↓ move the selection with wraparound.
       event.preventDefault();
-      if (visible.length > 0) setSelectedIndex((selected + 1) % visible.length);
-      return;
-    }
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      if (visible.length > 0) setSelectedIndex((selected - 1 + visible.length) % visible.length);
-      return;
-    }
-    if (event.key === "Enter") {
-      event.preventDefault();
-      const entry = visible[selected];
-      if (entry) onRun(entry);
-      return;
-    }
-  };
+      if (visible.length === 0) return;
+      const offset = event.key === "ArrowDown" ? 1 : -1;
+      setSelectedIndex((selected + offset + visible.length) % visible.length);
+    };
+    window.addEventListener("keydown", keydown, true);
+    return () => window.removeEventListener("keydown", keydown, true);
+  }, [visible, selected, onRun, onClose]);
 
-  /** Focus containment inside the dialog (T10, R3-001/R4-002). Escape closes
-   * the palette from any element inside it — the keydown bubbles here from
-   * the input, the Clear button or any other child — and Tab / Shift+Tab
-   * cycle only among the palette's own focusables (the input and, when
-   * shown, the Clear button): with a single focusable element, focus stays
-   * on it. Focus never escapes to the dimmed page behind the modal. The
-   * list keys ↑/↓/Enter keep their S19 jobs on the input above, and S21
-   * makes the palette the only command surface, so focus lost behind the
-   * backdrop would strand the user with no way back to commands. */
-  const handlePanelKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
-    if (event.key === "Escape") {
-      // Stop before the app-wide Escape listeners: closing the palette must
-      // not also collapse the narrow navigation or another pane.
-      event.preventDefault();
-      event.stopPropagation();
-      onClose();
-      return;
-    }
-    if (event.key !== "Tab") return;
-    const focusables = [
-      ...(panelRef.current?.querySelectorAll<HTMLElement>("input, button:not(:disabled)") ?? []),
-    ];
-    if (focusables.length === 0) return;
-    // Tab is always claimed inside the dialog: it cycles (two or more
-    // focusables) or stays put (exactly one) — it never falls through to
-    // whatever sits behind the backdrop.
-    event.preventDefault();
-    const index = focusables.indexOf(document.activeElement as HTMLElement);
-    const offset = event.shiftKey ? -1 : 1;
-    const next = focusables[(index + offset + focusables.length) % focusables.length]!;
-    next.focus();
-  };
+  // S11: when the app window regains focus (clicking back into the GUI after
+  // clicking outside it, or the tab becoming visible again) and the palette
+  // is open with focus parked outside it — the browser drops it on body —
+  // the filter input takes focus back, so the arrows keep working without a
+  // click inside the palette. isConnected-guarded like the close-restore
+  // effect below.
+  useEffect(() => {
+    const restore = (): void => {
+      if (panelRef.current?.contains(document.activeElement)) return;
+      if (inputRef.current?.isConnected) inputRef.current.focus();
+    };
+    const onVisibility = (): void => {
+      if (document.visibilityState === "visible") restore();
+    };
+    window.addEventListener("focus", restore);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", restore);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
 
   const clearQuery = (): void => {
     setQuery("");
@@ -223,7 +275,6 @@ export function CommandPalette({ commands, onRun, onClose }: CommandPaletteProps
         role="dialog"
         aria-modal="true"
         aria-label="Commands"
-        onKeyDown={handlePanelKeyDown}
       >
         <div className="gc-command-palette__input">
           <span className="gc-command-palette__slash" aria-hidden="true">
@@ -237,7 +288,6 @@ export function CommandPalette({ commands, onRun, onClose }: CommandPaletteProps
             aria-activedescendant={hasMatches ? `${listId}-option-${selected}` : undefined}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={handleInputKeyDown}
             autoComplete="off"
             spellCheck={false}
             placeholder="Type a command name…"

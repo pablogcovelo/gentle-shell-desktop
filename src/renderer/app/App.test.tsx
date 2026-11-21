@@ -38,7 +38,7 @@ describe("App", () => {
     fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
   }
 
-  it("runs the picked /resume session through the host's run_command with the session path (S5)", async () => {
+  it("reopens the picked /resume session through the desktop's own chat-open path (the reflection is withdrawn)", async () => {
     await mockBridge.addWorkspace?.("/Users/dev/gentle-shell-desktop");
     const runCommand = vi.spyOn(mockBridge, "runCommand");
     const openChat = vi.spyOn(mockBridge, "openChat");
@@ -54,14 +54,17 @@ describe("App", () => {
       await runResumeFromPalette();
       const dialog = await screen.findByRole("dialog", { name: "Resume a session" });
       fireEvent.click(await within(dialog).findByRole("button", { name: /Write the README intro/ }));
-      // The chosen session's file path goes to the host as run_command args
-      // — the id never travels as if it were a path, and the legacy openChat
-      // route is gone.
-      await waitFor(() => expect(runCommand).toHaveBeenCalledExactlyOnceWith(expect.any(String), "resume", "/Users/dev/.pi/agent/sessions/chat-readme.jsonl"));
-      expect(openChat).not.toHaveBeenCalled();
-      expect(listChats).toHaveBeenCalledTimes(priorLists + 1);
+      // The chosen session reopens through bridge.openChat — the chat id,
+      // the SAME chat-open path the sidebar's selection resolves through.
+      // No run_command dispatch replaces the session in-child any more (the
+      // session-replacement reflection was withdrawn), and the pane adopts
+      // the reopened session's transcript.
+      await waitFor(() => expect(openChat).toHaveBeenCalledExactlyOnceWith("chat-readme"));
+      expect(runCommand).not.toHaveBeenCalled();
       expect(sendMessage).not.toHaveBeenCalled();
+      expect(listChats).toHaveBeenCalledTimes(priorLists + 1);
       expect(screen.queryByRole("dialog", { name: "Resume a session" })).not.toBeInTheDocument();
+      expect(await screen.findByText("Write the README intro.")).toBeInTheDocument();
     } finally {
       runCommand.mockRestore();
       openChat.mockRestore();
@@ -71,7 +74,7 @@ describe("App", () => {
     }
   });
 
-  it("starts a new chat from the catalog's runnable /new row through run_command instead of sending a message (S4/S5)", async () => {
+  it("starts a new chat from the catalog's runnable /new row through the desktop's own new-chat path (the reflection is withdrawn)", async () => {
     await mockBridge.addWorkspace?.("/Users/dev/gentle-shell-desktop");
     const fresh = vi.spyOn(mockBridge, "newChat");
     const runCommand = vi.spyOn(mockBridge, "runCommand");
@@ -90,10 +93,12 @@ describe("App", () => {
       fireEvent.change(within(palette).getByRole("combobox"), { target: { value: "new" } });
       fireEvent.keyDown(within(palette).getByRole("combobox"), { key: "Enter" });
 
-      await waitFor(() => expect(runCommand).toHaveBeenCalledExactlyOnceWith(expect.any(String), "new"));
-      // The session replacement is the host's own run_command: App's pane
-      // identity is not touched and no message is sent to the model.
-      expect(fresh.mock.calls.length).toBe(priorChats);
+      // /new starts a fresh chat through the bridge's own new-chat path —
+      // the same resolution the app's "New chat" action uses — instead of a
+      // run_command that replaces the session in-child (the session-
+      // replacement reflection was withdrawn). No message goes to the model.
+      await waitFor(() => expect(fresh.mock.calls.length).toBe(priorChats + 1));
+      expect(runCommand).not.toHaveBeenCalled();
       expect(sendMessage).not.toHaveBeenCalled();
       expect(screen.queryByRole("dialog", { name: "Commands" })).not.toBeInTheDocument();
     } finally {
