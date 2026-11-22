@@ -1,4 +1,7 @@
 allowBuilds:
+  # Electron's postinstall downloads the runtime binary into dist/ and writes
+  # path.txt; without it electron-vite fails with "Electron uninstall".
+  electron: true
   # Transitive deps of @earendil-works/pi-coding-agent (T3 sessions
   # adapter): @google/genai's preinstall/prepare are no-op/vendor-asset
   # scripts, protobufjs's postinstall is its standard version-scheme
